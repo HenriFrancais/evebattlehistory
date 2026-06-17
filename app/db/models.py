@@ -186,6 +186,34 @@ class BattleReport(Base):
     fight_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class BrSource(Base):
+    """One source entry for a BR — a zKB/Aurora link or a system+time-window."""
+
+    __tablename__ = "br_source"
+
+    source_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    br_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("battle_report.br_id", **_FK)  # type: ignore[arg-type]
+    )
+    # "link" | "window"
+    kind: Mapped[str] = mapped_column(String(16))
+    # For kind=link
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # For kind=window
+    system_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    window_start: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Optional display label
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # "pending" | "ok" | "error"
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    km_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_br_source_br_id", "br_id"),)
+
+
 class BrKillmail(Base):
     __tablename__ = "br_killmail"
 

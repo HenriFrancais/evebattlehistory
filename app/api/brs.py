@@ -18,13 +18,16 @@ from app.api.schemas import (
     BrDetail,
     BrListResponse,
     BrListSummary,
+    BrPatch,
+    BrSourceIn,
+    BrSourceOut,
     BrStatus,
     BrSummary,
     FightOut,
     FightSideOut,
 )
 from app.config import get_settings
-from app.db.models import BattleReport, BrFight, Fight, FightSide
+from app.db.models import BattleReport, BrFight, BrSource, Fight, FightSide
 from app.fights.participants import ParticipantInfo, br_participants
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
@@ -35,31 +38,104 @@ SUPPORTED_HOSTS = {"zkillboard.com", "br.evetools.org"}
 router = APIRouter()
 
 
+def _validate_sources(sources: list[BrSourceIn]) -> None:
+    """Validate source entries; raises HTTPException 400 on invalid input.
+
+    For link sources: require a url.  Host validation is intentionally relaxed
+    here — unsupported hosts will error-isolate at resolve time (per-source).
+    For window sources: require system_id, window_start < window_end.
+    """
+    for src in sources:
+        if src.kind == "link":
+            if not src.url:
+                raise HTTPException(status_code=400, detail="link source requires url")
+        elif src.kind == "window":
+            if src.system_id is None:
+                raise HTTPException(status_code=400, detail="window source requires system_id")
+            if src.window_start is None or src.window_end is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="window source requires window_start and window_end",
+                )
+            if src.window_start >= src.window_end:
+                raise HTTPException(
+                    status_code=400,
+                    detail="window_start must be before window_end",
+                )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown source kind: {src.kind!r}")
+
+
+def _add_br_sources(
+    session: AsyncSession,
+    br_id: str,
+    sources: list[BrSourceIn],
+) -> list[BrSource]:
+    """Create BrSource rows (not yet committed)."""
+    rows: list[BrSource] = []
+    now = dt.datetime.now(dt.UTC)
+    for src in sources:
+        row = BrSource(
+            br_id=br_id,
+            kind=src.kind,
+            url=src.url if src.kind == "link" else None,
+            system_id=src.system_id if src.kind == "window" else None,
+            window_start=src.window_start if src.kind == "window" else None,
+            window_end=src.window_end if src.kind == "window" else None,
+            label=src.label,
+            status="pending",
+            km_count=0,
+            created_at=now,
+        )
+        session.add(row)
+        rows.append(row)
+    return rows
+
+
 @router.post("/api/brs", status_code=202)
 async def create_br(
     body: BrCreate,
     request: Request,
     session: SessionDep,
 ) -> BrCreated:
-    """Submit a new battle report URL for ingestion."""
+    """Submit a new battle report for ingestion.
+
+    Accepts either:
+    - Back-compat: {url, title?} → creates one link BrSource
+    - Multi-source: {sources:[...], title?} → creates one BrSource per entry
+    """
     user = current_user(request)
     if not can_create_br(user):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    host = urlparse(body.url).netloc
-    bare_host = host.removeprefix("www.")
-    if bare_host not in SUPPORTED_HOSTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported URL host: {host}")
+    # Normalise to a list of BrSourceIn
+    if body.sources is not None:
+        sources = body.sources
+        _validate_sources(sources)
+    elif body.url is not None:
+        # Back-compat single-URL path: still validate the host eagerly
+        host = urlparse(body.url).netloc.removeprefix("www.")
+        if host not in SUPPORTED_HOSTS:
+            raise HTTPException(status_code=400, detail=f"Unsupported URL host: {host}")
+        sources = [BrSourceIn(kind="link", url=body.url)]
+    else:
+        raise HTTPException(status_code=400, detail="Provide either 'url' or 'sources'")
 
     settings = get_settings()
     br_id = str(uuid.uuid4())
     char_id_str = user.main_character_id
     char_id = int(char_id_str) if char_id_str and char_id_str.isdigit() else None
 
+    # Derive source_url for back-compat from the first link source
+    primary_url = next(
+        (s.url for s in sources if s.kind == "link" and s.url),
+        f"multi-source:{br_id}",
+    )
+
     br = BattleReport(
         br_id=br_id,
         source="",
-        source_url=body.url,
+        source_url=primary_url,
         source_ref="",
         title=body.title,
         created_by_user=user.user_name,
@@ -69,12 +145,167 @@ async def create_br(
         created_at=dt.datetime.now(dt.UTC),
     )
     session.add(br)
+    _add_br_sources(session, br_id, sources)
     await session.commit()
 
-    log.info("brs.created", br_id=br_id, url=body.url, user=user.user_name)
+    log.info("brs.created", br_id=br_id, source_count=len(sources), user=user.user_name)
     schedule_ingest(settings, br_id)
 
     return BrCreated(br_id=br_id, status="pending")
+
+
+# ---------------------------------------------------------------------------
+# E4a: PATCH title, GET/POST/DELETE sources, POST refresh
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/api/brs/{br_id}", status_code=200)
+async def patch_br(
+    br_id: str,
+    body: BrPatch,
+    request: Request,
+    session: SessionDep,
+) -> BrSummary:
+    """Update a BR's title. Gated: only users who can_create_br."""
+    user = current_user(request)
+    if not can_create_br(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    result = await session.execute(select(BattleReport).where(BattleReport.br_id == br_id))
+    br = result.scalar_one_or_none()
+    if br is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    br.title = body.title
+    await session.commit()
+    return _br_to_summary(br)
+
+
+@router.get("/api/brs/{br_id}/sources")
+async def get_br_sources(
+    br_id: str,
+    session: SessionDep,
+) -> list[BrSourceOut]:
+    """Return all sources for a BR."""
+    # Verify BR exists
+    br_check = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if br_check is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    rows = list(
+        (
+            await session.execute(select(BrSource).where(BrSource.br_id == br_id))
+        ).scalars()
+    )
+    return [_source_to_out(s) for s in rows]
+
+
+@router.post("/api/brs/{br_id}/sources", status_code=202)
+async def add_br_source(
+    br_id: str,
+    body: BrSourceIn,
+    request: Request,
+    session: SessionDep,
+) -> BrCreated:
+    """Add a source to an existing BR and trigger a refresh ingest. Gated."""
+    user = current_user(request)
+    if not can_create_br(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    br_check = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if br_check is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    _validate_sources([body])
+    _add_br_sources(session, br_id, [body])
+    await session.commit()
+
+    settings = get_settings()
+    schedule_ingest(settings, br_id)
+
+    return BrCreated(br_id=br_id, status="pending")
+
+
+@router.delete("/api/brs/{br_id}/sources/{source_id}", status_code=204)
+async def delete_br_source(
+    br_id: str,
+    source_id: int,
+    request: Request,
+    session: SessionDep,
+) -> None:
+    """Remove a source from a BR and trigger a refresh ingest. Gated."""
+    user = current_user(request)
+    if not can_create_br(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    br_check = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if br_check is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    src = (
+        await session.execute(
+            select(BrSource).where(
+                BrSource.source_id == source_id, BrSource.br_id == br_id
+            )
+        )
+    ).scalar_one_or_none()
+    if src is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    await session.delete(src)
+    await session.commit()
+
+    settings = get_settings()
+    schedule_ingest(settings, br_id)
+
+
+@router.post("/api/brs/{br_id}/refresh", status_code=202)
+async def refresh_br(
+    br_id: str,
+    request: Request,
+    session: SessionDep,
+) -> BrStatus:
+    """Re-run the ingest for a BR to pick up late kills. Gated."""
+    user = current_user(request)
+    if not can_create_br(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    result = await session.execute(select(BattleReport).where(BattleReport.br_id == br_id))
+    br = result.scalar_one_or_none()
+    if br is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    settings = get_settings()
+    schedule_ingest(settings, br_id)
+
+    return BrStatus(
+        br_id=br.br_id,
+        status=br.status,
+        progress_pct=br.progress_pct,
+        error_text=br.error_text,
+    )
+
+
+def _source_to_out(src: BrSource) -> BrSourceOut:
+    return BrSourceOut(
+        source_id=src.source_id,
+        br_id=src.br_id,
+        kind=src.kind,
+        url=src.url,
+        system_id=src.system_id,
+        window_start=src.window_start,
+        window_end=src.window_end,
+        label=src.label,
+        status=src.status,
+        error_text=src.error_text,
+        km_count=src.km_count,
+    )
 
 
 def compute_br_summary(brs: list[BattleReport]) -> BrListSummary:

@@ -79,6 +79,36 @@ export interface BrCreated {
   status: string
 }
 
+// E4b: multi-source types
+export interface BrSourceIn {
+  kind: 'link' | 'window'
+  url?: string
+  system_id?: number
+  window_start?: string  // ISO UTC string
+  window_end?: string    // ISO UTC string
+  label?: string
+}
+
+export interface BrSourceOut {
+  source_id: number
+  br_id: string
+  kind: string
+  url: string | null
+  system_id: number | null
+  window_start: string | null
+  window_end: string | null
+  label: string | null
+  status: string
+  error_text: string | null
+  km_count: number
+}
+
+export interface CreateBrPayload {
+  url?: string
+  title?: string
+  sources?: BrSourceIn[]
+}
+
 export interface LogUploadResult {
   filename: string
   file_id: string | null
@@ -362,12 +392,29 @@ export const api = {
   me: () => jsonFetch<MeResponse>(`${API}/me`),
   rosterUsers: () => jsonFetch<RosterUserOut[]>(`${API}/roster/users`),
   listBrs: () => jsonFetch<BrListResponse>(`${API}/brs`),
-  createBr: (url: string, title?: string) =>
+  createBr: (payload: CreateBrPayload) =>
     jsonFetch<BrCreated>(`${API}/brs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url, ...(title ? { title } : {}) }),
+      body: JSON.stringify(payload),
     }),
+  patchBrTitle: (id: string, title: string) =>
+    jsonFetch<BrSummary>(`${API}/brs/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+  getSources: (id: string) => jsonFetch<BrSourceOut[]>(`${API}/brs/${id}/sources`),
+  addSource: (id: string, source: BrSourceIn) =>
+    jsonFetch<BrCreated>(`${API}/brs/${id}/sources`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(source),
+    }),
+  deleteSource: (id: string, sourceId: number) =>
+    jsonFetch<void>(`${API}/brs/${id}/sources/${sourceId}`, { method: 'DELETE' }),
+  refreshBr: (id: string) =>
+    jsonFetch<BrStatus>(`${API}/brs/${id}/refresh`, { method: 'POST' }),
   getBr: (id: string) => jsonFetch<BrDetail>(`${API}/brs/${id}`),
   getBrStatus: (id: string) => jsonFetch<BrStatus>(`${API}/brs/${id}/status`),
   uploadLogs: async (files: File[]): Promise<LogUploadResult[]> => {

@@ -1,4 +1,4 @@
-"""Ingest pipeline: resolve BR → fetch killmails → persist → aggregate."""
+"""Ingest pipeline: resolve all BR sources → merge → fetch → persist → aggregate."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import Settings, get_app_config
 from app.db.engine import get_sessionmaker
-from app.db.models import BattleReport, BrKillmail
+from app.db.models import BattleReport, BrKillmail, BrSource
 from app.esi.demo import DemoEsiClient
 from app.fights.aggregate import aggregate_br
 from app.ingest.persist import persist_killmails
-from app.ingest.sources.factory import get_source
+from app.ingest.sources.factory import resolve_source
 from app.logs.associate import associate_logs_for_br
 from app.observability.logging import log
 
@@ -22,14 +22,22 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
     """Run the full ingest pipeline for a battle report.
 
     Phases:
-      1. resolving  - call BR source to get killmail refs
+      1. resolving  - resolve ALL BrSource rows; union killmail refs (dedup)
       2. enriching  - fetch killmail JSON + resolve names via ESI
-      3. persisting - write killmails + BrKillmail links to DB
+      3. persisting - write killmails + BrKillmail links to DB (idempotent)
       4. clustering - aggregate fights, compute ISK, label sides
       5. ready      - mark complete
 
-    Any exception sets status=error and suppresses the raise so the caller
-    (a background Task) never sees an unhandled exception.
+    Per-source error isolation: each source is resolved independently.
+    If a source fails, its BrSource.status=error and its error_text is set,
+    but other sources continue. If ALL sources error, BR status=error.
+    If at least one source succeeds, ingest proceeds with the merged KM set.
+
+    Back-compat: BRs created with the old single-url path have source_url set
+    on BattleReport.  On such BRs, if there are no BrSource rows, a single
+    link BrSource is created automatically.
+
+    Any exception outside source resolution sets status=error.
     """
     session_maker = get_sessionmaker(settings)
 
@@ -45,26 +53,131 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
             if br is None:
                 log.error("pipeline.br_not_found", br_id=br_id)
                 return
-            source_url: str = br.source_url
+
+            # Back-compat: ensure at least one BrSource row exists
+            source_check = await session.execute(
+                select(BrSource).where(BrSource.br_id == br_id)
+            )
+            existing_sources = list(source_check.scalars())
+            if not existing_sources and br.source_url:
+                fallback_src = BrSource(
+                    br_id=br_id,
+                    kind="link",
+                    url=br.source_url,
+                    status="pending",
+                    km_count=0,
+                    created_at=dt.datetime.now(dt.UTC),
+                )
+                session.add(fallback_src)
+                await session.commit()
+                existing_sources = [fallback_src]
+
             br.status = "resolving"
             br.progress_pct = 10
             br.started_at = dt.datetime.now(dt.UTC)
             await session.commit()
 
         log.info("pipeline.resolving", br_id=br_id)
-        source = get_source(source_url, settings)
-        resolved = await source.resolve(source_url)
-        refs = resolved.refs
 
+        # Resolve each source independently; collect results + errors
+        all_refs: dict[int, str] = {}  # km_id → km_hash (deduped)
+        primary_resolved_source: str | None = None
+        primary_source_ref: str | None = None
+        primary_title: str | None = None
+        any_ok = False
+
+        # Load source rows fresh after potential creation
+        async with session_maker() as session:
+            src_result = await session.execute(
+                select(BrSource).where(BrSource.br_id == br_id)
+            )
+            source_rows = list(src_result.scalars())
+
+        for src_row in source_rows:
+            source_id = src_row.source_id
+            try:
+                resolved = await resolve_source(
+                    source_kind=src_row.kind,
+                    source_url=src_row.url,
+                    source_system_id=src_row.system_id,
+                    source_window_start=src_row.window_start,
+                    source_window_end=src_row.window_end,
+                    source_label=src_row.label,
+                    settings=settings,
+                )
+
+                # Merge refs (dedup by km_id — later sources can't overwrite earlier ones)
+                for km_id, km_hash in resolved.refs:
+                    if km_id not in all_refs:
+                        all_refs[km_id] = km_hash
+
+                # Mark source ok
+                async with session_maker() as session:
+                    src = (
+                        await session.execute(
+                            select(BrSource).where(BrSource.source_id == source_id)
+                        )
+                    ).scalar_one()
+                    src.status = "ok"
+                    src.km_count = len(resolved.refs)
+                    src.error_text = None
+                    await session.commit()
+
+                # First successful source sets primary BR metadata
+                if not any_ok:
+                    primary_resolved_source = resolved.source
+                    primary_source_ref = resolved.source_ref
+                    primary_title = resolved.title
+
+                any_ok = True
+
+            except Exception as src_exc:
+                log.warning(
+                    "pipeline.source_error",
+                    br_id=br_id,
+                    source_id=source_id,
+                    error=str(src_exc),
+                )
+                async with session_maker() as session:
+                    src_or_none: BrSource | None = (
+                        await session.execute(
+                            select(BrSource).where(BrSource.source_id == source_id)
+                        )
+                    ).scalar_one_or_none()
+                    if src_or_none is not None:
+                        src_or_none.status = "error"
+                        src_or_none.error_text = str(src_exc)
+                        await session.commit()
+
+        if not any_ok:
+            error_msgs: list[str] = []
+            async with session_maker() as session:
+                failed_rows = list(
+                    (
+                        await session.execute(
+                            select(BrSource).where(BrSource.br_id == br_id)
+                        )
+                    ).scalars()
+                )
+            error_msgs = [
+                f"source {s.source_id}: {s.error_text}" for s in failed_rows if s.error_text
+            ]
+            raise RuntimeError("All sources failed: " + "; ".join(error_msgs))
+
+        refs: list[tuple[int, str]] = list(all_refs.items())
+
+        # Update BR with merged KM count and primary source metadata
         async with session_maker() as session:
             result = await session.execute(
                 select(BattleReport).where(BattleReport.br_id == br_id)
             )
             br = result.scalar_one()
-            br.source = resolved.source
-            br.source_ref = resolved.source_ref
-            if resolved.title and not br.title:
-                br.title = resolved.title
+            if primary_resolved_source:
+                br.source = primary_resolved_source
+            if primary_source_ref:
+                br.source_ref = primary_source_ref
+            if primary_title and not br.title:
+                br.title = primary_title
             br.km_count = len(refs)
             br.progress_pct = 25
             await session.commit()
@@ -138,7 +251,7 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
         async with session_maker() as session:
             await persist_killmails(session, killmails_json, names)
 
-            # Upsert BrKillmail links
+            # Upsert BrKillmail links (idempotent)
             km_ids = [
                 int(str(km["killmail_id"]))
                 for km in killmails_json
@@ -175,7 +288,6 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 our_corp_ids=app_config.our_corp_ids,
             )
             # Phase 4.5: associate uploaded logs to fights for this BR.
-            # Guarded inside associate_logs_for_br — failure never fails the ingest.
             await associate_logs_for_br(session, br_id)
             await session.commit()
 

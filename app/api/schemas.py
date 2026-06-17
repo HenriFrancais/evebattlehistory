@@ -7,9 +7,44 @@ import datetime as dt
 from pydantic import BaseModel
 
 
+class BrSourceIn(BaseModel):
+    """One source entry for POST /api/brs or POST /api/brs/{id}/sources."""
+
+    kind: str  # "link" | "window"
+    # For kind=link
+    url: str | None = None
+    # For kind=window
+    system_id: int | None = None
+    window_start: dt.datetime | None = None
+    window_end: dt.datetime | None = None
+    label: str | None = None
+
+
 class BrCreate(BaseModel):
-    url: str
+    # Back-compat: accepts {url, title?} OR {sources:[...], title?}
+    url: str | None = None
     title: str | None = None
+    sources: list[BrSourceIn] | None = None
+
+
+class BrSourceOut(BaseModel):
+    """One source row returned by GET /api/brs/{id}/sources."""
+
+    source_id: int
+    br_id: str
+    kind: str
+    url: str | None
+    system_id: int | None
+    window_start: dt.datetime | None
+    window_end: dt.datetime | None
+    label: str | None
+    status: str
+    error_text: str | None
+    km_count: int
+
+
+class BrPatch(BaseModel):
+    title: str
 
 
 class BrCreated(BaseModel):

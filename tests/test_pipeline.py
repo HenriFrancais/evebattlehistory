@@ -197,11 +197,12 @@ async def test_run_ingest_error_path(tmp_path, monkeypatch):
     session_maker = get_sessionmaker(settings)
     br_id = await _create_pending_br(session_maker)
 
-    class _FailSource:
-        async def resolve(self, url: str) -> None:
-            raise BrUnavailable("fixture not found")
+    from app.ingest.sources.base import ResolvedBr
 
-    with patch("app.ingest.pipeline.get_source", return_value=_FailSource()):
+    async def _fail_resolve_source(*args: object, **kwargs: object) -> ResolvedBr:
+        raise BrUnavailable("fixture not found")
+
+    with patch("app.ingest.pipeline.resolve_source", side_effect=_fail_resolve_source):
         # Must NOT raise
         await run_ingest(settings, br_id)
 

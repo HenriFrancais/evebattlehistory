@@ -62,7 +62,8 @@ class ZkbSource:
                             if window_start <= km_time <= window_end:
                                 km_id = entry["killmail_id"]
                                 zkb = entry.get("zkb", {})
-                                assert isinstance(zkb, dict)
+                                if not isinstance(zkb, dict):
+                                    zkb = {}
                                 km_hash = zkb.get("hash", "")
                                 if km_hash:
                                     refs.append((int(str(km_id)), str(km_hash)))
@@ -83,3 +84,48 @@ class ZkbSource:
             title=None,
             refs=refs,
         )
+
+
+async def fetch_window_killmails(
+    client: httpx.AsyncClient,
+    system_id: int,
+    window_start: dt.datetime,
+    window_end: dt.datetime,
+) -> list[tuple[int, str]]:
+    """Fetch killmail refs for a system within a time window via zKB paging.
+
+    Used by resolve_source for kind=window in real mode.
+    """
+    refs: list[tuple[int, str]] = []
+    for page in range(1, MAX_PAGES + 1):
+        api_url = f"{ZKB_API}/kills/solarSystemID/{system_id}/page/{page}/"
+        resp = await client.get(api_url)
+        if resp.status_code == 200:
+            data: list[dict[str, object]] = resp.json()
+            if not data:
+                break
+            for entry in data:
+                km_time_str = entry.get("killmail_time", "")
+                if km_time_str:
+                    km_time = dt.datetime.fromisoformat(
+                        str(km_time_str).replace("Z", "+00:00")
+                    )
+                    if window_start <= km_time <= window_end:
+                        km_id = entry["killmail_id"]
+                        zkb = entry.get("zkb", {})
+                        if not isinstance(zkb, dict):
+                            zkb = {}
+                        km_hash = zkb.get("hash", "")
+                        if km_hash:
+                            refs.append((int(str(km_id)), str(km_hash)))
+        elif resp.status_code == 404:
+            break
+        else:
+            log.warning(
+                "zkb.api_error",
+                status=resp.status_code,
+                page=page,
+                system_id=system_id,
+            )
+            break
+    return refs

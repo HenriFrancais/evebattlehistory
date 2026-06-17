@@ -46,10 +46,10 @@ describe('CreateBrForm', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /Create BR/i }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('newbr1'))
-    expect(vi.mocked(api.createBr)).toHaveBeenCalledWith(
-      'https://zkillboard.com/related/30004759/202606101800/',
-      'My Test BR',
-    )
+    expect(vi.mocked(api.createBr)).toHaveBeenCalledWith({
+      url: 'https://zkillboard.com/related/30004759/202606101800/',
+      title: 'My Test BR',
+    })
   })
 
   it('calls api.createBr with a valid Aurora URL', async () => {
@@ -61,9 +61,9 @@ describe('CreateBrForm', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /Create BR/i }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('newbr2'))
-    expect(vi.mocked(api.createBr)).toHaveBeenCalledWith(
-      'https://br.evetools.org/br/abc123',
-      undefined,
-    )
+    expect(vi.mocked(api.createBr)).toHaveBeenCalledWith({
+      url: 'https://br.evetools.org/br/abc123',
+      title: undefined,
+    })
   })
 })

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { MeResponse } from '../api'
 import { api } from '../api'
-import { CreateBrForm } from '../components/CreateBrForm'
+import { SourceComposer } from '../components/SourceComposer'
 
 export function CreatePage() {
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -32,7 +32,7 @@ export function CreatePage() {
 
   return (
     <div className="page">
-      <CreateBrForm onCreated={(id) => { void navigate(`/brs/${id}`) }} />
+      <SourceComposer onCreated={(id) => { void navigate(`/brs/${id}`) }} />
     </div>
   )
 }

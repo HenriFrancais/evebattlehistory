@@ -105,6 +105,15 @@ async def test_foreign_keys_pragma_on(tmp_path):
 
 
 # Test 4: persist_killmails creates killmails from demo fixtures
+# Uses an explicit fixed list of the 5 original demo-battle killmail files
+# (km_101..km_105) so that adding new fixture files doesn't silently change
+# counts and break this test.
+_DEMO_LINK_KM_FILES = [f"km_{i}.json" for i in range(101, 106)]  # km_101..km_105
+# The window-source demo fixtures (km_106, km_107) are also included in the
+# all-sources count tested here since both sets are part of the resolved demo data.
+_ALL_DEMO_KM_FILES = [f"km_{i}.json" for i in range(101, 108)]  # km_101..km_107
+
+
 @pytest.mark.asyncio
 async def test_persist_demo_killmails(tmp_path):
     from sqlalchemy import func, select
@@ -119,10 +128,11 @@ async def test_persist_demo_killmails(tmp_path):
     await init_models(settings)
 
     demo_data_dir = Path("./data_demo")
-    killmails_json = []
-    for km_file in sorted((demo_data_dir / "killmails").glob("km_*.json")):
-        km = json.loads(km_file.read_text())
-        killmails_json.append(km)
+    # Load the explicit fixed set of 7 demo killmails (km_101..km_107).
+    killmails_json = [
+        json.loads((demo_data_dir / "killmails" / fname).read_text())
+        for fname in _ALL_DEMO_KM_FILES
+    ]
 
     names_path = demo_data_dir / "names.json"
     raw_names = json.loads(names_path.read_text())
@@ -133,7 +143,7 @@ async def test_persist_demo_killmails(tmp_path):
         count = await persist_killmails(session, killmails_json, names)
         await session.commit()
 
-    assert count == 5
+    assert count == 7
 
     async with session_maker() as session:
         attacker_count = (await session.execute(
@@ -143,8 +153,8 @@ async def test_persist_demo_killmails(tmp_path):
             select(func.count()).select_from(KillmailItem)
         )).scalar()
 
-    assert attacker_count == 7   # 1+2+2+1+1 attackers across 5 killmails
-    assert item_count == 5       # 2+1+1+0+1 items across 5 killmails
+    assert attacker_count == 9   # 1+2+2+1+1 (101-105) + 1+1 (106-107) = 9 attackers
+    assert item_count == 5       # 2+1+1+0+1 (101-105) + 0+0 (106-107) = 5 items
     reset_engine_for_tests()
 
 
@@ -163,9 +173,11 @@ async def test_persist_idempotent(tmp_path):
     await init_models(settings)
 
     demo_data_dir = Path("./data_demo")
-    killmails_json = []
-    for km_file in sorted((demo_data_dir / "killmails").glob("km_*.json")):
-        killmails_json.append(json.loads(km_file.read_text()))
+    # Load the explicit fixed set of 7 demo killmails (km_101..km_107).
+    killmails_json = [
+        json.loads((demo_data_dir / "killmails" / fname).read_text())
+        for fname in _ALL_DEMO_KM_FILES
+    ]
 
     names_path = demo_data_dir / "names.json"
     names = {int(k): v for k, v in json.loads(names_path.read_text()).items()}
@@ -187,9 +199,9 @@ async def test_persist_idempotent(tmp_path):
         result = await session.execute(select(func.count()).select_from(Killmail))
         total_in_db = result.scalar()
 
-    assert count1 == 5
+    assert count1 == 7
     assert count2 == 0  # All duplicates
-    assert total_in_db == 5
+    assert total_in_db == 7
     reset_engine_for_tests()
 
 

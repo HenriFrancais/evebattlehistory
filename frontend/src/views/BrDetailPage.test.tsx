@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrDetail, FightWithBrId, MeResponse, UserCoverage } from '../api'
+import type { BrDetail, BrSourceOut, FightWithBrId, MeResponse, UserCoverage } from '../api'
 import { ApiError } from '../api'
 import { BrDetailPage } from './BrDetailPage'
 
@@ -18,6 +18,12 @@ vi.mock('../api', async (importOriginal) => {
       brCoverage: vi.fn(),
       filterFights: vi.fn(),
       fleetTimeline: vi.fn(),
+      getSources: vi.fn(),
+      patchBrTitle: vi.fn(),
+      addSource: vi.fn(),
+      deleteSource: vi.fn(),
+      refreshBr: vi.fn(),
+      getBrStatus: vi.fn(),
     },
   }
 })
@@ -150,6 +156,15 @@ describe('BrDetailPage', () => {
     vi.mocked(api.brCoverage).mockReset()
     vi.mocked(api.filterFights).mockReset()
     vi.mocked(api.fleetTimeline).mockReset()
+    vi.mocked(api.getSources).mockReset()
+    vi.mocked(api.patchBrTitle).mockReset()
+    vi.mocked(api.addSource).mockReset()
+    vi.mocked(api.deleteSource).mockReset()
+    vi.mocked(api.refreshBr).mockReset()
+    vi.mocked(api.getBrStatus).mockReset()
+    // Defaults for non-critical calls
+    vi.mocked(api.getSources).mockResolvedValue([])
+    vi.mocked(api.getBrStatus).mockResolvedValue({ br_id: 'br1', status: 'ready', progress_pct: 100, error_text: null })
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {
@@ -300,5 +315,212 @@ describe('BrDetailPage', () => {
 
     // Count indicator should be gone
     await waitFor(() => expect(screen.queryByTestId('fight-filter-count')).not.toBeInTheDocument())
+  })
+
+  // -------------------------------------------------------------------------
+  // E4b: Editable title
+  // -------------------------------------------------------------------------
+
+  describe('editable title', () => {
+    it('can_create_br user sees an edit button next to the title', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+      expect(screen.getByTestId('edit-title-btn')).toBeInTheDocument()
+    })
+
+    it('non-creator does not see an edit button', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+      expect(screen.queryByTestId('edit-title-btn')).not.toBeInTheDocument()
+    })
+
+    it('clicking edit shows input, saving calls patchBrTitle and updates header', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.patchBrTitle).mockResolvedValue({ ...mockBr, title: 'Updated Title' })
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByTestId('edit-title-btn'))
+
+      const titleInput = await screen.findByTestId('title-input')
+      expect(titleInput).toHaveValue('Test BR')
+
+      await userEvent.clear(titleInput)
+      await userEvent.type(titleInput, 'Updated Title')
+
+      fireEvent.click(screen.getByTestId('save-title-btn'))
+
+      await waitFor(() => expect(vi.mocked(api.patchBrTitle)).toHaveBeenCalledWith('br1', 'Updated Title'))
+      await waitFor(() => expect(screen.getByText('Updated Title')).toBeInTheDocument())
+      expect(screen.queryByTestId('title-input')).not.toBeInTheDocument()
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // E4b: Sources panel
+  // -------------------------------------------------------------------------
+
+  describe('sources panel', () => {
+    const mockSources: BrSourceOut[] = [
+      {
+        source_id: 1,
+        br_id: 'br1',
+        kind: 'link',
+        url: 'https://zkillboard.com/related/30004759/202606101800/',
+        system_id: null,
+        window_start: null,
+        window_end: null,
+        label: null,
+        status: 'ready',
+        error_text: null,
+        km_count: 42,
+      },
+    ]
+
+    it('sources panel is visible for can_create_br user and lists sources with status + km_count', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.getSources).mockResolvedValue(mockSources)
+
+      renderBrDetailPage()
+
+      await waitFor(() => expect(screen.getByTestId('sources-panel')).toBeInTheDocument())
+      expect(screen.getByText(/42 km/)).toBeInTheDocument()    // km_count
+      expect(screen.getAllByText(/ready/i).length).toBeGreaterThan(0)
+    })
+
+    it('sources panel is hidden for non-creator', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+      expect(screen.queryByTestId('sources-panel')).not.toBeInTheDocument()
+    })
+
+    it('delete source button calls api.deleteSource', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.getSources).mockResolvedValue(mockSources)
+      vi.mocked(api.deleteSource).mockResolvedValue()
+      vi.mocked(api.refreshBr).mockResolvedValue({ br_id: 'br1', status: 'pending', progress_pct: 0, error_text: null })
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByTestId('sources-panel')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByTestId('delete-source-1'))
+
+      await waitFor(() =>
+        expect(vi.mocked(api.deleteSource)).toHaveBeenCalledWith('br1', 1)
+      )
+    })
+
+    it('add source form calls api.addSource', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.getSources).mockResolvedValue([])
+      vi.mocked(api.addSource).mockResolvedValue({ br_id: 'br1', status: 'pending' })
+      vi.mocked(api.refreshBr).mockResolvedValue({ br_id: 'br1', status: 'pending', progress_pct: 0, error_text: null })
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByTestId('sources-panel')).toBeInTheDocument())
+
+      // Open the add-source form (expand details)
+      const addDetails = screen.getByTestId('add-source-details')
+      fireEvent.click(addDetails.querySelector('summary')!)
+
+      // Fill in a link URL
+      const urlInput = screen.getByTestId('add-source-url')
+      fireEvent.change(urlInput, { target: { value: 'https://zkillboard.com/related/30004759/202606101800/' } })
+
+      fireEvent.click(screen.getByTestId('add-source-submit'))
+
+      await waitFor(() =>
+        expect(vi.mocked(api.addSource)).toHaveBeenCalledWith('br1', {
+          kind: 'link',
+          url: 'https://zkillboard.com/related/30004759/202606101800/',
+        })
+      )
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // E4b: Refresh button
+  // -------------------------------------------------------------------------
+
+  describe('refresh button', () => {
+    it('can_create_br user sees the Refresh button', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByTestId('refresh-btn')).toBeInTheDocument())
+    })
+
+    it('non-creator does not see the Refresh button', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+      expect(screen.queryByTestId('refresh-btn')).not.toBeInTheDocument()
+    })
+
+    it('clicking Refresh calls api.refreshBr and shows IngestProgress', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.refreshBr).mockResolvedValue({
+        br_id: 'br1',
+        status: 'ingesting',
+        progress_pct: 0,
+        error_text: null,
+      })
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByTestId('refresh-btn')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByTestId('refresh-btn'))
+
+      await waitFor(() => expect(vi.mocked(api.refreshBr)).toHaveBeenCalledWith('br1'))
+      await waitFor(() => expect(screen.getByTestId('ingest-progress')).toBeInTheDocument())
+    })
   })
 })

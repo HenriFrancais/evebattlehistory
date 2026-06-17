@@ -36,7 +36,7 @@ export function CreateBrForm({ onCreated }: Props) {
     setSubmitting(true)
     setSubmitError(null)
     try {
-      const result = await api.createBr(url.trim(), title.trim() || undefined)
+      const result = await api.createBr({ url: url.trim(), title: title.trim() || undefined })
       onCreated(result.br_id)
     } catch (ex) {
       setSubmitError(ex instanceof Error ? ex.message : String(ex))
