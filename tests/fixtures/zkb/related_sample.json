@@ -1,0 +1,64 @@
+{
+  "summary": {
+    "teamA": {
+      "list": [
+        {
+          "killID": 111000001,
+          "shipTypeID": 587,
+          "characterID": 90000001,
+          "corporationID": 98000001,
+          "isVictim": false,
+          "shipName": "Rifter"
+        },
+        {
+          "killID": 111000002,
+          "shipTypeID": 638,
+          "characterID": 90000002,
+          "corporationID": 98000001,
+          "isVictim": true,
+          "shipName": "Merlin"
+        }
+      ],
+      "kills": {
+        "111000001": {
+          "zkb": {
+            "hash": "aaabbbccc111000001hash",
+            "totalValue": 1500000.0,
+            "points": 8
+          }
+        },
+        "111000002": {
+          "zkb": {
+            "hash": "aaabbbccc111000002hash",
+            "totalValue": 2300000.0,
+            "points": 12
+          }
+        }
+      }
+    },
+    "teamB": {
+      "list": [
+        {
+          "killID": 111000003,
+          "shipTypeID": 603,
+          "characterID": 90000003,
+          "corporationID": 98000002,
+          "isVictim": true,
+          "shipName": "Incursus"
+        }
+      ],
+      "kills": {
+        "111000003": {
+          "zkb": {
+            "hash": "aaabbbccc111000003hash",
+            "totalValue": 980000.0,
+            "points": 5
+          }
+        }
+      }
+    }
+  },
+  "systemID": 30004759,
+  "systemName": "J123456",
+  "time": "202506171500"
+}
