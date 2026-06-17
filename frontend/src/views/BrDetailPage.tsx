@@ -5,6 +5,7 @@ import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
 import { FilterBuilder } from '../components/FilterBuilder'
 import { FightList } from '../components/FightList'
+import { FleetSection } from '../components/FleetSection'
 import { IngestProgress } from '../components/IngestProgress'
 import { fmtIsk } from '../format'
 
@@ -224,6 +225,11 @@ export function BrDetailPage() {
       )}
 
       <FightList fights={displayFights} brId={br.br_id} />
+
+      <section data-testid="fleet-graph-section" className="panel">
+        <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
+        {id && <FleetSection brId={id} />}
+      </section>
 
       <section data-testid="log-coverage-section" className="panel">
         <h2 style={{ margin: '0 0 0.75rem' }}>Log Coverage</h2>

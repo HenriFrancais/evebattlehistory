@@ -17,9 +17,18 @@ vi.mock('../api', async (importOriginal) => {
       myBrCoverage: vi.fn(),
       brCoverage: vi.fn(),
       filterFights: vi.fn(),
+      fleetTimeline: vi.fn(),
     },
   }
 })
+
+// Mock uPlot to avoid canvas/matchMedia requirements in jsdom test environment.
+vi.mock('uplot', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    destroy: vi.fn(),
+    setSize: vi.fn(),
+  })),
+}))
 
 import { api } from '../api'
 
@@ -132,18 +141,22 @@ function renderBrDetailPage() {
 }
 
 describe('BrDetailPage', () => {
+  const emptyFleet = { x: [], series: [], kills: [], fights: [], bucket_seconds: 5, t_start: null, t_end: null }
+
   beforeEach(() => {
     vi.mocked(api.getBr).mockReset()
     vi.mocked(api.me).mockReset()
     vi.mocked(api.myBrCoverage).mockReset()
     vi.mocked(api.brCoverage).mockReset()
     vi.mocked(api.filterFights).mockReset()
+    vi.mocked(api.fleetTimeline).mockReset()
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {
     vi.mocked(api.getBr).mockResolvedValue(mockBr)
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
     vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
 
@@ -161,6 +174,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
     vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
     vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
 
@@ -176,6 +190,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.getBr).mockResolvedValue(mockBr)
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
     vi.mocked(api.myBrCoverage).mockRejectedValue(new ApiError(404, 'Not Found'))
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
 
@@ -191,6 +206,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
     vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
     vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
 
@@ -219,6 +235,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
     vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
     vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
 
@@ -265,6 +282,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
     vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
     vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
 
     renderBrDetailPage()
     await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())

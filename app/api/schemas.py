@@ -242,3 +242,39 @@ class BrFilterRequest(BaseModel):
 class FilteredBrResponse(BaseModel):
     summary: BrListSummary
     brs: list[BrSummary]
+
+
+# ---------------------------------------------------------------------------
+# Fleet timeline schemas (E3)
+# ---------------------------------------------------------------------------
+
+
+class FleetSeriesOut(BaseModel):
+    """One named series aligned to the shared fleet x axis."""
+
+    key: str
+    """Fixed key: one of 'dps_out', 'remote_rep', 'ewar', 'cap_warfare'."""
+    values: list[float | None]
+
+
+class KillEventOut(BaseModel):
+    """One kill event overlaid on the fleet timeline."""
+
+    ts: int
+    killmail_id: int
+    victim_character_id: int | None
+    victim_ship_name: str
+    side_kind: str | None
+    isk: float | None
+
+
+class FleetTimelineOut(BaseModel):
+    """Aggregated fleet-level timeline for one battle report."""
+
+    x: list[int]
+    series: list[FleetSeriesOut]
+    kills: list[KillEventOut]
+    fights: list[TimelineFightInfo]
+    bucket_seconds: int
+    t_start: int | None
+    t_end: int | None

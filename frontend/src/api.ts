@@ -268,6 +268,31 @@ export interface FightEwar {
   logi: LogiRow[]
 }
 
+// Fleet timeline types (E3)
+export interface FleetSeriesItem {
+  key: string
+  values: (number | null)[]
+}
+
+export interface KillEvent {
+  ts: number  // epoch seconds
+  killmail_id: number
+  victim_character_id: number | null
+  victim_ship_name: string
+  side_kind: string | null
+  isk: number | null
+}
+
+export interface FleetTimeline {
+  x: number[]
+  series: FleetSeriesItem[]
+  kills: KillEvent[]
+  fights: TimelineFightInfo[]
+  bucket_seconds: number
+  t_start: number | null
+  t_end: number | null
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -393,4 +418,6 @@ export const api = {
     jsonFetch<FightReconcile>(`${API}/brs/${brId}/fights/${fightId}/reconcile`),
   fightEwar: (brId: string, fightId: string | number) =>
     jsonFetch<FightEwar>(`${API}/brs/${brId}/fights/${fightId}/ewar`),
+  fleetTimeline: (brId: string) =>
+    jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
 }
