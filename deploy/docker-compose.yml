@@ -1,0 +1,61 @@
+# Production compose for NV Battle Reports.
+#
+# Base:    docker compose up -d
+#          — starts the app only; no rclone.conf required.
+#
+# Backups: docker compose --profile backup up -d
+#          — also starts the backup sidecar; requires ./rclone-config/rclone.conf.
+
+services:
+  nvbr:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        VITE_URL_PREFIX: ${URL_PREFIX:-/br}
+    image: nvbr:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      URL_PREFIX: ${URL_PREFIX:-/br}
+      DB_PATH: /app/var/db/nvbr.db
+      LOG_DIR: /app/var/logs
+    volumes:
+      - nvbr_data:/app/var
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000${URL_PREFIX:-/br}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional daily-backup sidecar. Only starts with:
+  #   docker compose --profile backup up -d
+  # Requires ./rclone-config/rclone.conf (mount a directory, not a single file,
+  # so rclone can rewrite it on OAuth token refresh).
+  backup:
+    image: nvbr:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: ["backup"]
+    restart: unless-stopped
+    user: root   # needs read access to the data volume + rclone.conf directory
+    depends_on: [nvbr]
+    env_file: .env
+    environment:
+      DB_PATH: /app/var/db/nvbr.db
+      LOG_DIR: /app/var/logs
+      BACKUP_RCLONE_REMOTE: ${BACKUP_RCLONE_REMOTE:-}
+      BACKUP_KEEP: ${BACKUP_KEEP:-30}
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+      RCLONE_CONFIG: /config/rclone.conf
+    volumes:
+      - nvbr_data:/app/var
+      - ./rclone-config:/config   # put rclone.conf here; dir mount allows token refresh rewrites
+    command: ["bash", "/app/scripts/backup-loop.sh"]
+
+volumes:
+  nvbr_data:

@@ -1,0 +1,31 @@
+# TLS reverse proxy for the NV Battle Reports host.
+#
+# Topology: NV Tools authenticates the user and forwards each request over HTTPS
+# to THIS host; Caddy terminates TLS on :443 and reverse-proxies to the
+# loopback-bound app container. Caddy auto-provisions a Let's Encrypt cert once
+# the hostname's DNS record points at this VM.
+#
+# Replace `your-nvbr-hostname.example` with the real hostname, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# The app registers its routes under its URL prefix and does its own bearer
+# check, so Caddy must NOT strip any prefix and must leave Authorization +
+# X-User-* headers untouched — the default reverse_proxy behaviour.
+#
+# Only add `flush_interval -1` + zeroed transport timeouts if the app streams
+# Server-Sent Events; omit them otherwise (cargo-cult for non-streaming apps).
+# NV BR does not stream SSE, so no flush settings are needed here.
+
+your-nvbr-hostname.example {
+	reverse_proxy http://127.0.0.1:8000
+
+	# --- Hosting several apps behind ONE hostname? ---
+	# Replace the single reverse_proxy above with per-path matchers. Do NOT use
+	# `handle_path`, which strips the matched prefix the app needs:
+	#
+	#   @nvbr path /br /br/*
+	#   reverse_proxy @nvbr 127.0.0.1:8000
+	#   @otherapp path /other /other/*
+	#   reverse_proxy @otherapp 127.0.0.1:8001
+}

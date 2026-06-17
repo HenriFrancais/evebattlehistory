@@ -290,3 +290,28 @@ nav a:hover { color: var(--accent); }
   border-radius: 6px;
   text-align: center;
 }
+
+/* Log upload chips */
+.chip { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+.chip-parsed { background: rgba(76,175,80,0.2); color: var(--ok); border: 1px solid var(--ok); }
+.chip-unresolved { background: rgba(255,183,77,0.2); color: var(--warn); border: 1px solid var(--warn); }
+.chip-duplicate { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
+.chip-error { background: rgba(239,83,80,0.2); color: var(--bad); border: 1px solid var(--bad); }
+
+/* Drop zone */
+.drop-zone { border: 2px dashed var(--border); border-radius: 6px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.15s; }
+.drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); }
+
+/* Coverage */
+.cov-covered { color: var(--ok); }
+.cov-missing { color: var(--bad); }
+
+/* Logs table */
+.logs-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.logs-table th { text-align: left; padding: 0.4rem 0.6rem; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+.logs-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); }
+
+/* Coverage matrix */
+.cov-matrix { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.cov-matrix th, .cov-matrix td { padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); }
+.cov-matrix th { color: var(--text-dim); font-weight: 500; }

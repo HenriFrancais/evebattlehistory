@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: TestChar Alpha
+  Session Started: 2026.01.01 12:00:00
+------------------------------------------------------------
+[ 2026.01.01 12:10:01 ] (combat) <color=0xff7fffff><b>+52 GJ</b><color=0x77ffffff><font size=10> energy drained from </font><b><color=0xffffffff><font size=12><color=0xFFFFB300> <u><b>Loki</b></u></color></font><font size=12><color=0xFFFFFF66> [<b>SMAD</b>]</color></font> [<b>PSAZ</b>]  [iamamusing Shazih]<color=0xFFFFFFFF><b> -</b><color=0x77ffffff><font size=10> - Small Ghoul Compact Energy Nosferatu</font>
+[ 2026.01.01 12:10:06 ] (combat) <color=0xffe57f7f><b>-0 GJ</b><color=0x77ffffff><font size=10> energy drained to </font><b><color=0xffffffff><font size=12><color=0xFFFFB300> <u><b>Absolution</b></u></color></font><font size=12><color=0xFFFFFF66> [<b>4CRAB</b>]</color></font> [<b>SRG-C</b>]  [Hekpoc Risalo]<color=0xFFFFFFFF><b> -</b><color=0x77ffffff><font size=10> - Small Energy Nosferatu II</font>

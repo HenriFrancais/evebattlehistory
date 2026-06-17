@@ -14,6 +14,7 @@ from app.esi.demo import DemoEsiClient
 from app.fights.aggregate import aggregate_br
 from app.ingest.persist import persist_killmails
 from app.ingest.sources.factory import get_source
+from app.logs.associate import associate_logs_for_br
 from app.observability.logging import log
 
 
@@ -173,6 +174,9 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 our_alliance_ids=app_config.our_alliance_ids,
                 our_corp_ids=app_config.our_corp_ids,
             )
+            # Phase 4.5: associate uploaded logs to fights for this BR.
+            # Guarded inside associate_logs_for_br — failure never fails the ingest.
+            await associate_logs_for_br(session, br_id)
             await session.commit()
 
         # ------------------------------------------------------------------ #

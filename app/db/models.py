@@ -308,3 +308,115 @@ class BrShipCount(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
     __table_args__ = (Index("ix_br_ship_count_type", "ship_type_id", "count"),)
+
+
+# ---------------------------------------------------------------------------
+# Gamelog tables (Task 2.2)
+# ---------------------------------------------------------------------------
+
+
+class GamelogFile(Base):
+    __tablename__ = "gamelog_file"
+
+    file_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uploaded_by_user: Mapped[str] = mapped_column(String(128))
+    claimed_character_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    listener_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    character_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # "filename" | "listener_roster" | "unresolved"
+    resolved_via: Mapped[str] = mapped_column(String(32))
+    session_started_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    log_start_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    log_end_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    stored_path: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    mime: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    # "parsed" | "unresolved" | "error"
+    parse_status: Mapped[str] = mapped_column(String(16))
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_gamelog_file_uploaded_by_user", "uploaded_by_user"),
+        Index("ix_gamelog_file_sha256", "sha256"),
+    )
+
+
+class LogEvent(Base):
+    __tablename__ = "log_event"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("gamelog_file.file_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+    )
+    character_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    direction: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    effect_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    other_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    other_corp_ticker: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    other_alliance_ticker: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    other_ship_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    module_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    fight_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # filled by Task 2.3
+
+    __table_args__ = (
+        Index("ix_log_event_character_id_ts", "character_id", "ts"),
+        Index("ix_log_event_file_id", "file_id"),
+        Index("ix_log_event_fight_id", "fight_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Log↔fight association tables (Task 2.3)
+# ---------------------------------------------------------------------------
+
+#: Bin width used to floor event timestamps into buckets.
+BUCKET_SECONDS: int = 5
+
+
+class LogEventBucket(Base):
+    """Read-optimised 5-second bin aggregate for (fight_id, character_id) log data.
+
+    Rebuilt from scratch every time a file is re-associated so sums stay
+    correct regardless of upload order.
+
+    NULL → "" convention
+    --------------------
+    ``effect_type`` and ``direction`` are part of the composite primary key.
+    SQLite does not allow NULL in a primary-key column, so source LogEvent values
+    of None are coerced to "" (empty string) when buckets are built in
+    ``_rebuild_buckets_for_pairs`` (app/logs/associate.py).
+
+    Phase 3/4 readers MUST treat "" as "unknown/none" for both columns; never
+    compare against None or interpret "" as a valid named effect type or direction.
+    """
+
+    __tablename__ = "log_event_bucket"
+
+    fight_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    character_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    bucket_ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    # "" means the source LogEvent.effect_type was None (see NULL→"" convention above)
+    effect_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # "" means the source LogEvent.direction was None (see NULL→"" convention above)
+    direction: Mapped[str] = mapped_column(String(4), primary_key=True)
+
+    sum_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_log_event_bucket_fight_char", "fight_id", "character_id"),
+        Index("ix_log_event_bucket_fight_effect", "fight_id", "effect_type"),
+    )

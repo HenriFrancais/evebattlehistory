@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: TestChar Alpha
+  Session Started: 2026.01.01 12:00:00
+------------------------------------------------------------
+[ 2026.01.01 12:01:07 ] (combat) <color=0xffcc0000><b>432</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>FakeEnemy Bravo[.TST](Brutix Navy Issue)</b><font size=10><color=0x77ffffff> - 250mm Railgun II - Grazes
+[ 2026.01.01 12:01:08 ] (combat) <color=0xffcc0000><b>957</b> <color=0x77ffffff><font size=10>from</font> <b><color=0xffffffff>FakeEnemy Bravo[.TST](Brutix Navy Issue)</b><font size=10><color=0x77ffffff> - 250mm Railgun II - Hits

@@ -72,6 +72,42 @@ export interface BrCreated {
   status: string
 }
 
+export interface LogUploadResult {
+  filename: string
+  file_id: string | null
+  status: 'parsed' | 'unresolved' | 'duplicate' | 'error'
+  event_count: number
+  character_name: string | null
+  message: string | null
+}
+
+export interface MyLogFile {
+  file_id: string
+  filename: string
+  character_id: number | null
+  character_name: string | null
+  listener_name: string | null
+  parse_status: string
+  event_count: number
+  log_start_at: string | null
+  log_end_at: string | null
+  uploaded_at: string | null
+}
+
+export interface CharacterCoverage {
+  character_id: number
+  character_name: string
+  participated_fights: number[]
+  covered: boolean
+  fights_covered: number[]
+  fights_missing: number[]
+}
+
+export interface UserCoverage {
+  user_name: string
+  characters: CharacterCoverage[]
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -110,4 +146,25 @@ export const api = {
     }),
   getBr: (id: string) => jsonFetch<BrDetail>(`${API}/brs/${id}`),
   getBrStatus: (id: string) => jsonFetch<BrStatus>(`${API}/brs/${id}/status`),
+  uploadLogs: async (files: File[]): Promise<LogUploadResult[]> => {
+    const formData = new FormData()
+    for (const file of files) {
+      formData.append('files', file)
+    }
+    const res = await fetch(`${API}/logs`, { method: 'POST', body: formData })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        if (typeof body?.detail === 'string') detail = body.detail
+      } catch {
+        // non-JSON error body; keep statusText
+      }
+      throw new ApiError(res.status, detail)
+    }
+    return res.json() as Promise<LogUploadResult[]>
+  },
+  myLogs: () => jsonFetch<MyLogFile[]>(`${API}/logs/mine`),
+  brCoverage: (id: string) => jsonFetch<UserCoverage[]>(`${API}/brs/${id}/coverage`),
+  myBrCoverage: (id: string) => jsonFetch<UserCoverage>(`${API}/brs/${id}/my-coverage`),
 }

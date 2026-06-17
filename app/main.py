@@ -16,7 +16,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.brs import router as brs_router
+from app.api.logs import router as logs_router
 from app.api.meta import router as meta_router
+from app.backup import restore_if_empty
 from app.config import get_settings
 from app.db.engine import init_models
 from app.ingest.jobs import sweep_pending
@@ -34,6 +36,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(level=settings.log_level)
     HEALTH.data_source = settings.data_source
+
+    try:
+        await asyncio.to_thread(restore_if_empty, settings)
+    except Exception as exc:
+        log.error("restore.startup_guard", error=str(exc))
 
     await init_models(settings)
     try:
@@ -65,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=prefix)
     app.include_router(meta_router, prefix=prefix)
     app.include_router(brs_router, prefix=prefix)
+    app.include_router(logs_router, prefix=prefix)
     # Mount the built SPA last so API routes take precedence and static assets
     # fall through to the catch-all.
     if _FRONTEND_DIST.is_dir():

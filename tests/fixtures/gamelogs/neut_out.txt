@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: TestChar Alpha
+  Session Started: 2026.01.01 12:00:00
+------------------------------------------------------------
+[ 2026.01.01 12:05:26 ] (combat) <color=0xff7fffff><b>234 GJ</b><color=0x77ffffff><font size=10> energy neutralized </font><b><color=0xffffffff><font size=12><color=0xFFFFFFFF><b>FakeEnemy Echo</b> </color></font><font size=12><color=0xFFFFB300>[10MN]</color></font><font size=12>[.EFG]</font> <font size=12><color=0xFFFFFFFF><b>Hurricane Fleet Issue</b></color></font></b><color=0x77ffffff><font size=10> - Medium Abyssal Energy Neutralizer</font>
+[ 2026.01.01 12:05:28 ] (combat) <color=0xff7fffff><b>0 GJ</b><color=0x77ffffff><font size=10> energy neutralized </font><b><color=0xffffffff><font size=12><color=0xFFFFFFFF><b>FakeEnemy Echo</b> </color></font><font size=12><color=0xFFFFB300>[10MN]</color></font><font size=12>[.EFG]</font> <font size=12><color=0xFFFFFFFF><b>Hurricane Fleet Issue</b></color></font></b><color=0x77ffffff><font size=10> - Medium Abyssal Energy Neutralizer</font>

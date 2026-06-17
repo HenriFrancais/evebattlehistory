@@ -39,6 +39,7 @@ MEMBER_HEADERS = {
 def _clear_caches() -> None:
     get_settings.cache_clear()
     get_app_config.cache_clear()
+    reset_engine_for_tests()
     reset_roster_store_for_tests()
     HEALTH.roster_loaded = False
     HEALTH.roster_version = 0

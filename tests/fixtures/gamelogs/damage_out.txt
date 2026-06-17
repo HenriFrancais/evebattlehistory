@@ -1,0 +1,7 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: TestChar Alpha
+  Session Started: 2026.01.01 12:00:00
+------------------------------------------------------------
+[ 2026.01.01 12:01:07 ] (combat) <color=0xff00ffff><b>151</b> <color=0x77ffffff><font size=10>to</font> <b><color=0xffffffff>FakeEnemy Charlie[MEMO](Eos)</b><font size=10><color=0x77ffffff> - Light Entropic Disintegrator II - Smashes
+[ 2026.01.01 12:01:09 ] (combat) <color=0xff00ffff><b>272</b> <color=0x77ffffff><font size=10>to</font> <b><color=0xffffffff>FakeEnemy Charlie[MEMO](Eos)</b><font size=10><color=0x77ffffff> - Light Entropic Disintegrator II - Wrecks

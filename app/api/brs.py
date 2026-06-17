@@ -28,6 +28,7 @@ from app.config import get_settings
 from app.db.engine import get_sessionmaker
 from app.db.models import BattleReport, BrFight, Fight, FightSide
 from app.ingest.jobs import schedule_ingest
+from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
 
 SUPPORTED_HOSTS = {"zkillboard.com", "br.evetools.org"}
@@ -178,6 +179,56 @@ async def get_br_fights(
         raise HTTPException(status_code=404, detail="Battle report not found")
 
     return await _load_fights(session, br_id)
+
+
+@router.get("/api/brs/{br_id}/coverage")
+async def get_br_coverage(
+    br_id: str,
+    request: Request,
+    session: _Session,
+) -> list[dict]:  # type: ignore[type-arg]
+    """Return per-user/character log coverage matrix for a battle report.
+
+    404 if the BR doesn't exist.  Requires authentication (all members may read).
+    """
+    current_user(request)  # auth check
+    settings = get_settings()
+
+    exists = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    coverage = await br_coverage(session, settings, br_id)
+    return [_coverage_to_dict(uc) for uc in coverage]
+
+
+@router.get("/api/brs/{br_id}/my-coverage")
+async def get_my_br_coverage(
+    br_id: str,
+    request: Request,
+    session: _Session,
+) -> dict:  # type: ignore[type-arg]
+    """Return the current user's log coverage for a battle report.
+
+    404 if the BR doesn't exist or the user has no participating characters.
+    """
+    user = current_user(request)
+    settings = get_settings()
+
+    exists = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    cov = await my_coverage(session, settings, br_id, user.user_name)
+    if cov is None:
+        raise HTTPException(
+            status_code=404, detail="No participating characters for this user in this BR"
+        )
+    return _coverage_to_dict(cov)
 
 
 def _br_to_summary(br: BattleReport) -> BrSummary:

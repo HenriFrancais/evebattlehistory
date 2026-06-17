@@ -1,0 +1,8 @@
+------------------------------------------------------------
+  Gamelog
+  Listener: TestChar Alpha
+  Session Started: 2026.01.01 12:00:00
+------------------------------------------------------------
+[ 2026.01.01 12:00:04 ] (combat) <color=0xffffffff><b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font><font size=12><color=0xFFFFB300>[10MN]</color></font><font size=12>[.EFG]</font> <font size=12><color=0xFFFFFFFF><b>Retribution</b></color></font></b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font><font size=12><color=0xFFFFFFFF><b>AllyChar One</b> </color></font><font size=12><color=0xFFFFB300>[NV]</color></font><font size=12>[NVACA]</font> <font size=12><color=0xFFFFFFFF><b>Kitsune</b></color></font>
+[ 2026.01.01 12:00:05 ] (combat) <color=0xffffffff><b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b>you</b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font><font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font><font size=12><color=0xFFFFB300>[10MN]</color></font><font size=12>[.EFG]</font> <font size=12><color=0xFFFFFFFF><b>Retribution</b></color></font>
+[ 2026.01.01 12:00:06 ] (combat) <color=0xffffffff><b>Warp disruption attempt</b> <color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font><font size=12><color=0xFFFFB300>[10MN]</color></font><font size=12>[.EFG]</font> <font size=12><color=0xFFFFFFFF><b>Retribution</b></color></font></b> <color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>you!

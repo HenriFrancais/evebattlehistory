@@ -1,15 +1,79 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { BrDetail, BrStatus } from '../api'
+import type { ApiError, BrDetail, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
+import { CoverageMatrix } from '../components/CoverageMatrix'
 import { FightList } from '../components/FightList'
 import { IngestProgress } from '../components/IngestProgress'
 import { fmtIsk } from '../format'
+
+function MyCoverageSection({ id }: { id: string }) {
+  const [myCoverage, setMyCoverage] = useState<UserCoverage | null>(null)
+  const [noParticipation, setNoParticipation] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api.myBrCoverage(id).then(
+      (data) => { if (!cancelled) setMyCoverage(data) },
+      (e: unknown) => {
+        if (!cancelled) {
+          const err = e as ApiError
+          if (err?.status === 404) {
+            setNoParticipation(true)
+          } else {
+            setError(String(err?.message ?? e))
+          }
+        }
+      },
+    )
+    return () => { cancelled = true }
+  }, [id])
+
+  if (noParticipation) {
+    return <p className="dim">None of your characters participated in this BR.</p>
+  }
+  if (error) {
+    return <p className="error-text">{error}</p>
+  }
+  if (!myCoverage) {
+    return <p className="dim">Loading coverage…</p>
+  }
+
+  return (
+    <div>
+      <h3 style={{ margin: '0 0 0.5rem' }}>My Characters</h3>
+      {myCoverage.characters.length === 0 ? (
+        <p className="dim">No characters found.</p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          {myCoverage.characters.map((char) => (
+            <div key={char.character_id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ fontWeight: 500 }}>{char.character_name}</span>
+              {char.covered ? (
+                <span className="cov-covered">✓ covered ({char.fights_covered.length} fights)</span>
+              ) : (
+                <span className="cov-missing">
+                  ✗ missing {char.fights_missing.length} fight{char.fights_missing.length !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+        <Link to="/logs">Upload logs →</Link>
+      </p>
+    </div>
+  )
+}
 
 export function BrDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [br, setBr] = useState<BrDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [me, setMe] = useState<MeResponse | null>(null)
+  const [fullCoverage, setFullCoverage] = useState<UserCoverage[] | null>(null)
 
   const load = useCallback(() => {
     if (!id) return
@@ -22,6 +86,27 @@ export function BrDetailPage() {
   }, [id])
 
   useEffect(() => { return load() }, [load])
+
+  // Fetch me() in parallel with BR
+  useEffect(() => {
+    let cancelled = false
+    api.me().then(
+      (d) => { if (!cancelled) setMe(d) },
+      () => { /* ignore errors; coverage just won't show */ },
+    )
+    return () => { cancelled = true }
+  }, [])
+
+  // Lazy-load full coverage only when BR is ready and user is FC
+  useEffect(() => {
+    if (!br || !id || !me?.can_create_br) return
+    let cancelled = false
+    api.brCoverage(id).then(
+      (data) => { if (!cancelled) setFullCoverage(data) },
+      () => { /* non-critical; ignore */ },
+    )
+    return () => { cancelled = true }
+  }, [br, id, me])
 
   if (error) return <div className="page"><p className="error-text">{error}</p></div>
   if (!br) return <div className="page"><p className="dim">Loading…</p></div>
@@ -83,6 +168,17 @@ export function BrDetailPage() {
       )}
       <h2 style={{ margin: 0 }}>Engagements</h2>
       <FightList fights={br.fights} brId={br.br_id} />
+
+      <section data-testid="log-coverage-section" className="panel">
+        <h2 style={{ margin: '0 0 0.75rem' }}>Log Coverage</h2>
+        {id && <MyCoverageSection id={id} />}
+        {me?.can_create_br && fullCoverage && (
+          <div style={{ marginTop: '1rem' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>All Members</h3>
+            <CoverageMatrix coverage={fullCoverage} />
+          </div>
+        )}
+      </section>
     </div>
   )
 }
