@@ -1,0 +1,12 @@
+# App/fleet config (committed; safe defaults). Secrets live in .env, never here.
+
+# Who may CREATE a battle report. A user qualifies if their rank is listed here
+# OR any of their teams is in create_teams (both case-insensitive).
+create_ranks = ["CEO", "Director", "High Command"]
+create_teams = ["fc"]
+
+# The "us" entity set — used to label each fight side friendly/hostile and to
+# compute BR-level win/loss and "we killed / we fielded" queries. Fill with the
+# real NV alliance/corp IDs before deploying.
+our_alliance_ids = []
+our_corp_ids = []

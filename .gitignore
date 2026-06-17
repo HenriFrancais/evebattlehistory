@@ -1,0 +1,25 @@
+# Secrets & local overrides
+.env
+config.local.toml
+
+# Runtime data (DB, uploaded logs, ESI cache, SDE artifacts)
+/var/
+rclone-config/
+
+# Raw EVE gamelogs dropped at the repo root (contain real player data — never commit)
+/[0-9]*_[0-9]*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/

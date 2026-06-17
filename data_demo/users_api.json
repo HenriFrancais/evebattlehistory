@@ -1,0 +1,25 @@
+[
+  {
+    "user_name": "Ra'zok",
+    "main_character_id": 2112615087,
+    "characters": [
+      { "character_id": 2112615087, "character_name": "Ra'zok Zateki" },
+      { "character_id": 2113835656, "character_name": "Ra'zok Alt" }
+    ],
+    "discord_id": "100000000000000001",
+    "rank": "High Command",
+    "teams": ["fc", "logistics"],
+    "allowed_apps": ["nv_br"]
+  },
+  {
+    "user_name": "LineMember",
+    "main_character_id": 95000001,
+    "characters": [
+      { "character_id": 95000001, "character_name": "Line Member" }
+    ],
+    "discord_id": null,
+    "rank": "Member",
+    "teams": [],
+    "allowed_apps": ["nv_br"]
+  }
+]
