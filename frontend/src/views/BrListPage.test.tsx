@@ -26,6 +26,7 @@ const mockMe = (can: boolean): MeResponse => ({
   user_teams: [],
   main_character_id: '12345',
   can_create_br: can,
+  impersonation_available: false,
 })
 
 const mockBr: BrSummary = {

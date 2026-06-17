@@ -7,7 +7,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.api.auth import can_create_br, current_user
+from app.api.access import acting_user
+from app.api.auth import can_create_br
+from app.config import get_settings
 
 router = APIRouter()
 
@@ -18,15 +20,18 @@ class MeResponse(BaseModel):
     user_teams: list[str]
     main_character_id: str
     can_create_br: bool
+    impersonation_available: bool
 
 
 @router.get("/api/me")
 async def me(request: Request) -> MeResponse:
-    user = current_user(request)
+    settings = get_settings()
+    user = await acting_user(request, settings)
     return MeResponse(
         user_name=user.user_name,
         user_rank=user.rank,
         user_teams=user.teams,
         main_character_id=user.main_character_id,
         can_create_br=can_create_br(user),
+        impersonation_available=settings.dev_mode,
     )

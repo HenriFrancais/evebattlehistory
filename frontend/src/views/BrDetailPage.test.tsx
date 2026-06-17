@@ -57,6 +57,7 @@ function makeMeResponse(can_create_br: boolean): MeResponse {
     user_teams: [],
     main_character_id: '12345',
     can_create_br,
+    impersonation_available: false,
   }
 }
 

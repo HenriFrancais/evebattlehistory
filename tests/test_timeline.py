@@ -384,7 +384,7 @@ async def test_character_timeline_events_cap_and_truncated_flag(db_session_maker
 # ---------------------------------------------------------------------------
 
 
-from tests.conftest import TEST_TOKEN  # noqa: E402
+from tests.conftest import CREATOR_HEADERS, TEST_TOKEN  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -411,7 +411,7 @@ async def test_api_timeline_returns_expected_shape(tmp_path, monkeypatch) -> Non
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/characters/{CHAR_A}/timeline", headers=hdrs)
 
@@ -461,7 +461,7 @@ async def test_api_events_returns_expected_shape(tmp_path, monkeypatch) -> None:
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     t_from = int(FIGHT_START.timestamp())
     t_to = int(FIGHT_END.timestamp())
     with TestClient(app) as client:
@@ -502,7 +502,7 @@ async def test_api_timeline_404_unknown_br(tmp_path, monkeypatch) -> None:  # ty
     get_app_config.cache_clear()
 
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/no-such-br/characters/{CHAR_A}/timeline", headers=hdrs)
 
@@ -531,7 +531,7 @@ async def test_api_events_404_unknown_br(tmp_path, monkeypatch) -> None:  # type
     get_app_config.cache_clear()
 
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     t_from = int(FIGHT_START.timestamp())
     t_to = int(FIGHT_END.timestamp())
     with TestClient(app) as client:
@@ -570,7 +570,7 @@ async def test_api_events_400_from_greater_than_to(tmp_path, monkeypatch) -> Non
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     # from > to is invalid
     t_from = int(FIGHT_END.timestamp())
     t_to = int(FIGHT_START.timestamp())

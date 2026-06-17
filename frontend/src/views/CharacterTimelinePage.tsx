@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { CharacterTimeline, TimelineEvent, TimelineEventList } from '../api'
-import { api } from '../api'
+import { type CharacterTimeline, type TimelineEvent, type TimelineEventList, ApiError, api } from '../api'
 import { TimelineChart } from '../components/TimelineChart'
 import { toUplotData } from '../timeline'
 
@@ -60,15 +59,27 @@ export function CharacterTimelinePage() {
   const { id, charId } = useParams<{ id: string; charId: string }>()
   const [timeline, setTimeline] = useState<CharacterTimeline | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [forbidden, setForbidden] = useState(false)
   const [eventList, setEventList] = useState<TimelineEventList | null>(null)
   const [eventsLoading, setEventsLoading] = useState(false)
 
   useEffect(() => {
     if (!id || !charId) return
     let cancelled = false
+    setForbidden(false)
+    setError(null)
+    setTimeline(null)
     api.characterTimeline(id, charId).then(
       (data) => { if (!cancelled) setTimeline(data) },
-      (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
+      (e: unknown) => {
+        if (!cancelled) {
+          if (e instanceof ApiError && e.status === 403) {
+            setForbidden(true)
+          } else {
+            setError(String((e as Error)?.message ?? e))
+          }
+        }
+      },
     )
     return () => { cancelled = true }
   }, [id, charId])
@@ -91,6 +102,16 @@ export function CharacterTimelinePage() {
     },
     [id, charId],
   )
+
+  if (forbidden) {
+    return (
+      <div className="page">
+        <p className="error-text" data-testid="forbidden-message">
+          You can only view your own characters' logs — ask an FC for fleet-wide access.
+        </p>
+      </div>
+    )
+  }
 
   if (error) {
     return (

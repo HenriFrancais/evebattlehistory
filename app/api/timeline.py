@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from app.analytics.timeline import (
     character_timeline,
     character_timeline_events,
 )
+from app.api.access import acting_user, can_view_character
 from app.api.deps import SessionDep
 from app.api.schemas import (
     CharacterTimelineOut,
@@ -37,12 +38,17 @@ async def get_character_timeline(
     br_id: str,
     character_id: int,
     session: SessionDep,
+    request: Request,
 ) -> CharacterTimelineOut:
     """Return the uPlot-aligned timeline for one character within a battle report.
 
     Returns empty series (not 404) when the character has no log buckets in the BR.
     404 if the battle report itself is unknown.
+    403 if the acting user may not view this character's data.
     """
+    user = await acting_user(request)
+    if not await can_view_character(user, character_id):
+        raise HTTPException(status_code=403, detail="Access denied: not your character")
     await _require_br(br_id, session)
     tl = await character_timeline(session, br_id, character_id)
 
@@ -78,6 +84,7 @@ async def get_character_events(
     br_id: str,
     character_id: int,
     session: SessionDep,
+    request: Request,
     t_from: int = Query(..., alias="from"),
     t_to: int = Query(..., alias="to"),
     effect_type: str | None = Query(default=None),
@@ -94,7 +101,11 @@ async def get_character_events(
     Results are ordered by ts ascending and capped at 1000 rows.
     When capped, ``truncated=true`` is set on the response.
     404 if the battle report is unknown; 400 if from > to.
+    403 if the acting user may not view this character's data.
     """
+    user = await acting_user(request)
+    if not await can_view_character(user, character_id):
+        raise HTTPException(status_code=403, detail="Access denied: not your character")
     if t_from > t_to:
         raise HTTPException(status_code=400, detail="'from' must be <= 'to'")
 

@@ -6,6 +6,13 @@ export interface MeResponse {
   user_teams: string[]
   main_character_id: string
   can_create_br: boolean
+  impersonation_available: boolean
+}
+
+export interface RosterUserOut {
+  user_name: string
+  main_character_id: number | null
+  rank: string
 }
 
 export interface BrListSummary {
@@ -269,8 +276,46 @@ export class ApiError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Impersonation (DEV_MODE only): in-memory, never a cookie.
+// ---------------------------------------------------------------------------
+
+let _impersonateName: string | null = null
+const _impersonateListeners: Array<() => void> = []
+
+/** Set the active impersonation user (or null to clear). */
+export function setImpersonateUser(name: string | null): void {
+  _impersonateName = name
+  _impersonateListeners.forEach((cb) => cb())
+}
+
+/** Get the active impersonation user name, or null. */
+export function getImpersonateUser(): string | null {
+  return _impersonateName
+}
+
+/** Subscribe to impersonation changes. Returns an unsubscribe fn. */
+export function onImpersonateChange(cb: () => void): () => void {
+  _impersonateListeners.push(cb)
+  return () => {
+    const idx = _impersonateListeners.indexOf(cb)
+    if (idx !== -1) _impersonateListeners.splice(idx, 1)
+  }
+}
+
+function _impersonateHeaders(): Record<string, string> {
+  return _impersonateName ? { 'X-Impersonate-User': _impersonateName } : {}
+}
+
 async function jsonFetch<T>(input: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, init)
+  const merged: RequestInit = {
+    ...init,
+    headers: {
+      ..._impersonateHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
+  }
+  const res = await fetch(input, merged)
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -290,6 +335,7 @@ const API = `${import.meta.env.BASE_URL}api`
 
 export const api = {
   me: () => jsonFetch<MeResponse>(`${API}/me`),
+  rosterUsers: () => jsonFetch<RosterUserOut[]>(`${API}/roster/users`),
   listBrs: () => jsonFetch<BrListResponse>(`${API}/brs`),
   createBr: (url: string, title?: string) =>
     jsonFetch<BrCreated>(`${API}/brs`, {
@@ -304,7 +350,11 @@ export const api = {
     for (const file of files) {
       formData.append('files', file)
     }
-    const res = await fetch(`${API}/logs`, { method: 'POST', body: formData })
+    const res = await fetch(`${API}/logs`, {
+      method: 'POST',
+      body: formData,
+      headers: _impersonateHeaders(),
+    })
     if (!res.ok) {
       let detail = res.statusText
       try {

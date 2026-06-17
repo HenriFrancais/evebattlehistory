@@ -16,6 +16,9 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
+// Note: ApiError is re-exported from the mocked module but the real class is used.
+import { ApiError } from '../api'
+
 // Mock TimelineChart to avoid uPlot/canvas in tests.
 // The mock renders series labels as data-testid attributes and exposes
 // a way to trigger onSelectRange.
@@ -160,5 +163,16 @@ describe('CharacterTimelinePage', () => {
 
     await waitFor(() => expect(screen.getByTestId('timeline-chart')).toBeInTheDocument())
     expect(screen.queryByText(/loading/i)).not.toBeInTheDocument()
+  })
+
+  it('shows friendly 403 message when timeline fetch returns 403', async () => {
+    vi.mocked(api.characterTimeline).mockRejectedValue(new ApiError(403, 'Access denied: not your character'))
+    renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('forbidden-message')).toBeInTheDocument()
+    )
+    expect(screen.getByText(/you can only view your own characters/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('timeline-chart')).not.toBeInTheDocument()
   })
 })
