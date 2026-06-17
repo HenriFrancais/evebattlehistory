@@ -1,0 +1,20 @@
+{
+  "killmail_id": 103,
+  "killmail_time": "2026-06-10T20:30:00Z",
+  "solar_system_id": 31002222,
+  "victim": {
+    "character_id": 2200000001,
+    "corporation_id": 98000002,
+    "alliance_id": 99000002,
+    "ship_type_id": 12013,
+    "damage_taken": 38000,
+    "items": [
+      {"item_type_id": 3841, "flag": 19, "quantity_destroyed": 0, "quantity_dropped": 1, "singleton": 0}
+    ]
+  },
+  "attackers": [
+    {"character_id": 2100000001, "corporation_id": 98000001, "alliance_id": 99000001, "ship_type_id": 29990, "weapon_type_id": 2456, "damage_done": 25000, "final_blow": false, "security_status": -0.5},
+    {"character_id": 2100000003, "corporation_id": 98000001, "alliance_id": 99000001, "ship_type_id": 29984, "weapon_type_id": 3841, "damage_done": 13000, "final_blow": true, "security_status": -1.0}
+  ],
+  "zkb": {"totalValue": 120000000.0, "fittedValue": 100000000.0, "hash": "ccc333ddd444eee555fff666aaa111bbb222ccc3", "npc": false, "solo": false, "points": 3}
+}

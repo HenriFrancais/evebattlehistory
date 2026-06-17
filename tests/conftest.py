@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_app_config, get_settings
+from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
 from app.observability.health import HEALTH
 from app.roster.snapshot import reset_roster_store_for_tests
 
@@ -76,3 +77,25 @@ def make_client(monkeypatch):
 @pytest.fixture
 def client(make_client) -> TestClient:
     return make_client()
+
+
+@pytest.fixture
+async def db_session_maker(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """Provide a fresh async sessionmaker backed by a temp SQLite DB.
+
+    Sets DATA_SOURCE=demo and NV_TOKEN so callers can use get_settings() safely.
+    Resets the engine singleton before and after.
+    """
+    db_file = tmp_path / "test.db"
+    monkeypatch.setenv("DB_PATH", str(db_file))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+    yield get_sessionmaker(settings)
+    reset_engine_for_tests()
+    get_settings.cache_clear()
+    get_app_config.cache_clear()

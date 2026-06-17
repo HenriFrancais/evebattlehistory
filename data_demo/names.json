@@ -1,0 +1,23 @@
+{
+  "2100000001": {"name": "Razok Vangaurd", "category": "character"},
+  "2100000002": {"name": "Lineth Ember", "category": "character"},
+  "2100000003": {"name": "Kael Driftborn", "category": "character"},
+  "2200000001": {"name": "Hostile Alpha", "category": "character"},
+  "2200000002": {"name": "Hostile Beta", "category": "character"},
+  "2200000003": {"name": "Hostile Gamma", "category": "character"},
+  "98000001": {"name": "Nova Vacancies", "category": "corporation"},
+  "98000002": {"name": "Hostile Corp A", "category": "corporation"},
+  "98000003": {"name": "Hostile Corp B", "category": "corporation"},
+  "99000001": {"name": "NV Alliance", "category": "alliance"},
+  "99000002": {"name": "Hostile Alliance", "category": "alliance"},
+  "29990": {"name": "Loki", "category": "inventory_type"},
+  "29984": {"name": "Tengu", "category": "inventory_type"},
+  "12013": {"name": "Devoter", "category": "inventory_type"},
+  "22456": {"name": "Sabre", "category": "inventory_type"},
+  "11993": {"name": "Cerberus", "category": "inventory_type"},
+  "22442": {"name": "Muninn", "category": "inventory_type"},
+  "22436": {"name": "Eagle", "category": "inventory_type"},
+  "2456": {"name": "800mm Repeating Cannon II", "category": "inventory_type"},
+  "3841": {"name": "Scram", "category": "inventory_type"},
+  "31002222": {"name": "J123456", "category": "solar_system"}
+}

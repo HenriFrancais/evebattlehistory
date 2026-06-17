@@ -1,0 +1,12 @@
+{
+  "source": "demo",
+  "source_ref": "demo",
+  "title": "Demo Battle: NV vs Hostiles in J-Space",
+  "refs": [
+    [101, "aaa111bbb222ccc333ddd444eee555fff666aaa1"],
+    [102, "bbb222ccc333ddd444eee555fff666aaa111bbb2"],
+    [103, "ccc333ddd444eee555fff666aaa111bbb222ccc3"],
+    [104, "ddd444eee555fff666aaa111bbb222ccc333ddd4"],
+    [105, "eee555fff666aaa111bbb222ccc333ddd444eee5"]
+  ]
+}
