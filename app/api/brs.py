@@ -25,6 +25,7 @@ from app.api.schemas import (
 )
 from app.config import get_settings
 from app.db.models import BattleReport, BrFight, Fight, FightSide
+from app.fights.participants import ParticipantInfo, br_participants
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
@@ -166,6 +167,41 @@ async def get_br_fights(
         raise HTTPException(status_code=404, detail="Battle report not found")
 
     return await _load_fights(session, br_id)
+
+
+@router.get("/api/brs/{br_id}/participants")
+async def get_br_participants(
+    br_id: str,
+    request: Request,
+    session: SessionDep,
+) -> list[dict]:  # type: ignore[type-arg]
+    """Return the union of killmail participants and logged characters for a BR.
+
+    Each entry has: character_id, character_name, user_name, on_killmail, has_logs, fight_ids.
+    404 if the BR doesn't exist.  Requires authentication.
+    """
+    current_user(request)  # auth check
+    settings = get_settings()
+
+    exists = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    participants = await br_participants(session, settings, br_id)
+    return [_participant_to_dict(p) for p in participants]
+
+
+def _participant_to_dict(p: ParticipantInfo) -> dict:  # type: ignore[type-arg]
+    return {
+        "character_id": p.character_id,
+        "character_name": p.character_name,
+        "user_name": p.user_name,
+        "on_killmail": p.on_killmail,
+        "has_logs": p.has_logs,
+        "fight_ids": p.fight_ids,
+    }
 
 
 @router.get("/api/brs/{br_id}/coverage")

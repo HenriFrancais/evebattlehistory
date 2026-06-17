@@ -12,6 +12,13 @@ Design
   *used to* contribute to, then rebuild each pair from *all* LogEvent rows
   with that fight_id+character_id — not just from this file.  This keeps
   buckets correct regardless of which files were uploaded and in what order.
+* **Time-window association (E1)**: association is based on time-window overlap
+  only.  Killmail participation is NOT a filter — it becomes a flag surfaced via
+  ``br_participants``.  This ensures logistics/links/support characters whose
+  combat-effect logs overlap a fight window get their events stamped even if they
+  never appeared on a killmail.  Effect events are self-limiting: a character
+  elsewhere produces few/no in-window combat lines; deliberate log uploads are the
+  intentional signal.
 
 Public API
 ----------
@@ -36,7 +43,6 @@ from app.db.models import (
     LogEvent,
     LogEventBucket,
 )
-from app.fights.participants import fight_participant_char_ids
 from app.observability.logging import log
 
 
@@ -130,8 +136,10 @@ async def associate_file(
     2. Idempotent reset: clear fight_id on this file's events, collect the
        (fight_id, character_id) pairs that *used to* have contributions from
        this file so we can rebuild their buckets.
-    3. Find candidate fights: the file's character participated AND the fight
-       window (with padding) overlaps the file's log window.
+    3. Find candidate fights by TIME-WINDOW OVERLAP only: a fight is a candidate
+       if its padded window [started_at-pad, ended_at+pad] overlaps the file's
+       [log_start_at, log_end_at].  Killmail participation is NOT required here;
+       it becomes a flag surfaced via br_participants (E1 design change).
     4. Stamp fight_id on events within each candidate fight's padded window.
     5. Rebuild buckets for every (fight_id, character_id) pair touched.
 
@@ -189,14 +197,9 @@ async def associate_file(
             Fight.ended_at >= log_start_padded,
         )
     )
-    candidate_fights = list(fight_result.scalars())
-
-    # Filter to fights where this character participated
-    matched_fights: list[Fight] = []
-    for fight in candidate_fights:
-        participants = await fight_participant_char_ids(session, fight.fight_id)
-        if character_id in participants:
-            matched_fights.append(fight)
+    # All fights whose padded window overlaps the file's log window are candidates.
+    # Killmail participation is not required — it is a flag, not a filter.
+    matched_fights: list[Fight] = list(fight_result.scalars())
 
     # 4. Stamp fight_id on events within each fight's padded window.
     # The bounds are plain Python datetimes so the comparison is handled by
@@ -243,33 +246,49 @@ async def associate_file(
 
 
 async def associate_logs_for_br(session: AsyncSession, br_id: str) -> None:
-    """Associate all uploaded files for characters that participated in *br_id*'s fights.
+    """Associate all uploaded files whose time range overlaps any of *br_id*'s fights.
 
     Called after aggregate_br in the ingest pipeline.  Each file is individually
     guarded so one bad file does not abort association of the remaining files.
     The set of file_ids to process is collected upfront (outside the per-file guard)
     so lookup failures still propagate; only associate_file failures are swallowed.
-    """
-    # Collect fight_ids for this BR
-    fight_id_result = await session.execute(
-        select(BrFight.fight_id).where(BrFight.br_id == br_id)
-    )
-    fight_ids = list(fight_id_result.scalars())
 
-    if not fight_ids:
+    E1 change: we no longer filter to killmail participants.  Instead, we find all
+    parsed GamelogFiles whose [log_start_at, log_end_at] overlaps the padded window
+    of ANY fight in this BR.  ``associate_file`` then applies the per-fight overlap
+    rule at event-stamp time.  This ensures logistics/links whose logs overlap a fight
+    window are processed even if they never appeared on a killmail.
+    """
+    import datetime as dt
+
+    PAD = dt.timedelta(seconds=120)
+
+    # Collect fights for this BR
+    fights_result = await session.execute(
+        select(Fight)
+        .join(BrFight, BrFight.fight_id == Fight.fight_id)
+        .where(BrFight.br_id == br_id)
+    )
+    fights = list(fights_result.scalars())
+
+    if not fights:
         log.info("associate_logs_for_br.no_fights", br_id=br_id)
         return
 
-    # For each fight, find participant char_ids, then find uploaded files
+    # Find all parsed GamelogFiles whose log window overlaps ANY fight's padded window.
+    # A file overlaps fight F iff: file.log_end_at >= F.started_at-PAD  AND
+    #                                file.log_start_at <= F.ended_at+PAD
+    # We build a union by collecting file_ids for each fight.
     files_to_associate: set[int] = set()
-    for fight_id in fight_ids:
-        participants = await fight_participant_char_ids(session, fight_id)
-        if not participants:
-            continue
+    for fight in fights:
+        padded_start = fight.started_at - PAD
+        padded_end = fight.ended_at + PAD
         file_result = await session.execute(
             select(GamelogFile.file_id).where(
-                GamelogFile.claimed_character_id.in_(list(participants)),
                 GamelogFile.parse_status == "parsed",
+                GamelogFile.log_end_at >= padded_start,
+                GamelogFile.log_start_at <= padded_end,
+                GamelogFile.claimed_character_id.is_not(None),
             )
         )
         files_to_associate.update(file_result.scalars())
@@ -277,7 +296,7 @@ async def associate_logs_for_br(session: AsyncSession, br_id: str) -> None:
     log.info(
         "associate_logs_for_br.start",
         br_id=br_id,
-        fight_count=len(fight_ids),
+        fight_count=len(fights),
         file_count=len(files_to_associate),
     )
 

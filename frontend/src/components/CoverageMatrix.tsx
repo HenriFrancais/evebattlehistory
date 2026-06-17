@@ -35,6 +35,17 @@ export function CoverageMatrix({ coverage, brId }: Props) {
                 ) : (
                   char.character_name
                 )}
+                {/* E1: flag log-only participants (not on any killmail) */}
+                {char.has_logs && char.on_killmail === false && (
+                  <span
+                    className="badge badge-log-only"
+                    data-testid={`log-only-badge-${char.character_id}`}
+                    title="Logs only — not on a killmail"
+                    style={{ marginLeft: '0.4rem', fontSize: '0.75rem' }}
+                  >
+                    logs only
+                  </span>
+                )}
               </td>
               <td>
                 {char.covered ? (

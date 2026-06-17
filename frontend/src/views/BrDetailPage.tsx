@@ -53,6 +53,17 @@ function MyCoverageSection({ id }: { id: string }) {
               <Link to={`/brs/${id}/characters/${char.character_id}`} style={{ fontWeight: 500 }}>
                 {char.character_name}
               </Link>
+              {/* E1: flag log-only participants */}
+              {char.has_logs && char.on_killmail === false && (
+                <span
+                  className="badge badge-log-only"
+                  data-testid={`my-log-only-badge-${char.character_id}`}
+                  title="Logs only — not on a killmail"
+                  style={{ fontSize: '0.75rem' }}
+                >
+                  logs only
+                </span>
+              )}
               {char.covered ? (
                 <span className="cov-covered">✓ covered ({char.fights_covered.length} fights)</span>
               ) : (

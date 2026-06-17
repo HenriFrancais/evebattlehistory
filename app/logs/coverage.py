@@ -4,6 +4,20 @@ Public API
 ----------
     matrix = await br_coverage(session, settings, br_id)
     mine    = await my_coverage(session, settings, br_id, user_name)
+
+E1 change
+---------
+Coverage now includes **log-only participants** (characters not on any killmail
+but whose logs overlap a fight window and were associated).  Each CharacterCoverage
+now carries ``on_killmail: bool`` and ``has_logs: bool``.
+
+Semantics:
+- A character is "in scope" for a roster user if they either participated in a
+  killmail OR have LogEvents stamped with a fight in this BR.
+- "covered" means has_logs=True (they uploaded and were associated) for ALL
+  fights they are in scope for.
+- A character with on_killmail=True but has_logs=False is still shown as missing.
+- A character with on_killmail=False and has_logs=True is shown as covered.
 """
 
 from __future__ import annotations
@@ -28,6 +42,8 @@ class CharacterCoverage:
     fights_covered: list[int] = field(default_factory=list)
     fights_missing: list[int] = field(default_factory=list)
     covered: bool = False  # True iff all participated_fights are covered
+    on_killmail: bool = False  # True iff character appears on ≥1 killmail in this BR (E1)
+    has_logs: bool = False  # True iff character has ≥1 LogEvent stamped for this BR (E1)
 
 
 @dataclass
@@ -47,6 +63,8 @@ def _coverage_to_dict(uc: UserCoverage) -> dict[str, Any]:
                 "covered": cc.covered,
                 "fights_covered": cc.fights_covered,
                 "fights_missing": cc.fights_missing,
+                "on_killmail": cc.on_killmail,
+                "has_logs": cc.has_logs,
             }
             for cc in uc.characters
         ],
@@ -61,8 +79,12 @@ async def br_coverage(
 ) -> list[UserCoverage]:
     """Return per-user/character coverage for every NV member with ≥1 participant character.
 
-    A character is "covered" for a fight if there is at least one parsed
-    GamelogFile for that character with ≥1 LogEvent stamped with that fight_id.
+    A character is "in scope" if they participated in ≥1 killmail in the BR OR have
+    ≥1 LogEvent stamped with a fight in the BR.  A character is "covered" for a fight
+    if there is at least one parsed GamelogFile for that character with ≥1 LogEvent
+    stamped with that fight_id.
+
+    E1: each CharacterCoverage now includes on_killmail and has_logs flags.
 
     Parameters
     ----------
@@ -84,76 +106,76 @@ async def br_coverage(
     if not fight_ids:
         return []
 
-    # 2. For each fight, map character_id → set of fight_ids they participated in
-    char_fought_in: dict[int, set[int]] = {}
+    # 2. For each fight, map character_id → set of fight_ids they participated in (killmail)
+    km_char_to_fights: dict[int, set[int]] = {}
     for fight_id in fight_ids:
         participants = await fight_participant_char_ids(session, fight_id)
         for cid in participants:
-            char_fought_in.setdefault(cid, set()).add(fight_id)
+            km_char_to_fights.setdefault(cid, set()).add(fight_id)
 
-    if not char_fought_in:
+    # 3. Log-based participation: character_id → set of fight_ids with stamped events (E1)
+    log_result = await session.execute(
+        select(LogEvent.character_id, LogEvent.fight_id)
+        .join(GamelogFile, GamelogFile.file_id == LogEvent.file_id)
+        .where(
+            LogEvent.fight_id.in_(fight_ids),
+            LogEvent.character_id.is_not(None),
+            GamelogFile.parse_status == "parsed",
+        )
+        .distinct()
+    )
+    log_char_to_fights: dict[int, set[int]] = {}
+    for cid, fid in log_result.fetchall():
+        if cid is not None and fid is not None:
+            log_char_to_fights.setdefault(int(cid), set()).add(int(fid))
+
+    # 4. Union of all char_ids that are "in scope"
+    all_in_scope: dict[int, set[int]] = {}
+    for cid, fights in km_char_to_fights.items():
+        all_in_scope.setdefault(cid, set()).update(fights)
+    for cid, fights in log_char_to_fights.items():
+        all_in_scope.setdefault(cid, set()).update(fights)
+
+    if not all_in_scope:
         return []
 
-    # 3. For each (character_id, fight_id) pair, check whether a log exists
-    #    (parse_status="parsed" AND ≥1 LogEvent with fight_id stamped)
-    # Collect distinct character_ids that are in the roster AND participated.
-    # When user_name is set, only consider that user's characters (optimisation
-    # for my_coverage — avoids a full-matrix scan).
+    # 5. Restrict to roster characters; optionally filter to one user.
     roster_char_ids = set(roster.char_to_user.keys())
     if user_name is not None:
-        # Find which char_ids belong to this user in the roster
         user_char_ids: set[int] = {
             cid for cid, uname in roster.char_to_user.items() if uname == user_name
         }
         roster_char_ids = roster_char_ids & user_char_ids
-    relevant_chars = roster_char_ids & set(char_fought_in.keys())
+    relevant_chars = roster_char_ids & set(all_in_scope.keys())
 
-    # Load all (character_id, fight_id) pairs where log coverage exists
-    covered_pairs: set[tuple[int, int]] = set()
-    if relevant_chars:
-        events_result = await session.execute(
-            select(LogEvent.character_id, LogEvent.fight_id)
-            .join(GamelogFile, GamelogFile.file_id == LogEvent.file_id)
-            .where(
-                LogEvent.character_id.in_(list(relevant_chars)),
-                LogEvent.fight_id.in_(fight_ids),
-                GamelogFile.parse_status == "parsed",
-            )
-            .distinct()
-        )
-        for cid, fid in events_result.fetchall():
-            if cid is not None and fid is not None:
-                covered_pairs.add((int(cid), int(fid)))
-
-    # 4. Build per-user coverage grouped by user
-    # user_name → list of CharacterCoverage
-    user_map: dict[str, list[CharacterCoverage]] = {}
-
-    # Build name lookup: character_id → character_name from roster
+    # 6. Build per-user coverage grouped by user
     char_name_lookup: dict[int, str] = {}
     for user in roster.users:
         for c in user.characters:
             char_name_lookup[c.character_id] = c.character_name
 
+    user_map: dict[str, list[CharacterCoverage]] = {}
+
     for char_id in sorted(relevant_chars):
         uname = roster.char_to_user.get(char_id)
         if uname is None:
             continue
-        fights_for_char = sorted(char_fought_in[char_id])
-        fights_covered = sorted(
-            fid for fid in fights_for_char if (char_id, fid) in covered_pairs
-        )
-        fights_missing = sorted(
-            fid for fid in fights_for_char if (char_id, fid) not in covered_pairs
-        )
+
+        all_fights_for_char = sorted(all_in_scope[char_id])
+        # "covered" fights: those where log events exist (log_char_to_fights)
+        log_fights = log_char_to_fights.get(char_id, set())
+        fights_covered = sorted(fid for fid in all_fights_for_char if fid in log_fights)
+        fights_missing = sorted(fid for fid in all_fights_for_char if fid not in log_fights)
 
         cc = CharacterCoverage(
             character_id=char_id,
             character_name=char_name_lookup.get(char_id, str(char_id)),
-            participated_fights=fights_for_char,
+            participated_fights=all_fights_for_char,
             fights_covered=fights_covered,
             fights_missing=fights_missing,
             covered=len(fights_missing) == 0,
+            on_killmail=bool(km_char_to_fights.get(char_id)),
+            has_logs=bool(log_fights),
         )
         user_map.setdefault(uname, []).append(cc)
 

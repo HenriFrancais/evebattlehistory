@@ -323,14 +323,29 @@ async def test_associate_file_skips_unresolved_character(db_session_maker) -> No
     assert count == 0
 
 
-async def test_associate_file_non_participant_not_stamped(db_session_maker) -> None:  # type: ignore[no-untyped-def]
-    """A character who did NOT participate in any fight gets no events stamped."""
+async def test_associate_file_no_overlap_not_stamped(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A log whose timestamps do NOT overlap any fight window gets no events stamped.
+
+    E1 design change: association is time-window based, not participation based.
+    The negative case is now "log outside fight window", not "non-participant".
+    CHAR_C's log covers a window way before the fight — no fight_id stamped.
+    """
     from app.logs.associate import associate_file
+
+    # Log window that is way before the fight (no overlap)
+    no_overlap_start = dt.datetime(2026, 6, 10, 15, 0, 0, tzinfo=dt.UTC)
+    no_overlap_end = dt.datetime(2026, 6, 10, 16, 0, 0, tzinfo=dt.UTC)
+    ts_no_overlap = dt.datetime(2026, 6, 10, 15, 30, 0, tzinfo=dt.UTC)
 
     async with db_session_maker() as session:
         await _insert_fight(session, victim_char_id=CHAR_A, attacker_char_id=CHAR_B)
-        file_id = await _insert_gamelog_file(session, character_id=CHAR_C)
-        await _insert_log_events(session, file_id, CHAR_C, [TS_INSIDE])
+        file_id = await _insert_gamelog_file(
+            session,
+            character_id=CHAR_C,
+            log_start=no_overlap_start,
+            log_end=no_overlap_end,
+        )
+        await _insert_log_events(session, file_id, CHAR_C, [ts_no_overlap])
         await session.commit()
 
     async with db_session_maker() as session:

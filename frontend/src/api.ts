@@ -101,6 +101,20 @@ export interface CharacterCoverage {
   covered: boolean
   fights_covered: number[]
   fights_missing: number[]
+  /** True iff character appeared on ≥1 killmail in the BR (E1) */
+  on_killmail?: boolean
+  /** True iff character has ≥1 LogEvent stamped for the BR (E1) */
+  has_logs?: boolean
+}
+
+/** BR participant: union of killmail participants and log-only characters (E1) */
+export interface ParticipantInfo {
+  character_id: number
+  character_name: string | null
+  user_name: string | null
+  on_killmail: boolean
+  has_logs: boolean
+  fight_ids: number[]
 }
 
 export interface UserCoverage {
@@ -306,6 +320,7 @@ export const api = {
   myLogs: () => jsonFetch<MyLogFile[]>(`${API}/logs/mine`),
   brCoverage: (id: string) => jsonFetch<UserCoverage[]>(`${API}/brs/${id}/coverage`),
   myBrCoverage: (id: string) => jsonFetch<UserCoverage>(`${API}/brs/${id}/my-coverage`),
+  brParticipants: (id: string) => jsonFetch<ParticipantInfo[]>(`${API}/brs/${id}/participants`),
   characterTimeline: (brId: string, charId: string) =>
     jsonFetch<CharacterTimeline>(`${API}/brs/${brId}/characters/${charId}/timeline`),
   characterEvents: (brId: string, charId: string, from: number, to: number) =>
