@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from collections.abc import AsyncGenerator
-from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import can_create_br, current_user
+from app.api.deps import SessionDep
 from app.api.schemas import (
     BrCreate,
     BrCreated,
@@ -25,7 +24,6 @@ from app.api.schemas import (
     FightSideOut,
 )
 from app.config import get_settings
-from app.db.engine import get_sessionmaker
 from app.db.models import BattleReport, BrFight, Fight, FightSide
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
@@ -36,21 +34,11 @@ SUPPORTED_HOSTS = {"zkillboard.com", "br.evetools.org"}
 router = APIRouter()
 
 
-async def _get_session() -> AsyncGenerator[AsyncSession, None]:
-    settings = get_settings()
-    session_maker = get_sessionmaker(settings)
-    async with session_maker() as session:
-        yield session
-
-
-_Session = Annotated[AsyncSession, Depends(_get_session)]
-
-
 @router.post("/api/brs", status_code=202)
 async def create_br(
     body: BrCreate,
     request: Request,
-    session: _Session,
+    session: SessionDep,
 ) -> BrCreated:
     """Submit a new battle report URL for ingestion."""
     user = current_user(request)
@@ -88,9 +76,26 @@ async def create_br(
     return BrCreated(br_id=br_id, status="pending")
 
 
+def compute_br_summary(brs: list[BattleReport]) -> BrListSummary:
+    wins = sum(1 for b in brs if b.result == "win")
+    ties = sum(1 for b in brs if b.result == "tie")
+    losses = sum(1 for b in brs if b.result == "loss")
+    decided = sum(1 for b in brs if b.result is not None)
+    win_rate = wins / decided if decided > 0 else 0.0
+    return BrListSummary(
+        total=len(brs),
+        wins=wins,
+        ties=ties,
+        losses=losses,
+        win_rate=win_rate,
+        total_isk_destroyed=sum(b.our_isk_destroyed for b in brs),
+        total_isk_lost=sum(b.our_isk_lost for b in brs),
+    )
+
+
 @router.get("/api/brs")
 async def list_brs(
-    session: _Session,
+    session: SessionDep,
 ) -> BrListResponse:
     """Return a list of all battle reports with aggregate summary."""
     result = await session.execute(
@@ -101,25 +106,7 @@ async def list_brs(
     )
     brs = list(result.scalars())
 
-    wins = sum(1 for b in brs if b.result == "win")
-    ties = sum(1 for b in brs if b.result == "tie")
-    losses = sum(1 for b in brs if b.result == "loss")
-    decided = sum(1 for b in brs if b.result is not None)
-    win_rate = wins / decided if decided > 0 else 0.0
-
-    total_isk_destroyed = sum(b.our_isk_destroyed for b in brs)
-    total_isk_lost = sum(b.our_isk_lost for b in brs)
-
-    summary = BrListSummary(
-        total=len(brs),
-        wins=wins,
-        ties=ties,
-        losses=losses,
-        win_rate=win_rate,
-        total_isk_destroyed=total_isk_destroyed,
-        total_isk_lost=total_isk_lost,
-    )
-
+    summary = compute_br_summary(brs)
     br_list = [_br_to_summary(b) for b in brs]
     return BrListResponse(summary=summary, brs=br_list)
 
@@ -127,7 +114,7 @@ async def list_brs(
 @router.get("/api/brs/{br_id}")
 async def get_br(
     br_id: str,
-    session: _Session,
+    session: SessionDep,
 ) -> BrDetail:
     """Return full detail for one battle report, including fights."""
     result = await session.execute(
@@ -148,7 +135,7 @@ async def get_br(
 @router.get("/api/brs/{br_id}/status")
 async def get_br_status(
     br_id: str,
-    session: _Session,
+    session: SessionDep,
 ) -> BrStatus:
     """Return the current ingest status for a battle report."""
     result = await session.execute(
@@ -169,7 +156,7 @@ async def get_br_status(
 @router.get("/api/brs/{br_id}/fights")
 async def get_br_fights(
     br_id: str,
-    session: _Session,
+    session: SessionDep,
 ) -> list[FightOut]:
     """Return the fights for a battle report."""
     result = await session.execute(
@@ -185,7 +172,7 @@ async def get_br_fights(
 async def get_br_coverage(
     br_id: str,
     request: Request,
-    session: _Session,
+    session: SessionDep,
 ) -> list[dict]:  # type: ignore[type-arg]
     """Return per-user/character log coverage matrix for a battle report.
 
@@ -208,7 +195,7 @@ async def get_br_coverage(
 async def get_my_br_coverage(
     br_id: str,
     request: Request,
-    session: _Session,
+    session: SessionDep,
 ) -> dict:  # type: ignore[type-arg]
     """Return the current user's log coverage for a battle report.
 
@@ -293,6 +280,7 @@ async def _load_fights(session: AsyncSession, br_id: str) -> list[FightOut]:
             ended_at=fight.ended_at,
             isk_destroyed_total=fight.isk_destroyed_total,
             largest_side_pilots=fight.largest_side_pilots,
+            capitals_involved=fight.capitals_involved,
             sides=sides,
         ))
 

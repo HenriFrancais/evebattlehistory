@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrDetail, MeResponse, UserCoverage } from '../api'
+import type { BrDetail, FightWithBrId, MeResponse, UserCoverage } from '../api'
 import { ApiError } from '../api'
 import { BrDetailPage } from './BrDetailPage'
 
@@ -15,6 +16,7 @@ vi.mock('../api', async (importOriginal) => {
       me: vi.fn(),
       myBrCoverage: vi.fn(),
       brCoverage: vi.fn(),
+      filterFights: vi.fn(),
     },
   }
 })
@@ -134,6 +136,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.me).mockReset()
     vi.mocked(api.myBrCoverage).mockReset()
     vi.mocked(api.brCoverage).mockReset()
+    vi.mocked(api.filterFights).mockReset()
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {
@@ -198,5 +201,85 @@ describe('BrDetailPage', () => {
     const links = screen.getAllByRole('link', { name: 'AlphaChar' })
     expect(links.length).toBeGreaterThanOrEqual(1)
     expect(links[0]).toHaveAttribute('href', '/brs/br1/characters/111')
+  })
+
+  it('fight filter: applying filter calls filterFights with br_id and narrows fights list', async () => {
+    const filteredFight: FightWithBrId = {
+      fight_id: 99,
+      system_id: 30001111,
+      started_at: '2026-06-10T19:00:00Z',
+      ended_at: '2026-06-10T19:30:00Z',
+      isk_destroyed_total: 500_000_000,
+      largest_side_pilots: 5,
+      sides: [],
+      br_id: 'br1',
+    }
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
+
+    renderBrDetailPage()
+
+    // Wait for BR to load
+    await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+    // Open the filter details panel
+    const summary = screen.getByText(/Filter sub-engagements/i)
+    fireEvent.click(summary)
+
+    // Fill in a filter value — change field to capitals_involved, value is auto-populated
+    // Actually use isk_destroyed_total (numeric) so we can type a value
+    const valueInput = screen.getByTestId('filter-row-0-value')
+    await userEvent.type(valueInput, '1')
+
+    // Apply the filter
+    fireEvent.click(screen.getByTestId('filter-apply'))
+
+    // Wait for filter to be applied
+    await waitFor(() => expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument())
+
+    // filterFights should have been called with br_id='br1'
+    expect(vi.mocked(api.filterFights)).toHaveBeenCalledWith(
+      expect.any(Object),
+      'br1'
+    )
+
+    // The count indicator should show filtered results
+    expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument()
+  })
+
+  it('fight filter: clearing filter restores original fights list', async () => {
+    const filteredFight: FightWithBrId = {
+      fight_id: 99,
+      system_id: 30001111,
+      started_at: '2026-06-10T19:00:00Z',
+      ended_at: '2026-06-10T19:30:00Z',
+      isk_destroyed_total: 500_000_000,
+      largest_side_pilots: 5,
+      sides: [],
+      br_id: 'br1',
+    }
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
+
+    renderBrDetailPage()
+    await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+
+    // Open filter and apply
+    const summary = screen.getByText(/Filter sub-engagements/i)
+    fireEvent.click(summary)
+    const valueInput = screen.getByTestId('filter-row-0-value')
+    await userEvent.type(valueInput, '1')
+    fireEvent.click(screen.getByTestId('filter-apply'))
+    await waitFor(() => expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument())
+
+    // Clear the filter
+    fireEvent.click(screen.getByTestId('fight-filter-clear'))
+
+    // Count indicator should be gone
+    await waitFor(() => expect(screen.queryByTestId('fight-filter-count')).not.toBeInTheDocument())
   })
 })

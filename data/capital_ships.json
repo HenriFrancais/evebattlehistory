@@ -1,0 +1,8 @@
+{
+  "carriers": ["Nidhoggur", "Thanatos", "Archon", "Chimera"],
+  "supercarriers": ["Hel", "Wyvern", "Aeon", "Nyx"],
+  "dreadnoughts": ["Naglfar", "Moros", "Revelation", "Phoenix"],
+  "force_auxiliaries": ["Lif", "Minokawa", "Ninazu", "Apostle"],
+  "titans": ["Ragnarok", "Erebus", "Avatar", "Leviathan"],
+  "capital_industrials": ["Rorqual", "Bowhead"]
+}

@@ -12,8 +12,8 @@ from fastapi import APIRouter, Request, UploadFile
 from sqlalchemy import select
 
 from app.api.auth import current_user
+from app.api.deps import SessionDep, SessionMakerDep
 from app.config import get_settings
-from app.db.engine import get_sessionmaker
 from app.db.models import GamelogFile
 from app.logs.associate import associate_file_to_all
 from app.logs.ingest import GamelogFileResult, ingest_log
@@ -38,11 +38,11 @@ async def _build_roster_lookup() -> Callable[[str], int | None]:
 async def upload_logs(
     request: Request,
     files: list[UploadFile],
+    session_maker: SessionMakerDep,
 ) -> list[dict[str, Any]]:
     """Bulk upload gamelog files.  Per-file results; never aborts on one bad file."""
     user = current_user(request)
     settings = get_settings()
-    session_maker = get_sessionmaker(settings)
     roster_lookup = await _build_roster_lookup()
 
     results: list[dict[str, Any]] = []
@@ -94,19 +94,16 @@ async def upload_logs(
 
 
 @router.get("/api/logs/mine")
-async def get_my_logs(request: Request) -> list[dict[str, Any]]:
+async def get_my_logs(request: Request, session: SessionDep) -> list[dict[str, Any]]:
     """Return the current user's uploaded logs, newest first."""
     user = current_user(request)
-    settings = get_settings()
-    session_maker = get_sessionmaker(settings)
 
-    async with session_maker() as session:
-        result = await session.execute(
-            select(GamelogFile)
-            .where(GamelogFile.uploaded_by_user == user.user_name)
-            .order_by(GamelogFile.uploaded_at.desc())
-        )
-        files = list(result.scalars())
+    result = await session.execute(
+        select(GamelogFile)
+        .where(GamelogFile.uploaded_by_user == user.user_name)
+        .order_by(GamelogFile.uploaded_at.desc())
+    )
+    files = list(result.scalars())
 
     return [
         {

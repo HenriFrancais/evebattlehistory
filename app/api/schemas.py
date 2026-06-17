@@ -38,6 +38,7 @@ class FightOut(BaseModel):
     ended_at: dt.datetime | None
     isk_destroyed_total: float
     largest_side_pilots: int
+    capitals_involved: bool = False
     sides: list[FightSideOut]
 
 
@@ -136,3 +137,108 @@ class TimelineEventListOut(BaseModel):
 
     events: list[TimelineEventOut]
     truncated: bool
+
+
+# ---------------------------------------------------------------------------
+# Reconcile schemas (Task 4.1)
+# ---------------------------------------------------------------------------
+
+
+class CharacterReconcileRowOut(BaseModel):
+    """Per-character damage reconciliation row.
+
+    ``delta = log_damage_out - km_damage_attributed``.
+    A positive delta surfaces damage applied to ships that didn't die.
+    """
+
+    character_id: int
+    character_name: str | None = None
+    log_damage_out: float
+    log_damage_in: float
+    km_damage_attributed: float
+    delta: float
+
+
+class DpsPointOut(BaseModel):
+    """One time-bucket in the outgoing DPS series."""
+
+    bucket_ts_epoch: int
+    sum_damage_out: float
+
+
+class FightReconcileOut(BaseModel):
+    """Damage reconciliation result for a single fight."""
+
+    rows: list[CharacterReconcileRowOut]
+    dps_series: list[DpsPointOut]
+
+
+# ---------------------------------------------------------------------------
+# EWAR schemas (Task 4.1)
+# ---------------------------------------------------------------------------
+
+
+class EwarRowOut(BaseModel):
+    """One (character, effect_type, direction) summary for tackle/EWAR effects."""
+
+    character_id: int
+    effect_type: str
+    direction: str
+    event_count: int
+    first_ts: dt.datetime
+    last_ts: dt.datetime
+
+
+class CapRowOut(BaseModel):
+    """One (character, effect_type, direction) summary for cap-warfare effects."""
+
+    character_id: int
+    effect_type: str
+    direction: str
+    sum_amount: float
+    event_count: int
+    first_ts: dt.datetime
+    last_ts: dt.datetime
+
+
+class LogiRowOut(BaseModel):
+    """One (character, effect_type, direction) summary for remote repair effects."""
+
+    character_id: int
+    effect_type: str
+    direction: str
+    sum_amount: float
+    event_count: int
+    first_ts: dt.datetime
+    last_ts: dt.datetime
+
+
+class FightEwarOut(BaseModel):
+    """EWAR + logi effectiveness result for a single fight."""
+
+    ewar: list[EwarRowOut]
+    cap: list[CapRowOut]
+    logi: list[LogiRowOut]
+
+
+# ---------------------------------------------------------------------------
+# Filter schemas (Task 4.2)
+# ---------------------------------------------------------------------------
+
+
+class FightWithBrId(FightOut):
+    br_id: str
+
+
+class FightFilterRequest(BaseModel):
+    tree: dict  # type: ignore[type-arg]
+    br_id: str | None = None
+
+
+class BrFilterRequest(BaseModel):
+    tree: dict  # type: ignore[type-arg]
+
+
+class FilteredBrResponse(BaseModel):
+    summary: BrListSummary
+    brs: list[BrSummary]

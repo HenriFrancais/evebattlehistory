@@ -15,7 +15,9 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.api.analytics import router as analytics_router
 from app.api.brs import router as brs_router
+from app.api.filters import router as filters_router
 from app.api.logs import router as logs_router
 from app.api.meta import router as meta_router
 from app.api.timeline import router as timeline_router
@@ -75,6 +77,8 @@ def create_app() -> FastAPI:
     app.include_router(brs_router, prefix=prefix)
     app.include_router(logs_router, prefix=prefix)
     app.include_router(timeline_router, prefix=prefix)
+    app.include_router(analytics_router, prefix=prefix)
+    app.include_router(filters_router, prefix=prefix)
     # Mount the built SPA last so API routes take precedence and static assets
     # fall through to the catch-all.
     if _FRONTEND_DIST.is_dir():

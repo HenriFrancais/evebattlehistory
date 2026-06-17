@@ -748,3 +748,204 @@ async def test_aggregate_br_battle_at_set(tmp_path):
     if br.battle_at is not None and br.battle_at.tzinfo is None:
         expected = expected.replace(tzinfo=None)
     assert br.battle_at == expected
+
+
+@pytest.mark.asyncio
+async def test_aggregate_br_rerun_clears_log_orphans(tmp_path):
+    """Re-running aggregate_br must not leave LogEvent/LogEventBucket rows pointing
+    at deleted fight_ids.
+
+    Sequence:
+    1. Ingest demo BR + aggregate → fight_id F1 exists.
+    2. Associate a synthetic log file (creates LogEvent.fight_id=F1 + buckets for F1).
+    3. Re-run aggregate_br → old Fight F1 deleted, new Fight F2 minted.
+    4. Re-associate logs → events stamped to F2, buckets rebuilt for F2.
+    5. Assert: no LogEvent.fight_id or LogEventBucket.fight_id references a
+       fight_id that does not exist in the Fight table.
+    """
+    import datetime as dt
+    import hashlib
+    import uuid
+
+    from sqlalchemy import func, select
+
+    from app.db.models import (
+        BrFight,
+        Fight,
+        GamelogFile,
+        LogEvent,
+        LogEventBucket,
+    )
+    from app.fights.aggregate import aggregate_br
+    from app.logs.associate import associate_logs_for_br
+
+    session_maker = await _setup_demo_db(tmp_path)
+
+    # 1. First aggregation pass
+    async with session_maker() as session:
+        await aggregate_br(
+            session,
+            br_id="demo-br-001",
+            our_alliance_ids=[99000001],
+            our_corp_ids=[],
+        )
+        await session.commit()
+
+    # Capture the fight_id produced in the first pass
+    async with session_maker() as session:
+        first_fight_id_row = (
+            await session.execute(
+                select(BrFight.fight_id).where(BrFight.br_id == "demo-br-001")
+            )
+        ).scalar_one()
+    first_fight_id: int = int(first_fight_id_row)
+
+    # 2. Insert a synthetic gamelog for a participant character (2100000001 = victim in km_101)
+    PARTICIPANT_CHAR = 2100000001
+    # Fight window from demo: 20:15-20:40 UTC 2026-06-10
+    fight_ts = dt.datetime(2026, 6, 10, 20, 20, 0, tzinfo=dt.UTC)
+    log_start = dt.datetime(2026, 6, 10, 20, 10, 0, tzinfo=dt.UTC)
+    log_end = dt.datetime(2026, 6, 10, 20, 45, 0, tzinfo=dt.UTC)
+
+    async with session_maker() as session:
+        sha = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+        gf = GamelogFile(
+            uploaded_by_user="test",
+            claimed_character_id=PARTICIPANT_CHAR,
+            character_name="TestChar",
+            original_filename="test.txt",
+            resolved_via="filename",
+            log_start_at=log_start,
+            log_end_at=log_end,
+            stored_path="/tmp/test.txt",
+            sha256=sha,
+            mime="text/plain",
+            size=100,
+            parse_status="parsed",
+            event_count=1,
+            uploaded_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(gf)
+        await session.flush()
+        file_id: int = gf.file_id
+
+        session.add(
+            LogEvent(
+                file_id=file_id,
+                character_id=PARTICIPANT_CHAR,
+                ts=fight_ts,
+                direction="in",
+                effect_type="scram",
+                amount=None,
+                fight_id=None,
+            )
+        )
+        await session.commit()
+
+    # Associate the log file; events should get fight_id=first_fight_id
+    async with session_maker() as session:
+        await associate_logs_for_br(session, "demo-br-001")
+        await session.commit()
+
+    # Verify events and buckets reference the first fight
+    async with session_maker() as session:
+        stamped_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(LogEvent)
+                .where(LogEvent.fight_id == first_fight_id)
+            )
+        ).scalar_one()
+        bucket_count = (
+            await session.execute(
+                select(func.count())
+                .select_from(LogEventBucket)
+                .where(LogEventBucket.fight_id == first_fight_id)
+            )
+        ).scalar_one()
+    assert stamped_count >= 1, "Events should be stamped to first_fight_id before re-aggregate"
+    assert bucket_count >= 1, "Buckets should exist for first_fight_id before re-aggregate"
+
+    # 3. Re-run aggregate_br (simulates sweep_pending re-running interrupted ingest).
+    #    _clear_derived_rows should null out LogEvent.fight_id and delete
+    #    LogEventBucket rows BEFORE deleting Fight rows.
+    async with session_maker() as session:
+        await aggregate_br(
+            session,
+            br_id="demo-br-001",
+            our_alliance_ids=[99000001],
+            our_corp_ids=[],
+        )
+        await session.commit()
+
+    # Immediately after re-aggregate (before re-association): LogEvent.fight_id
+    # must be NULL (cleared by _clear_derived_rows) and no LogEventBucket rows
+    # should reference the old fight_id — even if SQLite recycled that integer.
+    async with session_maker() as session:
+        # All events belonging to our gamelog file must have fight_id=NULL now
+        events_still_stamped = (
+            await session.execute(
+                select(func.count())
+                .select_from(LogEvent)
+                .where(LogEvent.file_id == file_id)
+                .where(LogEvent.fight_id.is_not(None))
+            )
+        ).scalar_one()
+        bucket_total = (
+            await session.execute(
+                select(func.count()).select_from(LogEventBucket)
+            )
+        ).scalar_one()
+    assert events_still_stamped == 0, (
+        "_clear_derived_rows must null LogEvent.fight_id before deleting Fight rows"
+    )
+    assert bucket_total == 0, (
+        "_clear_derived_rows must delete LogEventBucket rows before deleting Fight rows"
+    )
+
+    # 4. Re-associate logs → events re-stamped to new fight_id, buckets rebuilt.
+    async with session_maker() as session:
+        await associate_logs_for_br(session, "demo-br-001")
+        await session.commit()
+
+    # 5. Final integrity check: every non-null LogEvent.fight_id and every
+    #    LogEventBucket.fight_id must reference an existing Fight row.
+    async with session_maker() as session:
+        all_fight_ids_result = await session.execute(select(Fight.fight_id))
+        all_fight_ids: set[int] = set(all_fight_ids_result.scalars())
+
+        orphaned_event_fids_result = await session.execute(
+            select(LogEvent.fight_id)
+            .where(LogEvent.fight_id.is_not(None))
+            .distinct()
+        )
+        orphaned_event_fids = {
+            fid for fid in orphaned_event_fids_result.scalars()
+            if fid is not None and int(fid) not in all_fight_ids
+        }
+
+        orphaned_bucket_fids_result = await session.execute(
+            select(LogEventBucket.fight_id).distinct()
+        )
+        orphaned_bucket_fids = {
+            fid for fid in orphaned_bucket_fids_result.scalars()
+            if fid is not None and int(fid) not in all_fight_ids
+        }
+
+    assert not orphaned_event_fids, (
+        f"LogEvent rows reference deleted fight_ids: {orphaned_event_fids}"
+    )
+    assert not orphaned_bucket_fids, (
+        f"LogEventBucket rows reference deleted fight_ids: {orphaned_bucket_fids}"
+    )
+    # Events must be re-stamped to the surviving fight
+    async with session_maker() as session:
+        re_stamped = (
+            await session.execute(
+                select(func.count())
+                .select_from(LogEvent)
+                .where(LogEvent.file_id == file_id)
+                .where(LogEvent.fight_id.is_not(None))
+            )
+        ).scalar_one()
+    assert re_stamped >= 1, "associate_logs_for_br must re-stamp events after re-aggregation"

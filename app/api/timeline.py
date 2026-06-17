@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +10,7 @@ from app.analytics.timeline import (
     character_timeline,
     character_timeline_events,
 )
+from app.api.deps import SessionDep
 from app.api.schemas import (
     CharacterTimelineOut,
     TimelineEventListOut,
@@ -20,24 +18,9 @@ from app.api.schemas import (
     TimelineFightInfo,
     TimelineSeriesOut,
 )
-from app.config import get_settings
-from app.db.engine import get_sessionmaker
 from app.db.models import BattleReport
 
 router = APIRouter()
-
-
-# No shared session dependency exists in this project: brs.py and logs.py each
-# define their own inline session creation via get_sessionmaker().  This local
-# _get_session follows the same pattern for consistency.
-async def _get_session() -> AsyncGenerator[AsyncSession, None]:
-    settings = get_settings()
-    session_maker = get_sessionmaker(settings)
-    async with session_maker() as session:
-        yield session
-
-
-_Session = Annotated[AsyncSession, Depends(_get_session)]
 
 
 async def _require_br(br_id: str, session: AsyncSession) -> None:
@@ -53,7 +36,7 @@ async def _require_br(br_id: str, session: AsyncSession) -> None:
 async def get_character_timeline(
     br_id: str,
     character_id: int,
-    session: _Session,
+    session: SessionDep,
 ) -> CharacterTimelineOut:
     """Return the uPlot-aligned timeline for one character within a battle report.
 
@@ -94,7 +77,7 @@ async def get_character_timeline(
 async def get_character_events(
     br_id: str,
     character_id: int,
-    session: _Session,
+    session: SessionDep,
     t_from: int = Query(..., alias="from"),
     t_to: int = Query(..., alias="to"),
     effect_type: str | None = Query(default=None),

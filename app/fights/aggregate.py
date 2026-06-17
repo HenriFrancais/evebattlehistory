@@ -19,7 +19,7 @@ import datetime as dt
 import json
 from collections import defaultdict
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -31,9 +31,13 @@ from app.db.models import (
     FightKill,
     FightShipCount,
     FightSide,
+    InventoryType,
     Killmail,
     KillmailAttacker,
+    LogEvent,
+    LogEventBucket,
 )
+from app.fights.capitals import is_capital_type_name
 from app.fights.cluster import FightCluster, cluster_kills
 from app.fights.labelling import SideInfo, label_sides
 from app.fights.outcomes import SideStats, classify_br_result, compute_fight_sides
@@ -100,13 +104,34 @@ class _AttackerWrapper:
 
 
 async def _clear_derived_rows(session: AsyncSession, br_id: str) -> None:
-    """Delete all derived rows for this BR so re-aggregation is idempotent."""
+    """Delete all derived rows for this BR so re-aggregation is idempotent.
+
+    Before deleting Fight rows we null-out LogEvent.fight_id and delete
+    LogEventBucket rows that reference those fight_ids.  Fight.fight_id is
+    autoincrement, so re-running aggregate_br mints NEW fight_ids; without
+    this cleanup LogEvent/LogEventBucket rows would point at deleted fights
+    (orphaned foreign-key-equivalent references).  associate_logs_for_br is
+    called after aggregate_br and re-stamps + rebuilds buckets for the new
+    fight_ids, so clearing them here is safe.
+    """
     fight_id_result = await session.execute(
         select(BrFight.fight_id).where(BrFight.br_id == br_id)
     )
     fight_ids = list(fight_id_result.scalars())
 
     if fight_ids:
+        # Null out LogEvent.fight_id for events stamped to these fights so that
+        # re-association (associate_logs_for_br) can re-stamp them to the new
+        # fight_ids produced by the next clustering pass.
+        await session.execute(
+            update(LogEvent)
+            .where(LogEvent.fight_id.in_(fight_ids))
+            .values(fight_id=None)
+        )
+        # Remove stale buckets — they will be rebuilt by associate_logs_for_br.
+        await session.execute(
+            delete(LogEventBucket).where(LogEventBucket.fight_id.in_(fight_ids))
+        )
         await session.execute(
             delete(FightShipCount).where(FightShipCount.fight_id.in_(fight_ids))
         )
@@ -238,7 +263,6 @@ async def aggregate_br(
             ended_at=ended_at,
             isk_destroyed_total=isk_destroyed_total,
             largest_side_pilots=largest_side_pilots,
-            # TODO(Task 4): detect capitals via SDE ship category and backfill
             capitals_involved=False,
             distinct_alliance_count=len(all_alliance_ids),
         )
@@ -294,6 +318,18 @@ async def aggregate_br(
             session.add(FightShipCount(
                 fight_id=fight_id, side_idx=sidx, ship_type_id=ship_id, count=cnt
             ))
+
+        # Check capitals via InventoryType names
+        if fight_ship_accumulator:
+            ship_type_ids = {ship_id for (_, ship_id) in fight_ship_accumulator}
+            it_result = await session.execute(
+                select(InventoryType.type_id, InventoryType.name)
+                .where(InventoryType.type_id.in_(ship_type_ids))
+            )
+            for _, name in it_result:
+                if is_capital_type_name(name):
+                    fight.capitals_involved = True
+                    break
 
         # Accumulate BR-level ISK by side_kind
         for side_idx, sd in per_side_stats.items():

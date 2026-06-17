@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { ApiError, BrDetail, BrStatus, MeResponse, UserCoverage } from '../api'
+import type { ApiError, BrDetail, BrStatus, FightOut, FightWithBrId, FilterGroup, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
+import { FilterBuilder } from '../components/FilterBuilder'
 import { FightList } from '../components/FightList'
 import { IngestProgress } from '../components/IngestProgress'
 import { fmtIsk } from '../format'
@@ -76,6 +77,9 @@ export function BrDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [fullCoverage, setFullCoverage] = useState<UserCoverage[] | null>(null)
+  const [filteredFights, setFilteredFights] = useState<FightWithBrId[] | null>(null)
+  const [fightFilterActive, setFightFilterActive] = useState(false)
+  const [fightFilterError, setFightFilterError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     if (!id) return
@@ -89,7 +93,6 @@ export function BrDetailPage() {
 
   useEffect(() => { return load() }, [load])
 
-  // Fetch me() in parallel with BR
   useEffect(() => {
     let cancelled = false
     api.me().then(
@@ -99,7 +102,6 @@ export function BrDetailPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Lazy-load full coverage only when BR is ready and user is FC
   useEffect(() => {
     if (!br || !id || !me?.can_create_br) return
     let cancelled = false
@@ -110,6 +112,24 @@ export function BrDetailPage() {
     return () => { cancelled = true }
   }, [br, id, me])
 
+  async function handleFightFilterApply(tree: FilterGroup) {
+    if (!id) return
+    setFightFilterError(null)
+    try {
+      const result = await api.filterFights(tree, id)
+      setFilteredFights(result)
+      setFightFilterActive(true)
+    } catch (e: unknown) {
+      setFightFilterError(String((e as Error)?.message ?? e))
+    }
+  }
+
+  function handleFightFilterClear() {
+    setFilteredFights(null)
+    setFightFilterActive(false)
+    setFightFilterError(null)
+  }
+
   if (error) return <div className="page"><p className="error-text">{error}</p></div>
   if (!br) return <div className="page"><p className="dim">Loading…</p></div>
 
@@ -119,6 +139,8 @@ export function BrDetailPage() {
     progress_pct: br.progress_pct,
     error_text: null,
   }
+
+  const displayFights: FightOut[] = filteredFights ?? br.fights
 
   return (
     <div className="page">
@@ -168,8 +190,29 @@ export function BrDetailPage() {
       {br.status !== 'ready' && (
         <IngestProgress brId={br.br_id} initialStatus={brStatus} onReady={load} />
       )}
+
       <h2 style={{ margin: 0 }}>Engagements</h2>
-      <FightList fights={br.fights} brId={br.br_id} />
+
+      <details>
+        <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
+          Filter sub-engagements
+        </summary>
+        <FilterBuilder scope="fight" onApply={handleFightFilterApply} onClear={handleFightFilterClear} />
+        {fightFilterError && <p className="error-text">{fightFilterError}</p>}
+      </details>
+
+      {fightFilterActive && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span className="dim" data-testid="fight-filter-count">
+            Showing {filteredFights?.length ?? 0} of {br.fights.length} sub-engagements
+          </span>
+          <button className="btn" onClick={handleFightFilterClear} data-testid="fight-filter-clear">
+            Clear filter
+          </button>
+        </div>
+      )}
+
+      <FightList fights={displayFights} brId={br.br_id} />
 
       <section data-testid="log-coverage-section" className="panel">
         <h2 style={{ margin: '0 0 0.75rem' }}>Log Coverage</h2>

@@ -148,6 +148,105 @@ export interface TimelineEventList {
   truncated: boolean
 }
 
+// Predicate tree types
+export type FilterOp = '>=' | '<=' | '>' | '<' | '==' | '!=' | 'in' | 'between'
+export type FilterSide = 'friendly' | 'hostile' | 'any'
+
+export interface FilterLeaf {
+  field: string
+  op: FilterOp
+  value: string | number | boolean | string[] | number[] | [string, string]
+}
+
+export interface FilterShipLeafBr {
+  field: 'ship_fielded'
+  ship: string
+  op: '>=' | '<=' | '>' | '<' | '=='
+  count: number
+  side: 'friendly' | 'any'
+}
+
+export interface FilterShipLeafFight {
+  field: 'ship_count'
+  ship: string
+  op: '>=' | '<=' | '>' | '<' | '=='
+  count: number
+  side: FilterSide
+}
+
+export type FilterClause = FilterLeaf | FilterShipLeafBr | FilterShipLeafFight | FilterGroup
+export interface FilterGroup {
+  op: 'and' | 'or'
+  clauses: FilterClause[]
+}
+
+// Filtered BR response (same shape as BrListResponse)
+export interface FilteredBrResponse {
+  summary: BrListSummary
+  brs: BrSummary[]
+}
+
+// Fight with br_id for filter results
+export interface FightWithBrId extends FightOut {
+  br_id: string
+}
+
+// Reconcile types
+export interface CharacterReconcileRow {
+  character_id: number
+  character_name: string | null
+  log_damage_out: number
+  log_damage_in: number
+  km_damage_attributed: number
+  delta: number
+}
+
+export interface DpsPoint {
+  bucket_ts_epoch: number
+  sum_damage_out: number
+}
+
+export interface FightReconcile {
+  rows: CharacterReconcileRow[]
+  dps_series: DpsPoint[]
+}
+
+// EWAR types
+export interface EwarRow {
+  character_id: number
+  effect_type: string
+  direction: string
+  event_count: number
+  first_ts: string
+  last_ts: string
+}
+
+export interface CapRow {
+  character_id: number
+  effect_type: string
+  direction: string
+  sum_amount: number
+  event_count: number
+  first_ts: string
+  last_ts: string
+}
+
+export interface LogiRow {
+  character_id: number
+  effect_type: string
+  direction: string
+  sum_amount: number
+  event_count: number
+  first_ts: string
+  last_ts: string
+}
+
+export interface FightEwar {
+  ewar: EwarRow[]
+  cap: CapRow[]
+  logi: LogiRow[]
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -213,4 +312,20 @@ export const api = {
     jsonFetch<TimelineEventList>(
       `${API}/brs/${brId}/characters/${charId}/events?from=${from}&to=${to}`
     ),
+  filterBrs: (tree: FilterGroup) =>
+    jsonFetch<FilteredBrResponse>(`${API}/brs/filter`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tree }),
+    }),
+  filterFights: (tree: FilterGroup, brId?: string) =>
+    jsonFetch<FightWithBrId[]>(`${API}/fights/filter`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tree, ...(brId ? { br_id: brId } : {}) }),
+    }),
+  fightReconcile: (brId: string, fightId: string | number) =>
+    jsonFetch<FightReconcile>(`${API}/brs/${brId}/fights/${fightId}/reconcile`),
+  fightEwar: (brId: string, fightId: string | number) =>
+    jsonFetch<FightEwar>(`${API}/brs/${brId}/fights/${fightId}/ewar`),
 }
