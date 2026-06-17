@@ -49,7 +49,9 @@ function MyCoverageSection({ id }: { id: string }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
           {myCoverage.characters.map((char) => (
             <div key={char.character_id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <span style={{ fontWeight: 500 }}>{char.character_name}</span>
+              <Link to={`/brs/${id}/characters/${char.character_id}`} style={{ fontWeight: 500 }}>
+                {char.character_name}
+              </Link>
               {char.covered ? (
                 <span className="cov-covered">✓ covered ({char.fights_covered.length} fights)</span>
               ) : (
@@ -175,7 +177,7 @@ export function BrDetailPage() {
         {me?.can_create_br && fullCoverage && (
           <div style={{ marginTop: '1rem' }}>
             <h3 style={{ margin: '0 0 0.5rem' }}>All Members</h3>
-            <CoverageMatrix coverage={fullCoverage} />
+            <CoverageMatrix coverage={fullCoverage} brId={id} />
           </div>
         )}
       </section>

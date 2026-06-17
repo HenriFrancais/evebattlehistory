@@ -181,4 +181,22 @@ describe('BrDetailPage', () => {
       ).toBeInTheDocument()
     )
   })
+
+  it('coverage character name links to timeline route', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+    vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+
+    renderBrDetailPage()
+
+    // Wait for coverage matrix to appear
+    await waitFor(() => expect(screen.getByTestId('coverage-matrix')).toBeInTheDocument())
+
+    // AlphaChar (character_id: 111) should have a link to the timeline
+    // (may appear in both MyCoverageSection and CoverageMatrix; all instances link to the same URL)
+    const links = screen.getAllByRole('link', { name: 'AlphaChar' })
+    expect(links.length).toBeGreaterThanOrEqual(1)
+    expect(links[0]).toHaveAttribute('href', '/brs/br1/characters/111')
+  })
 })

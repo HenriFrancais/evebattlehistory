@@ -315,3 +315,21 @@ nav a:hover { color: var(--accent); }
 .cov-matrix { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .cov-matrix th, .cov-matrix td { padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); }
 .cov-matrix th { color: var(--text-dim); font-weight: 500; }
+
+/* Timeline chart */
+.timeline-chart { width: 100%; }
+
+/* Timeline events table */
+.events-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.events-table th { text-align: left; padding: 0.3rem 0.6rem; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+.events-table td { padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); }
+
+/* Truncation notice */
+.truncated-notice {
+  background: rgba(255,183,77,0.1);
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--warn);
+}

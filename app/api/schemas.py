@@ -74,3 +74,65 @@ class BrListSummary(BaseModel):
 class BrListResponse(BaseModel):
     summary: BrListSummary
     brs: list[BrSummary]
+
+
+# ---------------------------------------------------------------------------
+# Timeline schemas (Task 3.1)
+# ---------------------------------------------------------------------------
+
+
+class TimelineFightInfo(BaseModel):
+    """Fight metadata for drawing fight-boundary markers on the timeline."""
+
+    fight_id: int
+    seq: int
+    started_at: dt.datetime | None
+    ended_at: dt.datetime | None
+    system_id: int
+
+
+class TimelineSeriesOut(BaseModel):
+    """One (effect_type, direction) series aligned to the shared x axis.
+
+    ``effect_type`` and ``direction`` are ``null`` when the source LogEventBucket
+    stored ``""`` (the NULL → "" convention; see LogEventBucket docstring).
+    The ``key`` field uses ``"unknown"`` in place of ``""`` so it is safe to use
+    as a display label.
+    """
+
+    key: str
+    effect_type: str | None
+    direction: str | None
+    values: list[float | None]
+    event_count: int
+
+
+class CharacterTimelineOut(BaseModel):
+    """uPlot-aligned timeline for one character within one battle report."""
+
+    x: list[int]
+    """Sorted, unique epoch-second timestamps of every bucket across all series."""
+    series: list[TimelineSeriesOut]
+    fights: list[TimelineFightInfo]
+    t_start: int | None
+    t_end: int | None
+
+
+class TimelineEventOut(BaseModel):
+    """One raw LogEvent row for drill-down display."""
+
+    ts: dt.datetime
+    direction: str | None
+    effect_type: str | None
+    amount: float | None
+    quality: str | None
+    other_name: str | None
+    other_ship_name: str | None
+    module_name: str | None
+
+
+class TimelineEventListOut(BaseModel):
+    """Capped list of raw events with a truncation flag."""
+
+    events: list[TimelineEventOut]
+    truncated: bool

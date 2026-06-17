@@ -1,13 +1,14 @@
-// Props: coverage: UserCoverage[]
-// A compact table: rows = users, for each user show their characters with covered/missing indicator
+// Props: coverage: UserCoverage[]; brId?: string (when provided, character names link to timeline)
 
+import { Link } from 'react-router-dom'
 import type { UserCoverage } from '../api'
 
 interface Props {
   coverage: UserCoverage[]
+  brId?: string
 }
 
-export function CoverageMatrix({ coverage }: Props) {
+export function CoverageMatrix({ coverage, brId }: Props) {
   return (
     <table className="cov-matrix" data-testid="coverage-matrix">
       <thead>
@@ -26,7 +27,15 @@ export function CoverageMatrix({ coverage }: Props) {
                   {user.user_name}
                 </td>
               )}
-              <td>{char.character_name}</td>
+              <td>
+                {brId ? (
+                  <Link to={`/brs/${brId}/characters/${char.character_id}`}>
+                    {char.character_name}
+                  </Link>
+                ) : (
+                  char.character_name
+                )}
+              </td>
               <td>
                 {char.covered ? (
                   <span className="cov-covered">

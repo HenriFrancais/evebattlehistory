@@ -108,6 +108,46 @@ export interface UserCoverage {
   characters: CharacterCoverage[]
 }
 
+export interface TimelineSeriesItem {
+  key: string
+  effect_type: string | null
+  direction: string | null
+  values: (number | null)[]
+  event_count: number
+}
+
+export interface TimelineFightInfo {
+  fight_id: number
+  seq: number
+  started_at: string | null
+  ended_at: string | null
+  system_id: number
+}
+
+export interface CharacterTimeline {
+  x: number[]
+  series: TimelineSeriesItem[]
+  fights: TimelineFightInfo[]
+  t_start: number | null
+  t_end: number | null
+}
+
+export interface TimelineEvent {
+  ts: string
+  direction: string | null
+  effect_type: string | null
+  amount: number | null
+  quality: string | null
+  other_name: string | null
+  other_ship_name: string | null
+  module_name: string | null
+}
+
+export interface TimelineEventList {
+  events: TimelineEvent[]
+  truncated: boolean
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -167,4 +207,10 @@ export const api = {
   myLogs: () => jsonFetch<MyLogFile[]>(`${API}/logs/mine`),
   brCoverage: (id: string) => jsonFetch<UserCoverage[]>(`${API}/brs/${id}/coverage`),
   myBrCoverage: (id: string) => jsonFetch<UserCoverage>(`${API}/brs/${id}/my-coverage`),
+  characterTimeline: (brId: string, charId: string) =>
+    jsonFetch<CharacterTimeline>(`${API}/brs/${brId}/characters/${charId}/timeline`),
+  characterEvents: (brId: string, charId: string, from: number, to: number) =>
+    jsonFetch<TimelineEventList>(
+      `${API}/brs/${brId}/characters/${charId}/events?from=${from}&to=${to}`
+    ),
 }
