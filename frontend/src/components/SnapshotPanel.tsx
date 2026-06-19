@@ -1,4 +1,4 @@
-// Moment detail: the source→target breakdown for one clicked 5s bucket.
+// Snapshot: source→target breakdown for a selected time range.
 import { useEffect, useState } from 'react'
 import type { Contribution, ContributionsResponse } from '../api'
 import { api } from '../api'
@@ -14,57 +14,51 @@ const EFFECT_LABEL: Record<string, string> = {
 }
 
 function RowIcon({ row }: { row: Contribution }) {
-  // Damage rows with a resolved weapon → the weapon's own EVE icon.
   if (row.effect_type === 'damage' && row.icon_type_id != null) {
     return (
-      <img
-        className="contrib-eff-icon"
+      <img className="contrib-eff-icon"
         src={`https://images.evetech.net/types/${row.icon_type_id}/icon?size=32`}
-        alt={row.module_name ?? 'weapon'}
-        title={row.module_name ?? undefined}
-        width={18}
-        height={18}
-      />
+        alt={row.module_name ?? 'weapon'} title={row.module_name ?? undefined} width={18} height={18} />
     )
   }
   const id = EFFECT_ICON[row.effect_type]
   if (id == null) return <span className="contrib-eff-dot" />
   return (
-    <img
-      className="contrib-eff-icon"
+    <img className="contrib-eff-icon"
       src={`https://images.evetech.net/types/${id}/icon?size=32`}
       alt={EFFECT_LABEL[row.effect_type] ?? row.effect_type}
-      title={row.module_name ?? EFFECT_LABEL[row.effect_type] ?? row.effect_type}
-      width={18}
-      height={18}
-    />
+      title={row.module_name ?? EFFECT_LABEL[row.effect_type] ?? row.effect_type} width={18} height={18} />
   )
 }
 
-interface TargetGroup { target: string; total: number; rows: Contribution[] }
+interface TargetGroup { target: string; ship: string | null; total: number; rows: Contribution[] }
 
 function groupByTarget(rows: Contribution[]): TargetGroup[] {
   const map = new Map<string, TargetGroup>()
   for (const r of rows) {
-    let g = map.get(r.target_name)
-    if (!g) { g = { target: r.target_name, total: 0, rows: [] }; map.set(r.target_name, g) }
+    const key = `${r.target_name} ${r.target_ship ?? ''}`
+    let g = map.get(key)
+    if (!g) { g = { target: r.target_name, ship: r.target_ship, total: 0, rows: [] }; map.set(key, g) }
     g.total += r.value
     g.rows.push(r)
   }
   const groups = [...map.values()]
   for (const g of groups) g.rows.sort((a, b) => b.value - a.value)
-  groups.sort((a, b) => b.total - a.total)
+  // Busiest targets (most effect rows) first; single-source effects sink to the bottom.
+  groups.sort((a, b) => b.rows.length - a.rows.length || b.total - a.total)
   return groups
 }
 
 function TargetCard({ group }: { group: TargetGroup }) {
+  const head = group.ship ? `${group.target} (${group.ship})` : group.target
   return (
     <div className="focus-card">
-      <div className="focus-card-head" title={group.target}>{group.target}</div>
+      <div className="focus-card-head" data-testid="focus-card-head" title={head}>{head}</div>
       {group.rows.slice(0, 12).map((r, i) => (
         <div className="focus-row" key={i}>
           <RowIcon row={r} />
           <span className="focus-src" title={r.source_name}>{r.source_name}</span>
+          {r.quality && <span className="focus-quality" title="dominant hit quality">{r.quality}</span>}
           <span className="dim focus-dir">{r.direction === 'in' ? '←' : '→'}</span>
           <span className="focus-val">{fmtCompact(r.value)}</span>
         </div>
@@ -82,29 +76,29 @@ const GROUP_TOTALS = [
   { id: 'ewar', label: 'EWAR' },
 ]
 
-export function MomentDetailPanel({ brId, at }: { brId: string; at: number | null }) {
+export function SnapshotPanel({ brId, range }: { brId: string; range: { from: number; to: number } | null }) {
   const [data, setData] = useState<ContributionsResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (at == null) { setData(null); return }
+    if (range == null) { setData(null); return }
     setLoading(true); setError(null)
     let cancelled = false
     const handle = setTimeout(() => {
-      api.contributions(brId, Math.round(at)).then(
+      api.snapshot(brId, Math.round(range.from), Math.round(range.to)).then(
         (d) => { if (!cancelled) { setData(d); setLoading(false) } },
         (e: unknown) => { if (!cancelled) { setError(String((e as Error)?.message ?? e)); setLoading(false) } },
       )
     }, 120)
     return () => { cancelled = true; clearTimeout(handle) }
-  }, [brId, at])
+  }, [brId, range])
 
-  if (at == null) {
+  if (range == null) {
     return (
       <div className="contrib-panel" data-testid="moment-detail-empty">
         <p className="dim" style={{ fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>
-          Click a moment on any graph to break down who applied what.
+          Click a START then an END point on any graph to snapshot that window.
         </p>
       </div>
     )
@@ -115,7 +109,7 @@ export function MomentDetailPanel({ brId, at }: { brId: string; at: number | nul
   return (
     <div className="contrib-panel" data-testid="fleet-contrib">
       <div className="contrib-head">
-        <strong>{fmtTime(at, true)} UTC <span className="dim">· 5s window</span></strong>
+        <strong>{fmtTime(range.from, true)} → {fmtTime(range.to, true)} UTC</strong>
       </div>
       <div className="focus-totals">
         {GROUP_TOTALS.map((g) => {
@@ -133,7 +127,7 @@ export function MomentDetailPanel({ brId, at }: { brId: string; at: number | nul
         <p className="dim" style={{ fontSize: '0.78rem' }}>No logged activity in this window.</p>
       )}
       <div className="focus-list">
-        {targets.map((g) => <TargetCard key={g.target} group={g} />)}
+        {targets.map((g) => <TargetCard key={`${g.target}-${g.ship ?? ''}`} group={g} />)}
       </div>
     </div>
   )

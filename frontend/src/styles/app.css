@@ -455,3 +455,5 @@ nav a:hover { color: var(--accent); }
   .br-detail-grid { grid-template-columns: 1fr; }
   .br-col-side { position: static; }
 }
+
+.focus-quality { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--warn); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
