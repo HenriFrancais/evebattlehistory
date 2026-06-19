@@ -33,6 +33,7 @@ const mockBr: BrDetail = {
   fight_count: 1,
   battle_at: '2026-06-10T18:00:00Z',
   created_at: '2026-06-10T20:00:00Z',
+  systems: [],
   fights: [
     {
       fight_id: 1,

@@ -28,7 +28,7 @@ from app.api.schemas import (
 )
 from app.analytics.sides_config import fight_side_losses, load_overrides
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrFight, BrSource, Fight, FightSide
+from app.db.models import BattleReport, BrFight, BrSource, Fight, FightSide, SolarSystem
 from app.fights.participants import ParticipantInfo, br_participants
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
@@ -359,9 +359,28 @@ async def get_br(
 
     fights = await _load_fights(session, br_id)
 
+    sys_ids = [f.system_id for f in fights]
+    system_names: list[str] = []
+    if sys_ids:
+        name_map = {
+            s.system_id: s.name
+            for s in (
+                await session.execute(
+                    select(SolarSystem).where(SolarSystem.system_id.in_(sys_ids))
+                )
+            ).scalars()
+        }
+        seen: set[str] = set()
+        for sid in sys_ids:
+            nm = name_map.get(sid) or f"System {sid}"
+            if nm not in seen:
+                seen.add(nm)
+                system_names.append(nm)
+
     return BrDetail(
         **_br_to_summary(br).model_dump(),
         fights=fights,
+        systems=system_names,
     )
 
 

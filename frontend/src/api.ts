@@ -66,6 +66,7 @@ export interface FightOut {
 
 export interface BrDetail extends BrSummary {
   fights: FightOut[]
+  systems: string[]
 }
 
 export interface BrStatus {

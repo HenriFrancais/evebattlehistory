@@ -96,6 +96,7 @@ class BrSummary(BaseModel):
 
 class BrDetail(BrSummary):
     fights: list[FightOut]
+    systems: list[str] = []
 
 
 class BrListSummary(BaseModel):
