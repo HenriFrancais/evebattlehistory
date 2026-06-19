@@ -457,3 +457,7 @@ nav a:hover { color: var(--accent); }
 }
 
 .focus-quality { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--warn); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
+
+.fleet-range-band { position: absolute; top: 0; bottom: 0; background: rgba(255,213,79,0.12); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); pointer-events: none; }
+.fleet-range-handle { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: ew-resize; }
+.fleet-range-handle::before { content: ''; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: var(--accent); }

@@ -4,8 +4,8 @@
 // control, and kill markers spanning each panel. The uPlot charts are not unit-
 // tested (canvas); tests cover loading/empty/error, toggles, smoothing, kills.
 //
-// The clicked-moment time is owned by the parent (selectedTs / onSelectTs); the
-// source→target breakdown lives in MomentDetailPanel.
+// The selected time range is owned by the parent (selectedRange / onSelectRange);
+// the source→target breakdown lives in SnapshotPanel.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
@@ -83,7 +83,8 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
     tip.innerHTML =
       `${icon}<div class="kill-tip-text"><div class="kill-tip-ship">${k.victim_ship_name}</div>` +
       pilot +
-      `<div class="kill-tip-meta">${t} UTC${isk}</div></div>`
+      `<div class="kill-tip-meta">${t} UTC${isk}</div>` +
+      `<div class="kill-tip-meta">⌃-click → zKill</div></div>`
     tip.style.display = 'flex'
     moveTip(ev)
   }
@@ -120,8 +121,11 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
       el.addEventListener('mousemove', moveTip)
       el.addEventListener('mouseleave', hideTip)
       el.addEventListener('click', (ev) => {
-        ev.stopPropagation() // don't also trigger a time-pick
-        window.open(`https://zkillboard.com/kill/${k.killmail_id}/`, '_blank', 'noopener,noreferrer')
+        if (ev.ctrlKey || ev.metaKey) {
+          ev.stopPropagation()
+          window.open(`https://zkillboard.com/kill/${k.killmail_id}/`, '_blank', 'noopener,noreferrer')
+        }
+        // plain click falls through to the graph's range handler
       })
       layer.appendChild(el)
     }
@@ -181,58 +185,72 @@ function fightEdgesPlugin(fights: TimelineFightInfo[]): uPlot.Plugin {
   }
 }
 
-// Persistent draggable time slider. Owns a vertical line in u.over; registers a
-// reposition fn so all panels' sliders move together; drag updates the shared time.
-function sliderPlugin(
-  getTime: () => number | null,
-  onChange: (t: number) => void,
+// Persistent draggable range band. Two handles (from/to) + a shaded span in u.over.
+// A registered reposition fn keeps all panels' bands in sync. Dragging a handle edits
+// the shared range; the band/handles never trigger native drag-zoom (stopPropagation).
+function rangePlugin(
+  getRange: () => { from: number; to: number } | null,
+  onChange: (r: { from: number; to: number }) => void,
   register: (fn: () => void) => () => void,
 ): uPlot.Plugin {
-  let line: HTMLDivElement | null = null
+  let band: HTMLDivElement | null = null
+  let h0: HTMLDivElement | null = null
+  let h1: HTMLDivElement | null = null
   let unregister: (() => void) | null = null
 
   const position = (u: uPlot) => {
-    if (!line) return
-    const t = getTime()
-    if (t == null) {
-      line.style.display = 'none'
+    const r = getRange()
+    if (!band || !h0 || !h1) return
+    if (r == null) {
+      band.style.display = h0.style.display = h1.style.display = 'none'
       return
     }
-    const x = u.valToPos(t, 'x')
-    const w = u.over.clientWidth
-    if (x < 0 || x > w) {
-      line.style.display = 'none'
-    } else {
-      line.style.display = ''
-      line.style.left = `${x}px`
+    const x0 = u.valToPos(r.from, 'x')
+    const x1 = u.valToPos(r.to, 'x')
+    const lo = Math.min(x0, x1)
+    const hi = Math.max(x0, x1)
+    band.style.display = ''
+    band.style.left = `${lo}px`
+    band.style.width = `${Math.max(0, hi - lo)}px`
+    h0.style.display = h1.style.display = ''
+    h0.style.left = `${x0}px`
+    h1.style.left = `${x1}px`
+  }
+
+  const dragHandle = (u: uPlot, which: 'from' | 'to') => (ev: MouseEvent) => {
+    ev.stopPropagation()
+    ev.preventDefault()
+    const move = (e: MouseEvent) => {
+      const rect = u.over.getBoundingClientRect()
+      let t = u.posToVal(e.clientX - rect.left, 'x')
+      const min = u.scales.x.min ?? t
+      const max = u.scales.x.max ?? t
+      t = Math.max(min, Math.min(max, t))
+      const cur = getRange()
+      if (!cur) return
+      onChange(which === 'from' ? { from: t, to: cur.to } : { from: cur.from, to: t })
     }
+    const up = () => {
+      document.removeEventListener('mousemove', move)
+      document.removeEventListener('mouseup', up)
+    }
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', up)
   }
 
   return {
     hooks: {
       ready: (u) => {
-        line = document.createElement('div')
-        line.className = 'fleet-slider'
-        line.innerHTML = '<span class="fleet-slider-grip"></span>'
-        u.over.appendChild(line)
-        const onMove = (ev: MouseEvent) => {
-          const rect = u.over.getBoundingClientRect()
-          let t = u.posToVal(ev.clientX - rect.left, 'x')
-          const min = u.scales.x.min ?? t
-          const max = u.scales.x.max ?? t
-          t = Math.max(min, Math.min(max, t))
-          onChange(t)
-        }
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove)
-          document.removeEventListener('mouseup', onUp)
-        }
-        line.addEventListener('mousedown', (ev) => {
-          ev.stopPropagation()
-          ev.preventDefault()
-          document.addEventListener('mousemove', onMove)
-          document.addEventListener('mouseup', onUp)
-        })
+        band = document.createElement('div')
+        band.className = 'fleet-range-band'
+        h0 = document.createElement('div')
+        h1 = document.createElement('div')
+        h0.className = h1.className = 'fleet-range-handle'
+        u.over.appendChild(band)
+        u.over.appendChild(h0)
+        u.over.appendChild(h1)
+        h0.addEventListener('mousedown', dragHandle(u, 'from'))
+        h1.addEventListener('mousedown', dragHandle(u, 'to'))
         unregister = register(() => position(u))
         position(u)
       },
@@ -240,8 +258,8 @@ function sliderPlugin(
       setSize: (u) => position(u),
       destroy: () => {
         unregister?.()
-        line?.remove()
-        line = null
+        band?.remove(); h0?.remove(); h1?.remove()
+        band = h0 = h1 = null
       },
     },
   }
@@ -258,8 +276,10 @@ interface PanelChartProps {
   height: number
   /** Shared x-zoom [min,max] across panels; null = full extent. Preserved across rebuilds. */
   zoomRef: { current: [number, number] | null }
-  sliderTimeRef: { current: number | null }
-  onSliderChange: (ts: number) => void
+  rangeRef: { current: { from: number; to: number } | null }
+  onRangeClick: (ts: number) => void
+  /** Handle drag: replaces the whole range (the from/to endpoints are edited live). */
+  onRangeDrag: (r: { from: number; to: number }) => void
   registerPositioner: (fn: () => void) => () => void
 }
 
@@ -271,8 +291,9 @@ function PanelChart({
   fights,
   height,
   zoomRef,
-  sliderTimeRef,
-  onSliderChange,
+  rangeRef,
+  onRangeClick,
+  onRangeDrag,
   registerPositioner,
 }: PanelChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -369,7 +390,7 @@ function PanelChart({
         fightEdgesPlugin(fights),
         zeroBaselinePlugin(),
         killMarkersPlugin(kills),
-        sliderPlugin(() => sliderTimeRef.current, onSliderChange, registerPositioner),
+        rangePlugin(() => rangeRef.current, onRangeDrag, registerPositioner),
       ],
     }
 
@@ -379,12 +400,12 @@ function PanelChart({
     const u = new uPlot(opts, data as uPlot.AlignedData, el)
     if (savedZoom) u.setScale?.('x', { min: savedZoom[0], max: savedZoom[1] })
 
-    // Click a point in time → place/move the slider there.
-    const onClick = () => {
-      const idx = u.cursor.idx
-      if (idx == null) return
-      const ts = u.data[0][idx] as number | null
-      if (ts != null) onSliderChange(ts)
+    // Click a moment in time → extend the two-click range. Uses the cursor's
+    // exact time (any x is selectable, not just snapped data points).
+    const onClick = (ev: MouseEvent) => {
+      const rect = u.over.getBoundingClientRect()
+      const t = u.posToVal(ev.clientX - rect.left, 'x')
+      if (Number.isFinite(t)) onRangeClick(t)
     }
     u.over?.addEventListener('click', onClick)
     const onResize = () => u.setSize({ width: el.clientWidth || 800, height })
@@ -393,7 +414,7 @@ function PanelChart({
       window.removeEventListener('resize', onResize)
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, sliderTimeRef, onSliderChange, registerPositioner])
+  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeClick, onRangeDrag, registerPositioner])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -469,12 +490,12 @@ interface Props {
   brId: string
   /** Bump to force a re-fetch (e.g. after side overrides change). */
   reloadKey?: number
-  /** Clicked-moment time (epoch seconds), owned by the parent; null = none. */
-  selectedTs: number | null
-  onSelectTs: (ts: number | null) => void
+  /** Selected time range (epoch seconds), owned by the parent; null = none. */
+  selectedRange: { from: number; to: number } | null
+  onSelectRange: (r: { from: number; to: number } | null) => void
 }
 
-export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
+export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Props) {
   const [fleet, setFleet] = useState<FleetTimeline | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -486,9 +507,11 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
   // Shared x-zoom across the panels, preserved across rebuilds (toggles,
   // smoothing) but reset when the BR data reloads.
   const zoomRef = useRef<[number, number] | null>(null)
-  // Slider time mirrored in a ref so the chart plugins read it live; positioners
-  // move every panel's slider together on drag without rebuilding charts.
-  const sliderTimeRef = useRef<number | null>(null)
+  // Range mirrored in a ref so the chart plugins read it live; positioners move
+  // every panel's band/handles together on drag without rebuilding charts.
+  const rangeRef = useRef<{ from: number; to: number } | null>(null)
+  // Pending START of the two-click protocol (null = next click starts a range).
+  const pendingStartRef = useRef<number | null>(null)
   const positionersRef = useRef<Set<() => void>>(new Set())
 
   const registerPositioner = useCallback((fn: () => void) => {
@@ -498,18 +521,39 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
     }
   }, [])
 
-  const handleSliderChange = useCallback((ts: number) => {
-    sliderTimeRef.current = ts
+  // Two-click range: 1st click sets START (from==to), 2nd click sets END (ordered),
+  // 3rd click starts a new range. Plain clicks only — drag still zooms.
+  const handleRangeClick = useCallback((ts: number) => {
+    if (pendingStartRef.current == null) {
+      pendingStartRef.current = ts
+      const r = { from: ts, to: ts }
+      rangeRef.current = r
+      positionersRef.current.forEach((fn) => fn())
+      onSelectRange(r)
+    } else {
+      const from = pendingStartRef.current
+      const r = { from: Math.min(from, ts), to: Math.max(from, ts) }
+      pendingStartRef.current = null
+      rangeRef.current = r
+      positionersRef.current.forEach((fn) => fn())
+      onSelectRange(r)
+    }
+  }, [onSelectRange])
+
+  // Handle drag: the plugin reports a whole new range (ordered isn't enforced
+  // here — handles can cross; the band uses min/max). Mirror + reposition live.
+  const handleRangeDrag = useCallback((r: { from: number; to: number }) => {
+    rangeRef.current = r
     positionersRef.current.forEach((fn) => fn())
-    onSelectTs(ts)
-  }, [onSelectTs])
+    onSelectRange(r)
+  }, [onSelectRange])
 
   // Mirror the parent-owned selection into the ref + reposition every panel's
-  // slider line, so external clears/changes are reflected on the canvas.
+  // band/handles, so external clears/changes are reflected on the canvas.
   useEffect(() => {
-    sliderTimeRef.current = selectedTs
+    rangeRef.current = selectedRange
     positionersRef.current.forEach((fn) => fn())
-  }, [selectedTs])
+  }, [selectedRange])
 
   useEffect(() => {
     let cancelled = false
@@ -517,8 +561,9 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
     setError(null)
     initialised.current = false
     zoomRef.current = null
-    sliderTimeRef.current = null
-    onSelectTs(null)
+    rangeRef.current = null
+    pendingStartRef.current = null
+    onSelectRange(null)
     api.fleetTimeline(brId).then(
       (data) => {
         if (!cancelled) {
@@ -536,7 +581,7 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
     return () => {
       cancelled = true
     }
-    // onSelectTs is a stable parent setter; deliberately not a dep (re-fetch only on brId/reloadKey).
+    // onSelectRange is a stable parent setter; deliberately not a dep (re-fetch only on brId/reloadKey).
   }, [brId, reloadKey])
 
   const view: FleetView | null = useMemo(
@@ -628,8 +673,9 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
             fights={fleet?.fights ?? []}
             height={165}
             zoomRef={zoomRef}
-            sliderTimeRef={sliderTimeRef}
-            onSliderChange={handleSliderChange}
+            rangeRef={rangeRef}
+            onRangeClick={handleRangeClick}
+            onRangeDrag={handleRangeDrag}
             registerPositioner={registerPositioner}
           />
         </div>
@@ -637,7 +683,7 @@ export function FleetGraph({ brId, reloadKey, selectedTs, onSelectTs }: Props) {
 
       <KillLegend kills={view.kills} />
       <p className="dim" style={{ fontSize: '0.75rem', margin: '0.2rem 0 0' }}>
-        Tip: click a moment on any graph to drop a slider, then drag it to scrub the breakdown.
+        Tip: click a start then an end on any graph to select a range (drag the handles to adjust). ⌃-click a kill marker for zKill.
       </p>
     </div>
   )

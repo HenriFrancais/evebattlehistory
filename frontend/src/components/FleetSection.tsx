@@ -1,9 +1,9 @@
-// Fleet section: composes the fleet graph with the moment-detail breakdown.
-// Owns the clicked-moment time so a click on the graph reveals the side panel;
-// Task 8 lifts this state into the page to place the two in separate columns.
+// Fleet section: composes the fleet graph with the snapshot breakdown.
+// Owns the selected time range so a two-click selection on the graph reveals the
+// side panel; a later task lifts this state into the page for separate columns.
 import { useState } from 'react'
 import { FleetGraph } from './FleetGraph'
-import { MomentDetailPanel } from './MomentDetailPanel'
+import { SnapshotPanel } from './SnapshotPanel'
 
 interface Props {
   brId: string
@@ -12,16 +12,14 @@ interface Props {
 }
 
 export function FleetSection({ brId, reloadKey }: Props) {
-  const [selectedTs, setSelectedTs] = useState<number | null>(null)
+  const [range, setRange] = useState<{ from: number; to: number } | null>(null)
   return (
     <div className="fleet-layout">
       <div className="fleet-main">
-        <FleetGraph brId={brId} reloadKey={reloadKey} selectedTs={selectedTs} onSelectTs={setSelectedTs} />
+        <FleetGraph brId={brId} reloadKey={reloadKey} selectedRange={range} onSelectRange={setRange} />
       </div>
-      {selectedTs != null && (
-        <div className="fleet-side">
-          <MomentDetailPanel brId={brId} at={selectedTs} />
-        </div>
+      {range != null && (
+        <div className="fleet-side"><SnapshotPanel brId={brId} range={range} /></div>
       )}
     </div>
   )
