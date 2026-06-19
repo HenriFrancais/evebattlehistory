@@ -5,7 +5,9 @@ import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
 import { FilterBuilder } from '../components/FilterBuilder'
 import { FightList } from '../components/FightList'
-import { FleetSection } from '../components/FleetSection'
+import { FleetGraph } from '../components/FleetGraph'
+import { MomentDetailPanel } from '../components/MomentDetailPanel'
+import { FleetsPanel } from '../components/FleetsPanel'
 import { SidesEditor } from '../components/SidesEditor'
 import { IngestProgress } from '../components/IngestProgress'
 import { fmtIsk } from '../format'
@@ -440,6 +442,7 @@ export function BrDetailPage() {
   const [refreshStatus, setRefreshStatus] = useState<BrStatus | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [sidesVersion, setSidesVersion] = useState(0)
+  const [selectedTs, setSelectedTs] = useState<number | null>(null)
 
   const load = useCallback(() => {
     if (!id) return
@@ -643,15 +646,33 @@ export function BrDetailPage() {
 
       <FightList fights={displayFights} brId={br.br_id} />
 
-      <section data-testid="sides-section" className="panel">
-        <h2 style={{ margin: '0 0 0.75rem' }}>Sides</h2>
-        {id && <SidesEditor brId={id} onChange={() => setSidesVersion((v) => v + 1)} />}
-      </section>
-
-      <section data-testid="fleet-graph-section" className="panel">
-        <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
-        {id && <FleetSection brId={id} reloadKey={sidesVersion} />}
-      </section>
+      <div className="br-detail-grid" data-testid="br-detail-grid">
+        <div className="br-col-main" data-testid="br-col-main">
+          <section className="panel">
+            {id && <FleetsPanel brId={id} reloadKey={sidesVersion} />}
+          </section>
+          <section data-testid="fleet-graph-section" className="panel">
+            <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
+            {id && (
+              <FleetGraph brId={id} reloadKey={sidesVersion} selectedTs={selectedTs} onSelectTs={setSelectedTs} />
+            )}
+          </section>
+        </div>
+        <div className="br-col-side" data-testid="br-col-side">
+          <section className="panel">
+            <h3 style={{ margin: '0 0 0.5rem' }}>Moment Detail</h3>
+            {id && <MomentDetailPanel brId={id} at={selectedTs} />}
+          </section>
+          <section data-testid="sides-section" className="panel">
+            <details>
+              <summary style={{ fontWeight: 600 }}>Sides <span className="dim" style={{ fontWeight: 400 }}>(classify alliances/corps)</span></summary>
+              <div style={{ marginTop: '0.6rem' }}>
+                {id && <SidesEditor brId={id} onChange={() => setSidesVersion((v) => v + 1)} />}
+              </div>
+            </details>
+          </section>
+        </div>
+      </div>
 
       <section data-testid="log-coverage-section" className="panel">
         <h2 style={{ margin: '0 0 0.75rem' }}>Log Coverage</h2>

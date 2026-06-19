@@ -18,6 +18,8 @@ vi.mock('../api', async (importOriginal) => {
       brCoverage: vi.fn(),
       filterFights: vi.fn(),
       fleetTimeline: vi.fn(),
+      composition: vi.fn(),
+      contributions: vi.fn(),
       getSources: vi.fn(),
       patchBrTitle: vi.fn(),
       addSource: vi.fn(),
@@ -156,6 +158,8 @@ describe('BrDetailPage', () => {
     vi.mocked(api.brCoverage).mockReset()
     vi.mocked(api.filterFights).mockReset()
     vi.mocked(api.fleetTimeline).mockReset()
+    vi.mocked(api.composition).mockReset()
+    vi.mocked(api.contributions).mockReset()
     vi.mocked(api.getSources).mockReset()
     vi.mocked(api.patchBrTitle).mockReset()
     vi.mocked(api.addSource).mockReset()
@@ -165,6 +169,8 @@ describe('BrDetailPage', () => {
     // Defaults for non-critical calls
     vi.mocked(api.getSources).mockResolvedValue([])
     vi.mocked(api.getBrStatus).mockResolvedValue({ br_id: 'br1', status: 'ready', progress_pct: 100, error_text: null })
+    vi.mocked(api.composition).mockResolvedValue({ by_user_available: false, sides: [] })
+    vi.mocked(api.contributions).mockResolvedValue({ at: 0, sides: [] } as never)
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {
@@ -315,6 +321,20 @@ describe('BrDetailPage', () => {
 
     // Count indicator should be gone
     await waitFor(() => expect(screen.queryByTestId('fight-filter-count')).not.toBeInTheDocument())
+  })
+
+  it('lays out fleet graph and detail rail in two columns', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+    renderBrDetailPage()
+    await waitFor(() => expect(screen.getByTestId('br-detail-grid')).toBeInTheDocument())
+    expect(screen.getByTestId('br-col-main')).toBeInTheDocument()
+    expect(screen.getByTestId('br-col-side')).toBeInTheDocument()
+    // moment detail starts in its empty state
+    expect(screen.getByTestId('moment-detail-empty')).toBeInTheDocument()
   })
 
   // -------------------------------------------------------------------------
