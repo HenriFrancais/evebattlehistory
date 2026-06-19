@@ -43,3 +43,51 @@ async def test_persist_injects_total_value(db_session_maker) -> None:  # type: i
     async with db_session_maker() as session:
         row = (await session.execute(select(Killmail).where(Killmail.killmail_id == 111))).scalar_one()
     assert row.total_value == pytest.approx(1500000.0)
+
+
+@pytest.mark.asyncio
+async def test_backfill_fills_null_values(db_session_maker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import uuid
+
+    from app.config import get_settings
+    from app.db.models import (
+        BattleReport,
+        BrKillmail,
+        InventoryType,
+        Killmail,
+        SolarSystem,
+    )
+    from app.ingest import zkb_value
+    from sqlalchemy import select
+
+    # The fixture runs with DATA_SOURCE=demo (which the backfill skips), so pass a
+    # real-mode settings copy to exercise the actual backfill path.
+    settings = get_settings().model_copy(update={"data_source": "real"})
+
+    async with db_session_maker() as session:
+        br_id = str(uuid.uuid4())
+        # FK enforcement is ON, so seed the killmail's parent rows.
+        session.add(SolarSystem(system_id=31002222, name="J100222"))
+        session.add(InventoryType(type_id=670, name="Capsule"))
+        session.add(BattleReport(br_id=br_id, source="zkb", source_url="http://x", source_ref="r",
+                                 created_by_user="t", status="ready", progress_pct=100,
+                                 created_at=dt.datetime.now(dt.UTC)))
+        session.add(Killmail(killmail_id=900, killmail_time=dt.datetime(2026, 6, 10, tzinfo=dt.UTC),
+                             solar_system_id=31002222, victim_ship_type_id=670,
+                             total_value=None, npc_kill=False, solo_kill=False, hash="hh"))
+        session.add(BrKillmail(br_id=br_id, killmail_id=900))
+        await session.commit()
+
+    async def fake_fetch(client, km_id, km_hash):  # noqa: ANN001
+        return 4242.0 if km_id == 900 else None
+
+    monkeypatch.setattr(zkb_value, "_fetch_value", fake_fetch)
+
+    async with db_session_maker() as session:
+        n = await zkb_value.backfill_killmail_values(session, br_id, settings)
+        await session.commit()
+    assert n == 1
+
+    async with db_session_maker() as session:
+        row = (await session.execute(select(Killmail).where(Killmail.killmail_id == 900))).scalar_one()
+    assert row.total_value == pytest.approx(4242.0)

@@ -267,6 +267,17 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
 
             await session.commit()
 
+        # Phase 3.5: backfill any ISK values not provided by /related/.
+        try:
+            async with session_maker() as session:
+                from app.ingest.zkb_value import backfill_killmail_values
+
+                filled = await backfill_killmail_values(session, br_id, settings)
+                await session.commit()
+                log.info("pipeline.isk_backfill", br_id=br_id, filled=filled)
+        except Exception as exc:
+            log.warning("pipeline.isk_backfill_failed", br_id=br_id, error=str(exc))
+
         # ------------------------------------------------------------------ #
         # Phase 4: clustering                                                 #
         # ------------------------------------------------------------------ #
