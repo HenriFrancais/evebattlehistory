@@ -68,4 +68,20 @@ describe('FleetsPanel', () => {
     await user.click(screen.getByRole('button', { name: /Per-character/i }))
     expect(screen.getAllByText(/reship/i).length).toBeGreaterThanOrEqual(1)
   })
+
+  it('links a lost pilot ship to zKillboard', async () => {
+    vi.mocked(api.composition).mockResolvedValue({
+      by_user_available: false,
+      sides: [{ side_kind: 'friendly', pilot_count: 1,
+        ships: [{ ship_type_id: 645, ship_name: 'Dominix', count: 1 }],
+        pilots: [{ character_id: 7, character_name: 'Vic', ship_type_id: 645, ship_name: 'Dominix',
+                   lost: true, reship: false, user_name: null, killmail_id: 12345 }] }],
+    })
+    const user = userEvent.setup()
+    render(<FleetsPanel brId="br1" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /Per-character/i }))
+    const link = screen.getByRole('link', { name: /lost/i })
+    expect(link).toHaveAttribute('href', 'https://zkillboard.com/kill/12345/')
+  })
 })

@@ -44,7 +44,14 @@ function PilotRow({ p }: { p: CompositionPilot }) {
     <div className="comp-row">
       {shipIcon(p.ship_type_id, 18)}
       <span className="comp-name" title={p.character_name}>
-        {p.character_name}{p.lost && <span className="comp-lost" title="lost ship"> ✗</span>}
+        {p.character_name}
+        {p.lost && p.killmail_id != null ? (
+          <a className="comp-lost" href={`https://zkillboard.com/kill/${p.killmail_id}/`}
+             target="_blank" rel="noopener noreferrer" title="lost ship — open on zKillboard"
+             aria-label="lost ship"> ✗</a>
+        ) : p.lost ? (
+          <span className="comp-lost" title="lost ship"> ✗</span>
+        ) : null}
       </span>
       <span className="dim comp-ship-sub">{p.ship_name}</span>
       {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
