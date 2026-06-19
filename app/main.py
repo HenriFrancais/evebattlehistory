@@ -50,6 +50,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await init_models(settings)
     try:
+        from app.db.engine import get_sessionmaker
+        from app.sde.load import load_sde_into_db
+
+        async with get_sessionmaker(settings)() as _s:
+            loaded = await load_sde_into_db(_s, settings.sde_dir)
+            await _s.commit()
+        if loaded:
+            log.info("sde.startup_loaded", types=loaded)
+    except Exception as exc:
+        log.warning("sde.startup_load_failed", error=str(exc))
+    try:
         swept = await sweep_pending(settings)
         log.info("jobs.sweep_done", count=swept)
     except Exception as exc:

@@ -45,6 +45,13 @@ class InventoryType(Base):
     market_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class SdeMeta(Base):
+    __tablename__ = "sde_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    build_number: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Alliance(Base):
     __tablename__ = "alliance"
 
