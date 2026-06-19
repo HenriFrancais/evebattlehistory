@@ -128,7 +128,7 @@ async def resolve_source(
         async with httpx.AsyncClient(
             headers={"User-Agent": "nv-br"}, timeout=30.0
         ) as client:
-            refs = await fetch_window_killmails(
+            refs, values = await fetch_window_killmails(
                 client, source_system_id, source_window_start, source_window_end
             )
 
@@ -140,6 +140,7 @@ async def resolve_source(
             ),
             title=label,
             refs=refs,
+            values=values,
         )
 
     else:

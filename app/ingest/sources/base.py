@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 
@@ -14,6 +14,7 @@ class ResolvedBr:
     source_ref: str  # the parsed ref
     title: str | None
     refs: list[tuple[int, str]]  # (km_id, km_hash)
+    values: dict[int, float | None] = field(default_factory=dict)  # km_id → zkb.totalValue
 
 
 @runtime_checkable

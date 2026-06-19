@@ -50,16 +50,29 @@ async def persist_killmails(
     session: AsyncSession,
     killmails_json: list[dict[str, object]],
     names: dict[int, dict[str, str]],
+    values: dict[int, float | None] | None = None,
 ) -> int:
     """Parse and persist killmails. Returns count of newly inserted killmails."""
     if not killmails_json:
         return 0
+    values = values or {}
 
     now = dt.datetime.now(dt.UTC)
 
     # Parse all killmails
     parsed: list[ParsedKillmail] = []
     for raw in killmails_json:
+        kid = raw.get("killmail_id")
+        try:
+            tv = values.get(int(str(kid))) if kid is not None else None
+        except (TypeError, ValueError):
+            tv = None
+        if tv is not None:
+            zkb = raw.get("zkb")
+            if not isinstance(zkb, dict):
+                zkb = {}
+                raw["zkb"] = zkb
+            zkb.setdefault("totalValue", tv)
         try:
             parsed.append(parse_killmail(raw))
         except Exception as exc:

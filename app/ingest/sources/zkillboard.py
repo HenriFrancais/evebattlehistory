@@ -27,18 +27,21 @@ def parse_zkb_url(url: str) -> tuple[int, str]:
     return system_id, dt_str
 
 
-def _extract_refs_from_related(data: object) -> list[tuple[int, str]]:
-    """Extract (killmail_id, hash) pairs from a /api/related/ response dict.
+def _extract_refs_from_related(
+    data: object,
+) -> tuple[list[tuple[int, str]], dict[int, float | None]]:
+    """Extract (killmail_id, hash) pairs and km_id→totalValue from a /api/related/ response.
 
-    Merges teamA.kills and teamB.kills, skipping any entry that lacks a valid
-    zkb.hash.  Returns a deduplicated list (first occurrence wins).
+    Merges teamA.kills and teamB.kills, skipping any entry lacking a valid zkb.hash.
+    Deduplicated (first occurrence wins).
     """
     refs: dict[int, str] = {}
+    values: dict[int, float | None] = {}
     if not isinstance(data, dict):
-        return []
+        return [], {}
     summary = data.get("summary")
     if not isinstance(summary, dict):
-        return []
+        return [], {}
     for team_key in ("teamA", "teamB"):
         team = summary.get(team_key)
         if not isinstance(team, dict):
@@ -61,7 +64,9 @@ def _extract_refs_from_related(data: object) -> list[tuple[int, str]]:
                 continue
             if km_id not in refs:
                 refs[km_id] = km_hash
-    return list(refs.items())
+                tv = zkb.get("totalValue")
+                values[km_id] = float(tv) if isinstance(tv, (int, float)) else None
+    return list(refs.items()), values
 
 
 class ZkbSource:
@@ -71,6 +76,7 @@ class ZkbSource:
         system_id, dt_str = parse_zkb_url(url)
 
         refs: list[tuple[int, str]] = []
+        values: dict[int, float | None] = {}
         title: str | None = None
         async with httpx.AsyncClient(
             headers={"User-Agent": "nv-br"}, timeout=30.0
@@ -79,7 +85,7 @@ class ZkbSource:
             resp = await client.get(api_url)
             if resp.status_code == 200:
                 data = resp.json()
-                refs = _extract_refs_from_related(data)
+                refs, values = _extract_refs_from_related(data)
                 if isinstance(data, dict):
                     system_name = data.get("systemName")
                     if isinstance(system_name, str) and system_name:
@@ -91,12 +97,14 @@ class ZkbSource:
                     system_id=system_id,
                     dt_str=dt_str,
                 )
+                values = {}
 
         return ResolvedBr(
             source="zkb",
             source_ref=f"{system_id}/{dt_str}",
             title=title,
             refs=refs,
+            values=values,
         )
 
 
@@ -105,7 +113,7 @@ async def fetch_window_killmails(
     system_id: int,
     window_start: dt.datetime,
     window_end: dt.datetime,
-) -> list[tuple[int, str]]:
+) -> tuple[list[tuple[int, str]], dict[int, float | None]]:
     """Fetch killmail refs for a system near a time window via zKB /related/.
 
     Uses GET /api/related/{system_id}/{window_start:%Y%m%d%H%M}/ to retrieve
@@ -124,6 +132,6 @@ async def fetch_window_killmails(
             system_id=system_id,
             window_start=window_start.isoformat(),
         )
-        return []
+        return [], {}
     data = resp.json()
     return _extract_refs_from_related(data)

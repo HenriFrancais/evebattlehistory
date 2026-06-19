@@ -81,6 +81,7 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
 
         # Resolve each source independently; collect results + errors
         all_refs: dict[int, str] = {}  # km_id → km_hash (deduped)
+        all_values: dict[int, float | None] = {}  # km_id → zkb.totalValue
         primary_resolved_source: str | None = None
         primary_source_ref: str | None = None
         primary_title: str | None = None
@@ -110,6 +111,7 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 for km_id, km_hash in resolved.refs:
                     if km_id not in all_refs:
                         all_refs[km_id] = km_hash
+                        all_values[km_id] = resolved.values.get(km_id)
 
                 # Mark source ok
                 async with session_maker() as session:
@@ -249,7 +251,7 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
         log.info("pipeline.persisting", br_id=br_id)
 
         async with session_maker() as session:
-            await persist_killmails(session, killmails_json, names)
+            await persist_killmails(session, killmails_json, names, values=all_values)
 
             # Upsert BrKillmail links (idempotent)
             km_ids = [

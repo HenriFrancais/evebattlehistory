@@ -117,7 +117,7 @@ async def test_fetch_window_killmails_extracts_both_teams():
 
     transport = _make_transport()
     async with httpx.AsyncClient(transport=transport) as client:
-        refs = await fetch_window_killmails(
+        refs, _values = await fetch_window_killmails(
             client,
             _SYSTEM_ID,
             dt.datetime(2025, 6, 17, 15, 0, tzinfo=dt.UTC),
@@ -136,7 +136,7 @@ async def test_fetch_window_killmails_non200_empty():
 
     transport = _make_transport(status=404, body={})
     async with httpx.AsyncClient(transport=transport) as client:
-        refs = await fetch_window_killmails(
+        refs, _values = await fetch_window_killmails(
             client,
             _SYSTEM_ID,
             dt.datetime(2025, 6, 17, 15, 0, tzinfo=dt.UTC),
@@ -168,7 +168,7 @@ def test_extract_skips_kill_missing_hash():
             "teamB": {"kills": {}},
         }
     }
-    refs = _extract_refs_from_related(data)
+    refs, _values = _extract_refs_from_related(data)
     assert refs == [(200001, "goodhash")]
 
 
@@ -182,7 +182,7 @@ def test_extract_deduplicates_kill_id():
             "teamB": {"kills": {"300001": {"zkb": {"hash": "hashB"}}}},
         }
     }
-    refs = _extract_refs_from_related(data)
+    refs, _values = _extract_refs_from_related(data)
     assert len(refs) == 1
     assert refs[0][0] == 300001
 
@@ -191,16 +191,16 @@ def test_extract_non_dict_input():
     """Non-dict root → empty list, no crash."""
     from app.ingest.sources.zkillboard import _extract_refs_from_related
 
-    assert _extract_refs_from_related([]) == []
-    assert _extract_refs_from_related(None) == []
-    assert _extract_refs_from_related("bad") == []
+    assert _extract_refs_from_related([]) == ([], {})
+    assert _extract_refs_from_related(None) == ([], {})
+    assert _extract_refs_from_related("bad") == ([], {})
 
 
 def test_extract_missing_summary():
     """Missing summary key → empty list."""
     from app.ingest.sources.zkillboard import _extract_refs_from_related
 
-    assert _extract_refs_from_related({"systemID": 1}) == []
+    assert _extract_refs_from_related({"systemID": 1}) == ([], {})
 
 
 def test_extract_missing_team():
@@ -213,5 +213,5 @@ def test_extract_missing_team():
             # teamB absent
         }
     }
-    refs = _extract_refs_from_related(data)
+    refs, _values = _extract_refs_from_related(data)
     assert refs == [(400001, "h1")]
