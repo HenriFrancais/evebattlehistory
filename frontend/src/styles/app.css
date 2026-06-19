@@ -364,17 +364,6 @@ nav a:hover { color: var(--accent); }
 .btn-mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn-mini:disabled { opacity: 0.5; cursor: default; }
 
-.fleet-value-tip {
-  position: absolute; top: 4px; z-index: 5; display: none; pointer-events: none;
-  background: rgba(10,13,18,0.92); border: 1px solid var(--border); border-radius: 5px;
-  padding: 0.3rem 0.45rem; font-size: 0.72rem; min-width: 8rem; max-width: 11rem;
-}
-.fvt-time { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-bottom: 0.15rem; }
-.fvt-row { display: flex; align-items: center; gap: 0.3rem; line-height: 1.5; }
-.fvt-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.fvt-label { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fvt-val { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
-
 /* Fleet 2-column layout: wide graphs on the left, breakdown on the right. */
 .fleet-layout { display: flex; gap: 1rem; align-items: flex-start; }
 .fleet-main { flex: 1 1 auto; min-width: 0; }
@@ -386,15 +375,20 @@ nav a:hover { color: var(--accent); }
 .fleet-slider-grip { position: absolute; top: -1px; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 2px; background: var(--accent); cursor: ew-resize; }
 
 .contrib-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); padding: 0.5rem 0.7rem; }
-.contrib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.2rem; font-variant-numeric: tabular-nums; }
-.contrib-group { margin-top: 0.4rem; }
-.contrib-group-head { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 0.15rem; margin-bottom: 0.1rem; }
-.contrib-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-.contrib-table td { padding: 0.12rem 0.25rem; vertical-align: top; }
-.contrib-src { color: var(--text); white-space: nowrap; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; }
-.contrib-tgt { color: var(--text); white-space: nowrap; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
-.contrib-eff { font-size: 0.7rem; }
-.contrib-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.contrib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; font-variant-numeric: tabular-nums; }
+/* Per-type totals strip (replaces the old on-graph overlay). */
+.focus-totals { display: flex; gap: 0.6rem; flex-wrap: wrap; font-size: 0.75rem; padding-bottom: 0.35rem; margin-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+.focus-total { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Target focus cards: one per ship, sources nested with effect icons. */
+.focus-list { display: flex; flex-direction: column; gap: 0.45rem; max-height: 30rem; overflow-y: auto; }
+.focus-card { border: 1px solid var(--border); border-radius: 5px; padding: 0.3rem 0.4rem; background: var(--panel); }
+.focus-card-head { font-size: 0.8rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.2rem; }
+.focus-row { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; line-height: 1.6; }
+.contrib-eff-icon { flex: none; border-radius: 2px; }
+.contrib-eff-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.focus-src { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.focus-dir { flex: none; }
+.focus-val { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
 
 .kill-tip {
   position: fixed; z-index: 1000; display: none; gap: 0.5rem; align-items: center;

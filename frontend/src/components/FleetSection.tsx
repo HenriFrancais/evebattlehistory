@@ -181,54 +181,6 @@ function fightEdgesPlugin(fights: TimelineFightInfo[]): uPlot.Plugin {
   }
 }
 
-// Hover readout: lists every visible series' value at the cursor's time — works
-// even when lines overlap, since it's a text list, not a point pick.
-function valueTooltipPlugin(series: { label: string; stroke: string }[]): uPlot.Plugin {
-  let tip: HTMLDivElement | null = null
-  return {
-    hooks: {
-      ready: (u) => {
-        tip = document.createElement('div')
-        tip.className = 'fleet-value-tip'
-        u.over.appendChild(tip)
-      },
-      setCursor: (u) => {
-        if (!tip) return
-        const idx = u.cursor.idx
-        if (idx == null || u.cursor.left == null || u.cursor.left < 0) {
-          tip.style.display = 'none'
-          return
-        }
-        const ts = u.data[0][idx] as number | null
-        const t = ts == null ? '' : new Date(ts * 1000).toISOString().slice(11, 19)
-        let rows = ''
-        for (let i = 0; i < series.length; i++) {
-          const v = u.data[i + 1][idx] as number | null
-          if (v == null) continue
-          rows +=
-            `<div class="fvt-row"><span class="fvt-dot" style="background:${series[i].stroke}"></span>` +
-            `<span class="fvt-label">${series[i].label}</span>` +
-            `<span class="fvt-val">${fmtCompact(Math.abs(v))}</span></div>`
-        }
-        if (!rows) {
-          tip.style.display = 'none'
-          return
-        }
-        tip.innerHTML = `<div class="fvt-time">${t}</div>${rows}`
-        tip.style.display = 'block'
-        const left = u.cursor.left
-        const w = u.over.clientWidth
-        const tipW = 170
-        tip.style.left = `${left + tipW + 16 < w ? left + 12 : left - tipW - 12}px`
-      },
-      destroy: () => {
-        tip?.remove()
-        tip = null
-      },
-    },
-  }
-}
-
 // Persistent draggable time slider. Owns a vertical line in u.over; registers a
 // reposition fn so all panels' sliders move together; drag updates the shared time.
 function sliderPlugin(
@@ -417,7 +369,6 @@ function PanelChart({
         fightEdgesPlugin(fights),
         zeroBaselinePlugin(),
         killMarkersPlugin(kills),
-        valueTooltipPlugin(visible),
         sliderPlugin(() => sliderTimeRef.current, onSliderChange, registerPositioner),
       ],
     }
@@ -512,39 +463,89 @@ function KillLegend({ kills }: { kills: KillEvent[] }) {
   )
 }
 
-// --- source→target breakdown panel (on click) ------------------------------
+// --- moment focus board (target-centric) -----------------------------------
 
-const GROUP_ORDER: { id: string; title: string }[] = [
-  { id: 'damage', title: 'Damage & Remote Rep' },
-  { id: 'cap', title: 'Cap warfare' },
-  { id: 'ewar', title: 'Tackle / EWAR' },
-]
+// Representative EVE module type_id per effect → its in-game icon.
+const EFFECT_ICON: Record<string, number> = {
+  damage: 485, // 150mm Light AutoCannon I (generic turret)
+  rep_armor: 11355,
+  rep_shield: 3586,
+  neut: 533,
+  nos: 530,
+  cap_transfer: 529,
+  scram: 447,
+  disrupt: 3242,
+  jam: 1957,
+}
+const EFFECT_LABEL: Record<string, string> = {
+  damage: 'damage', rep_armor: 'armor rep', rep_shield: 'shield rep',
+  neut: 'neut', nos: 'nos', cap_transfer: 'cap', scram: 'scram', disrupt: 'point', jam: 'jam',
+}
 
-function ContribGroup({ title, rows }: { title: string; rows: ContributionsResponse['rows'] }) {
+function EffectIcon({ effect }: { effect: string }) {
+  const id = EFFECT_ICON[effect]
+  if (id == null) return <span className="contrib-eff-dot" />
   return (
-    <div className="contrib-group">
-      <div className="contrib-group-head">{title}</div>
-      {rows.length === 0 ? (
-        <p className="dim" style={{ fontSize: '0.76rem', margin: '0.15rem 0' }}>—</p>
-      ) : (
-        <table className="contrib-table">
-          <tbody>
-            {rows.slice(0, 25).map((r, i) => (
-              <tr key={i}>
-                <td className="contrib-src">{r.source_name}</td>
-                <td className="dim" style={{ textAlign: 'center' }}>{r.direction === 'in' ? '←' : '→'}</td>
-                <td className="contrib-tgt">{r.target_name}</td>
-                <td className="dim contrib-eff">{r.effect_type}</td>
-                <td className="contrib-val">{fmtCompact(r.value)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <img
+      className="contrib-eff-icon"
+      src={`https://images.evetech.net/types/${id}/icon?size=32`}
+      alt={EFFECT_LABEL[effect] ?? effect}
+      title={EFFECT_LABEL[effect] ?? effect}
+      width={18}
+      height={18}
+    />
+  )
+}
+
+type Row = ContributionsResponse['rows'][number]
+
+interface TargetGroup {
+  target: string
+  total: number
+  rows: Row[]
+}
+
+function groupByTarget(rows: Row[]): TargetGroup[] {
+  const map = new Map<string, TargetGroup>()
+  for (const r of rows) {
+    let g = map.get(r.target_name)
+    if (!g) {
+      g = { target: r.target_name, total: 0, rows: [] }
+      map.set(r.target_name, g)
+    }
+    g.total += r.value
+    g.rows.push(r)
+  }
+  const groups = [...map.values()]
+  for (const g of groups) g.rows.sort((a, b) => b.value - a.value)
+  groups.sort((a, b) => b.total - a.total)
+  return groups
+}
+
+function TargetCard({ group }: { group: TargetGroup }) {
+  return (
+    <div className="focus-card">
+      <div className="focus-card-head" title={group.target}>{group.target}</div>
+      {group.rows.slice(0, 12).map((r, i) => (
+        <div className="focus-row" key={i}>
+          <EffectIcon effect={r.effect_type} />
+          <span className="focus-src" title={r.source_name}>{r.source_name}</span>
+          <span className="dim focus-dir">{r.direction === 'in' ? '←' : '→'}</span>
+          <span className="focus-val">{fmtCompact(r.value)}</span>
+        </div>
+      ))}
+      {group.rows.length > 12 && (
+        <div className="dim" style={{ fontSize: '0.7rem' }}>+{group.rows.length - 12} more…</div>
       )}
-      {rows.length > 25 && <p className="dim" style={{ fontSize: '0.72rem' }}>+{rows.length - 25} more…</p>}
     </div>
   )
 }
+
+const GROUP_TOTALS: { id: string; label: string }[] = [
+  { id: 'damage', label: 'Dmg/Rep' },
+  { id: 'cap', label: 'Cap' },
+  { id: 'ewar', label: 'EWAR' },
+]
 
 function ContributionsPanel({
   at,
@@ -554,27 +555,39 @@ function ContributionsPanel({
   onClose,
 }: {
   at: number
-  rows: ContributionsResponse['rows']
+  rows: Row[]
   loading: boolean
   error: string | null
   onClose: () => void
 }) {
   const time = new Date(at * 1000).toISOString().slice(11, 19)
+  const targets = groupByTarget(rows)
   return (
     <div className="contrib-panel" data-testid="fleet-contrib">
       <div className="contrib-head">
         <strong>{time} <span className="dim">· 5s window</span></strong>
         <button className="btn-mini" onClick={onClose}>close</button>
       </div>
-      <p className="dim" style={{ fontSize: '0.72rem', margin: '0 0 0.3rem' }}>
-        Drag the slider on the graphs to scrub.
-      </p>
+      <div className="focus-totals">
+        {GROUP_TOTALS.map((g) => {
+          const sum = rows.filter((r) => r.group === g.id).reduce((a, r) => a + r.value, 0)
+          return (
+            <span key={g.id} className="focus-total">
+              <span className="dim">{g.label}</span> {fmtCompact(sum)}
+            </span>
+          )
+        })}
+      </div>
       {loading && rows.length === 0 && <p className="dim">Loading…</p>}
       {error && <p className="error-text">{error}</p>}
-      {!error &&
-        GROUP_ORDER.map((g) => (
-          <ContribGroup key={g.id} title={g.title} rows={rows.filter((r) => r.group === g.id)} />
+      {!loading && !error && targets.length === 0 && (
+        <p className="dim" style={{ fontSize: '0.78rem' }}>No logged activity in this window.</p>
+      )}
+      <div className="focus-list">
+        {targets.map((g) => (
+          <TargetCard key={g.target} group={g} />
         ))}
+      </div>
     </div>
   )
 }

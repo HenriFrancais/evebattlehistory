@@ -168,6 +168,6 @@ describe('FleetSection', () => {
     expect(uPlotConstructorCalls.length).toBeGreaterThanOrEqual(3)
     const plugins = (uPlotConstructorCalls.at(-1)!.opts as { plugins?: unknown[] }).plugins
     expect(Array.isArray(plugins)).toBe(true)
-    expect(plugins!.length).toBe(5) // fightEdges + zeroBaseline + killMarkers + valueTooltip + slider
+    expect(plugins!.length).toBe(4) // fightEdges + zeroBaseline + killMarkers + slider
   })
 })
