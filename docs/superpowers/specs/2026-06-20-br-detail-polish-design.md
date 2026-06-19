@@ -16,8 +16,10 @@ the per-character composition link to zKillboard.
 
 ## Decisions (from brainstorming)
 
-- **Type data:** load the full EVE SDE type catalogue into `InventoryType` (the table is
-  currently sparse — 506 rows — populated only from killmail ESI resolution).
+- **Type data:** load the full EVE SDE type catalogue into `InventoryType` from the **official
+  CCP Static Data Export (JSONL)**, with a build-number check at image build (use the locally
+  cached processed artifact when the build is unchanged, otherwise download + process). The table
+  is currently sparse — 506 rows — populated only from killmail ESI resolution.
 - **Parser:** the missing names are a parser bug, not missing data. Fix it with an
   SDE-dictionary-driven target splitter and **re-parse the stored gamelog files** (no re-upload).
 - **NPCs:** NPC/Sleeper/Drifter targets are a bare type name with no character (`Bhaalgorn`,
@@ -50,24 +52,40 @@ the per-character composition link to zKillboard.
 
 ## Design
 
-### A. SDE type catalogue loader
+### A. SDE type catalogue loader (official CCP, build-number cached)
 
-A loader populates `InventoryType` with the full published EVE type set so name→type_id resolves
-for every weapon, charge, ship, and NPC.
+A loader populates `InventoryType` with the full published EVE type set from the **official CCP
+Static Data Export (JSONL)** so name→type_id resolves for every weapon, charge, ship, and NPC.
 
-- **Source:** Fuzzwork CSV dumps (no auth): `invTypes.csv` (`typeID, groupID, typeName, published`)
-  and `invGroups.csv` (`groupID, categoryID`). Downloaded into `SDE_DIR` (config) by a refresh
-  script; the loader reads from there.
-- **Schema:** add `group_id: int | null` and `category_id: int | null` to `InventoryType`
-  (nullable, additive). Load only `published = 1` types.
-- **Ship-like set:** types whose `category_id` is Ship (6) or Entity/NPC (11) form the
-  "entity name" dictionary used by the parser splitter (section B).
-- **Refresh script** (`scripts/refresh_sde.py`): fetch the two CSVs, upsert `InventoryType`.
-  Runnable locally and at deploy; idempotent. Type ids are stable, so a stale SDE only misses
-  the newest items.
-- **Graceful degradation:** if the SDE isn't loaded, behaviour is today's (sparse table +
-  weapon family fallback); nothing breaks. Demo mode keeps its fixtures.
-- Run the loader once against the dev DB so the live app reflects the fix.
+- **Source (official CCP):**
+  - Build manifest (~200 bytes): `GET https://developers.eveonline.com/static-data/tranquility/latest.jsonl`
+    → `{"buildNumber": <int>, "releaseDate": "..."}`.
+  - Full export (~80 MB, only when the build advances):
+    `GET https://developers.eveonline.com/static-data/eve-online-static-data-latest-jsonl.zip`
+    — a zip of `*.jsonl` (one JSON object per line). We open `types.jsonl`
+    (`typeID, typeName, groupID, published`) and `groups.jsonl` (`groupID, categoryID`).
+- **Build-number caching (`scripts/refresh_sde.py --sde-dir $SDE_DIR [--force]`):**
+  1. GET the manifest; read the cached `$SDE_DIR/manifest.json`.
+  2. If `buildNumber` is unchanged and not `--force` → no-op (reuse the cached processed artifact).
+     CCP can correct data in place under an unchanged build, so `--force` bypasses the skip.
+  3. Otherwise stream the zip to disk in chunks, extract + parse `types.jsonl` + `groups.jsonl`,
+     filter to `published = 1`, and write a compact `$SDE_DIR/inventory_types.jsonl`
+     (`type_id, name, group_id, category_id`) plus an updated `$SDE_DIR/manifest.json`.
+- **Image build:** a Dockerfile stage runs `refresh_sde.py` over a **BuildKit cache mount** on
+  `$SDE_DIR`, so an unchanged build number is a no-op (the ~80 MB download is skipped) and only a
+  new build triggers a fresh download + process; the processed `inventory_types.jsonl` +
+  `manifest.json` are baked into the image.
+- **Runtime load:** on app startup, if the DB's recorded SDE build differs from
+  `$SDE_DIR/manifest.json` (a single-row `sde_meta` table tracks the applied build number), upsert
+  the processed `inventory_types.jsonl` into `InventoryType` and record the build. Idempotent and
+  cheap when already current.
+- **Schema:** `InventoryType` gains `group_id`, `category_id` (nullable, additive). Load only
+  `published = 1` types. Ship-like entity names (category Ship = 6, Entity/NPC = 11) form the
+  parser splitter's dictionary (section B).
+- **Graceful degradation:** a missing manifest/artifact or an unreachable CCP endpoint → keep the
+  current sparse table + weapon family fallback; nothing breaks. A small committed `data_demo`
+  types fallback covers offline/demo.
+- Run `refresh_sde.py` + the startup load once against the dev DB so the live app reflects the fix.
 
 ### B. Gamelog parser fix — SDE-dictionary target splitter
 
@@ -159,7 +177,8 @@ Rebuild `SnapshotPanel` layout:
 
 ## API / schema changes
 
-- `InventoryType` gains `group_id`, `category_id` (nullable).
+- `InventoryType` gains `group_id`, `category_id` (nullable); new single-row `sde_meta` table
+  records the applied SDE build number.
 - `CompositionPilotOut` + frontend `CompositionPilot` gain `killmail_id: int | null`.
 - No change to the snapshot response shape (B/C change values, not fields).
 
@@ -169,8 +188,10 @@ Rebuild `SnapshotPanel` layout:
   - `split_entity`: player `Ship Name [tickers]` → (char, ship) incl. multi-word ship names
     (`Tempest Fleet Issue Bob` → `("Bob", "Tempest Fleet Issue")`); NEW-style suffix; NPC
     bare-name → `(None, name)`; unknown → `(cleaned, None)`; ticker/`&lt;&gt;` stripping.
-  - SDE loader: CSV rows upsert into `InventoryType` with `group_id`/`category_id`; published
-    filter; idempotent re-run.
+  - SDE loader: build-number check skips when `manifest.json` is unchanged and re-processes on a
+    new build or `--force`; processed `inventory_types.jsonl` rows upsert into `InventoryType`
+    with `group_id`/`category_id` (published filter); the runtime load is idempotent (skips when
+    `sde_meta` already records the build).
   - Ingest split: an EWAR/cap/rep line with the real concatenated format yields split
     `other_name` + `other_ship_name` given a seeded ship-name set.
   - Re-parse: a `GamelogFile` with a stored file is re-parsed; its `LogEvent` rows are replaced
@@ -186,9 +207,10 @@ Rebuild `SnapshotPanel` layout:
 
 ## Risks / open questions
 
-- **Fuzzwork availability / size:** `invTypes.csv` is large; load only published types and the
-  columns needed. If Fuzzwork is unreachable, the loader logs and leaves the sparse table (graceful
-  degradation). The CCP SDE JSONL is an equivalent fallback source.
+- **CCP SDE availability / size:** the export is ~80 MB; download only when the build number
+  advances (the manifest check), stream to disk in chunks, and load only published types. If the
+  CCP endpoint is unreachable, the loader logs and leaves the sparse table (graceful degradation).
+  CCP can correct data in place under an unchanged build, hence the `--force` flag.
 - **Splitter ambiguity:** a character whose name begins with a ship-type word is rare; longest-
   prefix favours the ship, which is correct for the `Ship Name` format. Restricting the dictionary
   to Ship/Entity categories reduces false matches.
