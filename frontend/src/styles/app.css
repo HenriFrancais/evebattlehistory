@@ -398,6 +398,7 @@ nav a:hover { color: var(--accent); }
 }
 .kill-tip img { display: block; border-radius: 3px; }
 .kill-tip-ship { font-weight: 600; color: var(--text); }
+.kill-tip-pilot { color: var(--accent); font-size: 0.8rem; }
 .kill-tip-meta { color: var(--text-dim); font-size: 0.75rem; }
 
 .fleet-kill-flag {
