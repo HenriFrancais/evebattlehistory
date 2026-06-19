@@ -348,6 +348,33 @@ export interface ContributionsResponse {
   rows: Contribution[]
 }
 
+export interface CompositionShip {
+  ship_type_id: number
+  ship_name: string
+  count: number
+}
+
+export interface CompositionPilot {
+  character_id: number
+  character_name: string
+  ship_type_id: number | null
+  ship_name: string
+  lost: boolean
+  user_name: string | null
+}
+
+export interface CompositionSide {
+  side_kind: string // 'friendly' | 'hostile' | 'unassigned'
+  pilot_count: number
+  ships: CompositionShip[]
+  pilots: CompositionPilot[]
+}
+
+export interface CompositionResponse {
+  by_user_available: boolean
+  sides: CompositionSide[]
+}
+
 export type SideKind = 'friendly' | 'hostile' | 'unassigned'
 
 export interface SideEntity {
@@ -510,6 +537,8 @@ export const api = {
     jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
   contributions: (brId: string, at: number) =>
     jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/contributions?at=${at}`),
+  composition: (brId: string) =>
+    jsonFetch<CompositionResponse>(`${API}/brs/${brId}/composition`),
   getSides: (brId: string) => jsonFetch<BrSides>(`${API}/brs/${brId}/sides`),
   setSide: (
     brId: string,

@@ -367,3 +367,35 @@ class FleetTimelineOut(BaseModel):
     bucket_seconds: int
     t_start: int | None
     t_end: int | None
+
+
+# ---------------------------------------------------------------------------
+# Fleet composition schemas
+# ---------------------------------------------------------------------------
+
+
+class CompositionShipOut(BaseModel):
+    ship_type_id: int
+    ship_name: str
+    count: int
+
+
+class CompositionPilotOut(BaseModel):
+    character_id: int
+    character_name: str
+    ship_type_id: int | None
+    ship_name: str
+    lost: bool
+    user_name: str | None = None
+
+
+class CompositionSideOut(BaseModel):
+    side_kind: str  # 'friendly' | 'hostile' | 'unassigned'
+    pilot_count: int
+    ships: list[CompositionShipOut]
+    pilots: list[CompositionPilotOut]
+
+
+class CompositionOut(BaseModel):
+    by_user_available: bool
+    sides: list[CompositionSideOut]

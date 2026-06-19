@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.composition import fleet_composition
 from app.analytics.fleet import fleet_contributions, fleet_timeline
 from app.analytics.sides_config import load_overrides
+from app.api.access import acting_user
+from app.api.auth import can_create_br
 from app.api.deps import SessionDep
 from app.config import get_app_config, get_settings
 from app.api.schemas import (
+    CompositionOut,
+    CompositionPilotOut,
+    CompositionShipOut,
+    CompositionSideOut,
     ContributionOut,
     ContributionsOut,
     FleetSeriesOut,
@@ -19,6 +26,7 @@ from app.api.schemas import (
     TimelineFightInfo,
 )
 from app.db.models import BUCKET_SECONDS, BattleReport
+from app.roster.snapshot import get_roster_store
 
 router = APIRouter()
 
@@ -111,5 +119,50 @@ async def get_contributions(br_id: str, session: SessionDep, at: int) -> Contrib
                 weapon_category=c.weapon_category,
             )
             for c in contribs
+        ],
+    )
+
+
+@router.get("/api/brs/{br_id}/composition")
+async def get_composition(
+    br_id: str, request: Request, session: SessionDep
+) -> CompositionOut:
+    """Per-side fleet composition. Elevated callers (FC/HC) also get char→user."""
+    await _require_br(br_id, session)
+    cfg = get_app_config()
+    settings = get_settings()
+    acting = await acting_user(request, settings)
+    char_to_user: dict[int, str] | None = None
+    by_user_available = False
+    if can_create_br(acting):
+        try:
+            roster = await get_roster_store(settings).get()
+            char_to_user = dict(roster.char_to_user)
+            by_user_available = True
+        except Exception:  # roster unavailable → no user grouping
+            char_to_user = None
+            by_user_available = False
+    overrides = await load_overrides(session, br_id)
+    result = await fleet_composition(
+        session, br_id,
+        baseline_alliances=set(cfg.our_alliance_ids),
+        baseline_corps=set(cfg.our_corp_ids),
+        overrides=overrides, settings=settings, char_to_user=char_to_user,
+    )
+    return CompositionOut(
+        by_user_available=by_user_available,
+        sides=[
+            CompositionSideOut(
+                side_kind=s.side_kind,
+                pilot_count=s.pilot_count,
+                ships=[CompositionShipOut(ship_type_id=sh.ship_type_id,
+                                          ship_name=sh.ship_name, count=sh.count)
+                       for sh in s.ships],
+                pilots=[CompositionPilotOut(character_id=p.character_id,
+                                            character_name=p.character_name,
+                                            ship_type_id=p.ship_type_id, ship_name=p.ship_name,
+                                            lost=p.lost, user_name=p.user_name) for p in s.pilots],
+            )
+            for s in result.sides
         ],
     )
