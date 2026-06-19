@@ -23,10 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.models import GamelogFile, LogEvent
+from app.logs.entity import split_entity
 from app.logs.filename import parse_filename, resolve_character
 from app.logs.parse import parse_log
 from app.logs.store import validate_and_store
 from app.observability.logging import log
+from app.sde.load import entity_name_set
 
 
 class GamelogFileResult(NamedTuple):
@@ -155,6 +157,15 @@ async def ingest_log(
             listener_name=existing.listener_name,
             original_filename=existing.original_filename,
         )
+
+    # Recover Character (Ship) for non-damage targets the parser left merged, using
+    # the SDE ship-name dictionary. Damage already splits (ship in parens).
+    entity_names = await entity_name_set(session)
+    for e in parsed.events:
+        if e.effect_type and e.effect_type != "damage" and not e.other_ship_name and e.other_name:
+            char, ship = split_entity(e.other_name, entity_names)
+            object.__setattr__(e, "other_name", char if char is not None else e.other_name)
+            object.__setattr__(e, "other_ship_name", ship)
 
     # 8. Bulk-insert LogEvent rows
     if parsed.events:

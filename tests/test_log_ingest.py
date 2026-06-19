@@ -484,3 +484,31 @@ def test_post_logs_oversize_rejected_per_file(  # type: ignore[no-untyped-def]
     results = response.json()
     assert results[0]["status"] == "error"
     assert "message" in results[0]
+
+
+@pytest.mark.asyncio
+async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+    from sqlalchemy import select
+
+    raw = GAMELOG_HEADER + (
+        "[ 2026.06.14 20:57:34 ] (combat) 88 remote capacitor transmitted to "
+        "Guardian Jennifer Hibra [NVACA] &lt;NV&gt; - Large Inductive Compact Remote Capacitor Transmitter\n"
+    ).encode()
+
+    async with db_session_maker() as session:
+        session.add(InventoryType(type_id=11987, name="Guardian", category_id=6))
+        await session.flush()
+        await ingest_log(session, get_settings(), "u", "Listener_20260614_205700_90000001.txt",
+                         raw, lambda n: 90000001)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        ev = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "cap_transfer")
+        )).scalars().first()
+    assert ev is not None
+    assert ev.other_ship_name == "Guardian"
+    assert ev.other_name == "Jennifer Hibra"
