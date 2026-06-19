@@ -277,8 +277,7 @@ interface PanelChartProps {
   /** Shared x-zoom [min,max] across panels; null = full extent. Preserved across rebuilds. */
   zoomRef: { current: [number, number] | null }
   rangeRef: { current: { from: number; to: number } | null }
-  onRangeClick: (ts: number) => void
-  /** Handle drag: replaces the whole range (the from/to endpoints are edited live). */
+  /** Range drag: replaces the whole range. Used by Shift-drag on the plot and the handle drags. */
   onRangeDrag: (r: { from: number; to: number }) => void
   registerPositioner: (fn: () => void) => () => void
 }
@@ -292,7 +291,6 @@ function PanelChart({
   height,
   zoomRef,
   rangeRef,
-  onRangeClick,
   onRangeDrag,
   registerPositioner,
 }: PanelChartProps) {
@@ -407,31 +405,34 @@ function PanelChart({
     const u = new uPlot(opts, data as uPlot.AlignedData, el)
     if (savedZoom) u.setScale?.('x', { min: savedZoom[0], max: savedZoom[1] })
 
-    // Click a moment in time → extend the two-click range. Uses the cursor's
-    // exact time (any x is selectable, not just snapped data points).
-    // Track mousedown X so a drag-to-zoom's terminating click (which moves the
-    // pointer) is NOT registered as a spurious range point.
-    let downX: number | null = null
-    const onDown = (ev: MouseEvent) => {
-      downX = ev.clientX
-    }
-    const onClick = (ev: MouseEvent) => {
-      const moved = downX != null ? Math.abs(ev.clientX - downX) : 0
-      downX = null
-      if (moved > 4) return // a drag (zoom), not a click
+    // Shift-drag paints the snapshot range; plain drag = zoom, double-click = zoom-out (native).
+    // Capture phase + stopImmediatePropagation blocks uPlot's drag-zoom only while Shift is held;
+    // without Shift this no-ops and uPlot's native gestures run untouched.
+    const onShiftDown = (ev: MouseEvent) => {
+      if (!ev.shiftKey) return
+      ev.stopImmediatePropagation() // block uPlot's drag-zoom
+      ev.preventDefault()
       const rect = u.over.getBoundingClientRect()
-      const t = u.posToVal(ev.clientX - rect.left, 'x')
-      if (Number.isFinite(t)) onRangeClick(t)
+      const from = u.posToVal(ev.clientX - rect.left, 'x')
+      const move = (e: MouseEvent) => {
+        const to = u.posToVal(e.clientX - rect.left, 'x')
+        onRangeDrag({ from: Math.min(from, to), to: Math.max(from, to) })
+      }
+      const up = () => {
+        document.removeEventListener('mousemove', move)
+        document.removeEventListener('mouseup', up)
+      }
+      document.addEventListener('mousemove', move)
+      document.addEventListener('mouseup', up)
     }
-    u.over?.addEventListener('mousedown', onDown)
-    u.over?.addEventListener('click', onClick)
+    u.over?.addEventListener('mousedown', onShiftDown, true) // capture phase
     const onResize = () => u.setSize({ width: el.clientWidth || 800, height })
     window.addEventListener('resize', onResize)
     return () => {
       window.removeEventListener('resize', onResize)
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeClick, onRangeDrag, registerPositioner])
+  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -527,8 +528,6 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
   // Range mirrored in a ref so the chart plugins read it live; positioners move
   // every panel's band/handles together on drag without rebuilding charts.
   const rangeRef = useRef<{ from: number; to: number } | null>(null)
-  // Pending START of the two-click protocol (null = next click starts a range).
-  const pendingStartRef = useRef<number | null>(null)
   const positionersRef = useRef<Set<() => void>>(new Set())
 
   const registerPositioner = useCallback((fn: () => void) => {
@@ -538,27 +537,9 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     }
   }, [])
 
-  // Two-click range: 1st click sets START (from==to), 2nd click sets END (ordered),
-  // 3rd click starts a new range. Plain clicks only — drag still zooms.
-  const handleRangeClick = useCallback((ts: number) => {
-    if (pendingStartRef.current == null) {
-      pendingStartRef.current = ts
-      const r = { from: ts, to: ts }
-      rangeRef.current = r
-      positionersRef.current.forEach((fn) => fn())
-      onSelectRange(r)
-    } else {
-      const from = pendingStartRef.current
-      const r = { from: Math.min(from, ts), to: Math.max(from, ts) }
-      pendingStartRef.current = null
-      rangeRef.current = r
-      positionersRef.current.forEach((fn) => fn())
-      onSelectRange(r)
-    }
-  }, [onSelectRange])
-
-  // Handle drag: the plugin reports a whole new range (ordered isn't enforced
-  // here — handles can cross; the band uses min/max). Mirror + reposition live.
+  // Range drag (Shift-drag on the plot, or a handle drag): the reporter gives a
+  // whole new range (ordered isn't enforced here — handles can cross; the band
+  // uses min/max). Mirror + reposition live.
   const handleRangeDrag = useCallback((r: { from: number; to: number }) => {
     rangeRef.current = r
     positionersRef.current.forEach((fn) => fn())
@@ -579,7 +560,6 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     initialised.current = false
     zoomRef.current = null
     rangeRef.current = null
-    pendingStartRef.current = null
     onSelectRange(null)
     api.fleetTimeline(brId).then(
       (data) => {
@@ -691,7 +671,6 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
             height={165}
             zoomRef={zoomRef}
             rangeRef={rangeRef}
-            onRangeClick={handleRangeClick}
             onRangeDrag={handleRangeDrag}
             registerPositioner={registerPositioner}
           />
@@ -700,7 +679,7 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
 
       <KillLegend kills={view.kills} />
       <p className="dim" style={{ fontSize: '0.75rem', margin: '0.2rem 0 0' }}>
-        Tip: click a start then an end on any graph to select a range (drag the handles to adjust). ⌃-click a kill marker for zKill.
+        Tip: Shift-drag a range on any graph to snapshot it (drag the handles to adjust). Plain drag zooms; double-click resets. ⌃-click a kill marker for zKill.
       </p>
     </div>
   )

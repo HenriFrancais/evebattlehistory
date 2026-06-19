@@ -98,7 +98,7 @@ export function SnapshotPanel({ brId, range }: { brId: string; range: { from: nu
     return (
       <div className="contrib-panel" data-testid="moment-detail-empty">
         <p className="dim" style={{ fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>
-          Click a START then an END point on any graph to snapshot that window.
+          Shift-drag a range on any graph to snapshot it.
         </p>
       </div>
     )
