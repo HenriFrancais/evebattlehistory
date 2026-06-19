@@ -362,7 +362,14 @@ function PanelChart({
       },
       scales: { x: { time: true }, y: {} },
       axes: [
-        { stroke: AXIS, grid: { stroke: GRID }, ticks: { stroke: GRID } },
+        {
+          stroke: AXIS, grid: { stroke: GRID }, ticks: { stroke: GRID },
+          // UTC ticks: date on the day boundary, else HH:MM:SS. uPlot x values are epoch seconds.
+          values: (_u, splits) => splits.map((v) => {
+            const iso = new Date(v * 1000).toISOString()
+            return iso.slice(11, 19) // HH:MM:SS UTC
+          }),
+        },
         {
           stroke: AXIS,
           grid: { stroke: GRID },
