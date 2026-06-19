@@ -257,6 +257,25 @@ visual check during verification.
 
 ---
 
+## Workstream 7 — log timezone offset (discovered during build)
+
+**Symptom.** On the redesigned fleet graph, kill markers fell outside the log
+window. Measuring `dev.db` for the "3v1" BR: killmails/fight = `20:18–21:15`,
+but log buckets = `19:26–20:17` — the logs are ~1 hour *behind* the killmails
+for the same engagement (the other BR shows the same skew).
+
+**Cause.** `app/logs/parse.py::_parse_ts` stamps every log line `tzinfo=UTC`
+with no conversion. EVE writes gamelog line timestamps in the client's **local**
+time; killmails (zKB/ESI) are **UTC**. A DST-season local offset (~1 h) therefore
+skews logs vs killmails — which also degrades the ±120 s time-window association.
+
+**Proposed fix (own slice).** Detect the per-file offset by aligning the file's
+log span to the overlapping fight window (the killmail-derived, authoritative
+UTC time), snapping to whole-hour candidates; store the applied offset on
+`GamelogFile` and surface it in the UI; re-bucket with corrected timestamps. Add
+a regression test with a known-offset fixture. Until then the graph spans the
+full engagement so markers remain visible.
+
 ## Phasing (each independently shippable, TDD, verified before "done")
 
 1. **Access-control privacy** — small, security-critical, independent. Do first.

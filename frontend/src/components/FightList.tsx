@@ -2,12 +2,19 @@ import { Link } from 'react-router-dom'
 import type { FightOut, FightSideOut } from '../api'
 import { fmtIsk } from '../format'
 
+const SIDE_LABEL: Record<string, string> = {
+  friendly: 'Friendly',
+  hostile: 'Hostile',
+  unassigned: 'Unassigned',
+}
+
 function SideChip({ side }: { side: FightSideOut }) {
-  const kind = side.side_kind?.toLowerCase() ?? ''
-  const cls = kind === 'us' ? 'side-chip side-us' : kind === 'them' ? 'side-chip side-them' : 'side-chip'
+  const kind = side.side_kind?.toLowerCase() ?? 'unassigned'
+  const variant = kind === 'friendly' || kind === 'hostile' ? kind : 'unassigned'
+  const label = SIDE_LABEL[kind] ?? `Side ${side.side_idx + 1}`
   return (
-    <span className={cls}>
-      {side.side_kind ?? `Side ${side.side_idx + 1}`} · {side.pilot_count} pilots · {fmtIsk(side.isk_lost)} lost
+    <span className={`side-chip side-${variant}`}>
+      {label} · {side.pilot_count} pilots · {side.losses} lost · {fmtIsk(side.isk_lost)}
     </span>
   )
 }

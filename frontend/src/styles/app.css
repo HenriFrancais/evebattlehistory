@@ -6,6 +6,10 @@
   --text: #d6dde8;
   --text-dim: #8893a7;
   --accent: #ffd54f;
+  /* Links: light blue, ~7:1 on --panel/--panel-2 (was browser-default dark blue,
+     unreadable on the dark theme). */
+  --link: #6cb6ff;
+  --link-hover: #9ccbff;
   --ok: #4caf50;
   --warn: #ffb74d;
   --bad: #ef5350;
@@ -26,6 +30,15 @@ html, body, #root {
 }
 
 .dim { color: var(--text-dim); }
+
+/* Bare anchors (e.g. external "View source" links). More-specific rules
+   (nav a, .br-card-title a, .btn) override this where they apply. */
+a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+a:hover { color: var(--link-hover); }
 
 .centered {
   display: flex;
@@ -226,8 +239,9 @@ nav a:hover { color: var(--accent); }
   font-size: 0.8rem;
 }
 
-.side-us { border-color: var(--ok); color: var(--ok); }
-.side-them { border-color: var(--bad); color: var(--bad); }
+.side-us, .side-friendly { border-color: var(--ok); color: var(--ok); }
+.side-them, .side-hostile { border-color: var(--bad); color: var(--bad); }
+.side-unassigned { border-color: var(--border); color: var(--text-dim); }
 
 .btn {
   display: inline-block;
@@ -318,6 +332,86 @@ nav a:hover { color: var(--accent); }
 
 /* Timeline chart */
 .timeline-chart { width: 100%; }
+
+/* Fleet graph (stacked panels) */
+/* Make uPlot's drag-zoom selection box visible on the dark theme. */
+.u-select { background: rgba(108,182,255,0.18); border: 1px solid rgba(108,182,255,0.55); }
+.fleet-controls { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+.fleet-panel-head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 0.2rem; }
+.fleet-panel-title { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.fleet-legend { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
+.fleet-legend-btn {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.15rem 0.5rem; font-size: 0.78rem; font-weight: 600;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; cursor: pointer;
+}
+.fleet-kill-marker {
+  position: absolute; top: 0; height: 100%; width: 9px;
+  transform: translateX(-4.5px); pointer-events: auto; cursor: pointer;
+}
+/* Sides editor */
+.sides-columns { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.side-column { flex: 1 1 13rem; border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: 6px; padding: 0.6rem 0.6rem; background: var(--panel-2); }
+.side-column-head { font-weight: 700; font-size: 0.85rem; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.side-entity-row { display: flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+.side-entity-row:last-child { border-bottom: none; }
+.side-entity-name { flex: 1; display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.side-arrow-spacer { width: 1.4rem; display: inline-block; flex: none; }
+.side-tag { font-size: 0.62rem; text-transform: uppercase; padding: 0.05rem 0.3rem; border-radius: 3px; }
+.side-tag-override { background: rgba(255,213,79,0.18); color: var(--accent); border: 1px solid var(--accent); }
+.btn-mini { font-size: 0.72rem; padding: 0.1rem 0.4rem; border: 1px solid var(--border); border-radius: 3px; background: transparent; color: var(--text); cursor: pointer; }
+.btn-mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn-mini:disabled { opacity: 0.5; cursor: default; }
+
+.fleet-value-tip {
+  position: absolute; top: 4px; z-index: 5; display: none; pointer-events: none;
+  background: rgba(10,13,18,0.92); border: 1px solid var(--border); border-radius: 5px;
+  padding: 0.3rem 0.45rem; font-size: 0.72rem; min-width: 8rem; max-width: 11rem;
+}
+.fvt-time { color: var(--text-dim); font-variant-numeric: tabular-nums; margin-bottom: 0.15rem; }
+.fvt-row { display: flex; align-items: center; gap: 0.3rem; line-height: 1.5; }
+.fvt-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.fvt-label { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fvt-val { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* Fleet 2-column layout: wide graphs on the left, breakdown on the right. */
+.fleet-layout { display: flex; gap: 1rem; align-items: flex-start; }
+.fleet-main { flex: 1 1 auto; min-width: 0; }
+.fleet-side { flex: 0 0 22rem; max-width: 22rem; position: sticky; top: 0.5rem; }
+@media (max-width: 60rem) { .fleet-layout { flex-direction: column; } .fleet-side { flex-basis: auto; max-width: none; width: 100%; } }
+
+/* Draggable time slider on the graphs. */
+.fleet-slider { position: absolute; top: 0; height: 100%; width: 0; border-left: 2px solid var(--accent); pointer-events: auto; cursor: ew-resize; z-index: 4; }
+.fleet-slider-grip { position: absolute; top: -1px; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 2px; background: var(--accent); cursor: ew-resize; }
+
+.contrib-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); padding: 0.5rem 0.7rem; }
+.contrib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.2rem; font-variant-numeric: tabular-nums; }
+.contrib-group { margin-top: 0.4rem; }
+.contrib-group-head { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); padding-bottom: 0.15rem; margin-bottom: 0.1rem; }
+.contrib-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.contrib-table td { padding: 0.12rem 0.25rem; vertical-align: top; }
+.contrib-src { color: var(--text); white-space: nowrap; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; }
+.contrib-tgt { color: var(--text); white-space: nowrap; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
+.contrib-eff { font-size: 0.7rem; }
+.contrib-val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+
+.kill-tip {
+  position: fixed; z-index: 1000; display: none; gap: 0.5rem; align-items: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
+  padding: 0.4rem 0.55rem; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  font-size: 0.8rem; max-width: 16rem;
+}
+.kill-tip img { display: block; border-radius: 3px; }
+.kill-tip-ship { font-weight: 600; color: var(--text); }
+.kill-tip-meta { color: var(--text-dim); font-size: 0.75rem; }
+
+.fleet-kill-flag {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 7px solid;
+}
 
 /* Timeline events table */
 .events-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }

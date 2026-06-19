@@ -387,7 +387,12 @@ async def test_get_br_detail_and_status(tmp_path, monkeypatch):
         assert len(detail["fights"]) == 1
         fight = detail["fights"][0]
         assert fight["system_id"] > 0
-        assert len(fight["sides"]) >= 2
+        # Sides reflect per-entity classification; demo entities aren't blues so
+        # they're 'unassigned'. Each side carries losses + isk_lost.
+        assert len(fight["sides"]) >= 1
+        s0 = fight["sides"][0]
+        assert s0["side_kind"] in {"friendly", "hostile", "unassigned"}
+        assert "losses" in s0 and "isk_lost" in s0
 
         # Status endpoint
         status_resp = client.get(f"/api/brs/{br_id}/status", headers=hdrs)

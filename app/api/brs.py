@@ -26,7 +26,8 @@ from app.api.schemas import (
     FightOut,
     FightSideOut,
 )
-from app.config import get_settings
+from app.analytics.sides_config import fight_side_losses, load_overrides
+from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrFight, BrSource, Fight, FightSide
 from app.fights.participants import ParticipantInfo, br_participants
 from app.ingest.jobs import schedule_ingest
@@ -519,26 +520,36 @@ async def _load_fights(session: AsyncSession, br_id: str) -> list[FightOut]:
     )
     fights_by_id: dict[int, Fight] = {f.fight_id: f for f in fight_result.scalars()}
 
-    side_result = await session.execute(
-        select(FightSide).where(FightSide.fight_id.in_(fight_ids))
+    # Sides reflect the per-entity classification (baseline blues + FC/HC
+    # overrides), NOT the unreliable 2-colouring.
+    cfg = get_app_config()
+    overrides = await load_overrides(session, br_id)
+    losses_by_fight = await fight_side_losses(
+        session,
+        fight_ids,
+        baseline_alliances=set(cfg.our_alliance_ids),
+        baseline_corps=set(cfg.our_corp_ids),
+        overrides=overrides,
     )
-    sides_by_fight: dict[int, list[FightSide]] = {}
-    for side in side_result.scalars():
-        sides_by_fight.setdefault(side.fight_id, []).append(side)
+    _side_order = {"friendly": 0, "hostile": 1, "unassigned": 2}
 
     out: list[FightOut] = []
     for bf in br_fights:
         fight = fights_by_id.get(bf.fight_id)
         if fight is None:
             continue
+        side_map = losses_by_fight.get(fight.fight_id, {})
         sides = [
             FightSideOut(
-                side_idx=s.side_idx,
-                side_kind=s.side_kind,
-                pilot_count=s.pilot_count,
-                isk_lost=s.isk_lost,
+                side_idx=_side_order.get(name, 9),
+                side_kind=name,
+                pilot_count=agg["pilots"],
+                isk_lost=agg["isk_lost"],
+                losses=agg["losses"],
             )
-            for s in sorted(sides_by_fight.get(fight.fight_id, []), key=lambda s: s.side_idx)
+            for name, agg in sorted(
+                side_map.items(), key=lambda kv: _side_order.get(kv[0], 9)
+            )
         ]
         out.append(FightOut(
             fight_id=fight.fight_id,

@@ -48,9 +48,10 @@ export interface BrListResponse {
 
 export interface FightSideOut {
   side_idx: number
-  side_kind: string | null
+  side_kind: string | null // 'friendly' | 'hostile' | 'unassigned'
   pilot_count: number
   isk_lost: number
+  losses: number
 }
 
 export interface FightOut {
@@ -300,7 +301,10 @@ export interface FightEwar {
 
 // Fleet timeline types (E3)
 export interface FleetSeriesItem {
-  key: string
+  key: string // "{effect_type}:{direction}"
+  effect_type: string
+  direction: string // 'out' | 'in'
+  metric: string // 'amount' | 'count'
   values: (number | null)[]
 }
 
@@ -309,6 +313,7 @@ export interface KillEvent {
   killmail_id: number
   victim_character_id: number | null
   victim_ship_name: string
+  victim_ship_type_id: number | null
   side_kind: string | null
   isk: number | null
 }
@@ -321,6 +326,38 @@ export interface FleetTimeline {
   bucket_seconds: number
   t_start: number | null
   t_end: number | null
+}
+
+export interface Contribution {
+  source_character_id: number | null
+  source_name: string
+  target_name: string
+  effect_type: string
+  direction: string
+  group: string // 'damage' | 'cap' | 'ewar'
+  value: number
+}
+
+export interface ContributionsResponse {
+  at: number
+  bucket_seconds: number
+  rows: Contribution[]
+}
+
+export type SideKind = 'friendly' | 'hostile' | 'unassigned'
+
+export interface SideEntity {
+  entity_type: 'alliance' | 'corp'
+  entity_id: number
+  name: string
+  side: SideKind
+  overridden: boolean
+  baseline: boolean
+}
+
+export interface BrSides {
+  entities: SideEntity[]
+  can_edit: boolean
 }
 
 export class ApiError extends Error {
@@ -467,4 +504,16 @@ export const api = {
     jsonFetch<FightEwar>(`${API}/brs/${brId}/fights/${fightId}/ewar`),
   fleetTimeline: (brId: string) =>
     jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
+  contributions: (brId: string, at: number) =>
+    jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/contributions?at=${at}`),
+  getSides: (brId: string) => jsonFetch<BrSides>(`${API}/brs/${brId}/sides`),
+  setSide: (
+    brId: string,
+    body: { entity_type: 'alliance' | 'corp'; entity_id: number; side: SideKind | null },
+  ) =>
+    jsonFetch<BrSides>(`${API}/brs/${brId}/sides`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 }

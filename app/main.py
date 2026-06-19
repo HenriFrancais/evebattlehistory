@@ -22,6 +22,7 @@ from app.api.fleet import router as fleet_router
 from app.api.logs import router as logs_router
 from app.api.meta import router as meta_router
 from app.api.roster import router as roster_router
+from app.api.sides import router as sides_router
 from app.api.timeline import router as timeline_router
 from app.backup import restore_if_empty
 from app.config import get_settings
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(logs_router, prefix=prefix)
     app.include_router(timeline_router, prefix=prefix)
     app.include_router(fleet_router, prefix=prefix)
+    app.include_router(sides_router, prefix=prefix)
     app.include_router(analytics_router, prefix=prefix)
     app.include_router(filters_router, prefix=prefix)
     # Mount the built SPA last so API routes take precedence and static assets

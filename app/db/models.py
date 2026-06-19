@@ -338,6 +338,28 @@ class BrShipCount(Base):
     __table_args__ = (Index("ix_br_ship_count_type", "ship_type_id", "count"),)
 
 
+class BrSideOverride(Base):
+    """FC/HC manual side assignment for an entity within one battle report.
+
+    The three permanent NV blues are always friendly (config baseline); every
+    other entity is hostile by default. An override lets FC/HC reclassify a
+    specific alliance/corp for a single BR (e.g. a blue that helped in that
+    engagement). entity_type is 'alliance' or 'corp'; side is 'friendly' or
+    'hostile'.
+    """
+
+    __tablename__ = "br_side_override"
+
+    br_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("battle_report.br_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+        primary_key=True,
+    )
+    entity_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    entity_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    side: Mapped[str] = mapped_column(String(16))
+
+
 # ---------------------------------------------------------------------------
 # Gamelog tables (Task 2.2)
 # ---------------------------------------------------------------------------

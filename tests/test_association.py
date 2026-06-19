@@ -1253,3 +1253,29 @@ async def test_my_coverage_matches_full_matrix_entry(db_session_maker, monkeypat
     full_user_a = next((uc for uc in full if uc.user_name == USER_A), None)
     assert full_user_a is not None
     assert mine.characters == full_user_a.characters
+
+
+# ---------------------------------------------------------------------------
+# Regression: bucket flooring must treat naive (SQLite-read) ts as UTC, not
+# as the server's local timezone, or buckets shift when TZ != UTC (e.g. BST).
+# ---------------------------------------------------------------------------
+
+
+def test_floor_to_bucket_treats_naive_as_utc_under_nonutc_tz(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import time as _time
+
+    from app.logs.associate import _floor_to_bucket
+
+    monkeypatch.setenv("TZ", "Europe/London")  # BST in June = UTC+1
+    _time.tzset()
+    try:
+        naive = dt.datetime(2026, 6, 14, 20, 23, 33)  # UTC wall-clock, no tzinfo
+        aware = dt.datetime(2026, 6, 14, 20, 23, 33, tzinfo=dt.UTC)
+        expected = dt.datetime(2026, 6, 14, 20, 23, 30, tzinfo=dt.UTC)
+        # Naive must be treated as UTC (not shifted into local BST).
+        assert _floor_to_bucket(naive) == expected
+        # Naive and aware must agree.
+        assert _floor_to_bucket(naive) == _floor_to_bucket(aware)
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        _time.tzset()

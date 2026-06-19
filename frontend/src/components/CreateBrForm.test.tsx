@@ -24,7 +24,7 @@ describe('CreateBrForm', () => {
   it('rejects an unsupported URL host with inline error', async () => {
     const onCreated = vi.fn()
     render(<CreateBrForm onCreated={onCreated} />)
-    fireEvent.change(screen.getByLabelText(/zKillboard or Aurora URL/i), {
+    fireEvent.change(screen.getByLabelText(/zKillboard .* URL/i), {
       target: { value: 'https://example.com/related/123' },
     })
     fireEvent.click(screen.getByRole('button', { name: /Create BR/i }))
@@ -38,7 +38,7 @@ describe('CreateBrForm', () => {
     const onCreated = vi.fn()
     vi.mocked(api.createBr).mockResolvedValue({ br_id: 'newbr1', status: 'pending' })
     render(<CreateBrForm onCreated={onCreated} />)
-    fireEvent.change(screen.getByLabelText(/zKillboard or Aurora URL/i), {
+    fireEvent.change(screen.getByLabelText(/zKillboard .* URL/i), {
       target: { value: 'https://zkillboard.com/related/30004759/202606101800/' },
     })
     fireEvent.change(screen.getByLabelText(/Title/i), {
@@ -52,18 +52,14 @@ describe('CreateBrForm', () => {
     })
   })
 
-  it('calls api.createBr with a valid Aurora URL', async () => {
+  it('rejects a br.evetools URL (no longer supported)', async () => {
     const onCreated = vi.fn()
-    vi.mocked(api.createBr).mockResolvedValue({ br_id: 'newbr2', status: 'pending' })
     render(<CreateBrForm onCreated={onCreated} />)
-    fireEvent.change(screen.getByLabelText(/zKillboard or Aurora URL/i), {
+    fireEvent.change(screen.getByLabelText(/zKillboard .* URL/i), {
       target: { value: 'https://br.evetools.org/br/abc123' },
     })
     fireEvent.click(screen.getByRole('button', { name: /Create BR/i }))
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('newbr2'))
-    expect(vi.mocked(api.createBr)).toHaveBeenCalledWith({
-      url: 'https://br.evetools.org/br/abc123',
-      title: undefined,
-    })
+    await waitFor(() => expect(screen.getByText(/must be a zkillboard.com/i)).toBeInTheDocument())
+    expect(vi.mocked(api.createBr)).not.toHaveBeenCalled()
   })
 })

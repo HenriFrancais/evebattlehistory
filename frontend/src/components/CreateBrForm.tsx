@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { api } from '../api'
 
-const ALLOWED_HOSTS = ['zkillboard.com', 'br.evetools.org']
+// br.evetools.org isn't reliably resolvable (its BR API expires reports), so
+// only zKillboard /related/ links are accepted.
+const ALLOWED_HOSTS = ['zkillboard.com']
 
 interface Props {
   onCreated: (brId: string) => void
@@ -20,7 +22,7 @@ export function CreateBrForm({ onCreated }: Props) {
       const parsed = new URL(value.trim())
       const host = parsed.hostname.replace(/^www\./, '')
       if (!ALLOWED_HOSTS.includes(host)) {
-        return `URL must be from zkillboard.com or br.evetools.org (got: ${host})`
+        return `URL must be a zkillboard.com /related/ link (got: ${host})`
       }
     } catch {
       return 'Invalid URL'
@@ -49,7 +51,7 @@ export function CreateBrForm({ onCreated }: Props) {
     <form onSubmit={handleSubmit} className="panel" style={{ maxWidth: '36rem' }}>
       <h2 style={{ marginTop: 0 }}>New Battle Report</h2>
       <div className="form-group">
-        <label htmlFor="br-url">zKillboard or Aurora URL *</label>
+        <label htmlFor="br-url">zKillboard /related/ URL *</label>
         <input
           id="br-url"
           type="url"

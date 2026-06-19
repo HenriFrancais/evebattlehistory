@@ -104,9 +104,20 @@ def get_settings() -> Settings:
     return Settings()
 
 
+# Alliances always treated as friendly ("us"), merged into whatever the config
+# file provides. These are NV and its blue alliances:
+#   99006113 No Vacancies.   99009324 Wardec Mechanics   99014963 Intended Behavior
+BASELINE_FRIENDLY_ALLIANCE_IDS: tuple[int, ...] = (99006113, 99009324, 99014963)
+
+
 @lru_cache(maxsize=1)
 def get_app_config() -> AppConfig:
     settings = get_settings()
     if settings.config_local_path.exists():
-        return load_app_config(settings.config_local_path)
-    return load_app_config(settings.config_path)
+        cfg = load_app_config(settings.config_local_path)
+    else:
+        cfg = load_app_config(settings.config_path)
+    # Always include the baseline friendly alliances so side labelling works
+    # even if the config file omits or misconfigures them.
+    cfg.our_alliance_ids = sorted(set(cfg.our_alliance_ids) | set(BASELINE_FRIENDLY_ALLIANCE_IDS))
+    return cfg

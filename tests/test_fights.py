@@ -949,3 +949,24 @@ async def test_aggregate_br_rerun_clears_log_orphans(tmp_path):
             )
         ).scalar_one()
     assert re_stamped >= 1, "associate_logs_for_br must re-stamp events after re-aggregation"
+
+
+def test_baseline_friendly_alliances_always_included(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """get_app_config() always merges the baseline NV friendly alliances."""
+    from app.config import BASELINE_FRIENDLY_ALLIANCE_IDS, get_app_config, get_settings
+
+    # Point at a config file that omits the baseline entirely.
+    cfg_path = tmp_path / "c.toml"
+    cfg_path.write_text("our_alliance_ids = [12345]\n")
+    monkeypatch.setenv("CONFIG_PATH", str(cfg_path))
+    monkeypatch.setenv("CONFIG_LOCAL_PATH", str(tmp_path / "missing.toml"))
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    try:
+        cfg = get_app_config()
+        for aid in BASELINE_FRIENDLY_ALLIANCE_IDS:
+            assert aid in cfg.our_alliance_ids
+        assert 12345 in cfg.our_alliance_ids
+    finally:
+        get_settings.cache_clear()
+        get_app_config.cache_clear()

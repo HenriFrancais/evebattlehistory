@@ -61,9 +61,10 @@ class BrStatus(BaseModel):
 
 class FightSideOut(BaseModel):
     side_idx: int
-    side_kind: str | None
+    side_kind: str | None  # 'friendly' | 'hostile' | 'unassigned'
     pilot_count: int
     isk_lost: float
+    losses: int = 0  # ships destroyed on this side
 
 
 class FightOut(BaseModel):
@@ -285,11 +286,41 @@ class FilteredBrResponse(BaseModel):
 
 
 class FleetSeriesOut(BaseModel):
-    """One named series aligned to the shared fleet x axis."""
+    """One (effect_type, direction) series aligned to the shared fleet x axis."""
 
     key: str
-    """Fixed key: one of 'dps_out', 'remote_rep', 'ewar', 'cap_warfare'."""
+    """Stable identity '{effect_type}:{direction}' (used for toggles)."""
+    effect_type: str
+    direction: str
+    metric: str
+    """'amount' (HP/GJ from sum_amount) or 'count' (EWAR applications)."""
     values: list[float | None]
+
+
+class SideEntityOut(BaseModel):
+    """One assignable entity (alliance, or corp without an alliance) in a BR."""
+
+    entity_type: str  # 'alliance' | 'corp'
+    entity_id: int
+    name: str
+    side: str  # 'friendly' | 'hostile'
+    overridden: bool  # True if an FC/HC override is in effect
+    baseline: bool  # True if a permanent friendly blue
+
+
+class BrSidesOut(BaseModel):
+    """Entities in a BR with their current side + whether the caller may edit."""
+
+    entities: list[SideEntityOut]
+    can_edit: bool
+
+
+class SideOverrideIn(BaseModel):
+    """Set ('friendly'/'hostile') or clear (None) a per-BR side override."""
+
+    entity_type: str
+    entity_id: int
+    side: str | None
 
 
 class KillEventOut(BaseModel):
@@ -299,8 +330,27 @@ class KillEventOut(BaseModel):
     killmail_id: int
     victim_character_id: int | None
     victim_ship_name: str
+    victim_ship_type_id: int | None
     side_kind: str | None
     isk: float | None
+
+
+class ContributionOut(BaseModel):
+    """One source→target aggregate within a clicked time bucket."""
+
+    source_character_id: int | None
+    source_name: str
+    target_name: str
+    effect_type: str
+    direction: str
+    group: str  # 'damage' | 'cap' | 'ewar'
+    value: float
+
+
+class ContributionsOut(BaseModel):
+    at: int
+    bucket_seconds: int
+    rows: list[ContributionOut]
 
 
 class FleetTimelineOut(BaseModel):

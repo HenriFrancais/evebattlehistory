@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { BrSourceIn } from '../api'
 import { api } from '../api'
 
-const ALLOWED_HOSTS = ['zkillboard.com', 'br.evetools.org']
+// Only zKillboard is reliably resolvable (br.evetools BR API expires reports).
+const ALLOWED_HOSTS = ['zkillboard.com']
 
 type SourceKind = 'link' | 'window'
 
@@ -36,7 +37,7 @@ function validateRow(row: SourceRow): string | null {
       const parsed = new URL(row.url.trim())
       const host = parsed.hostname.replace(/^www\./, '')
       if (!ALLOWED_HOSTS.includes(host)) {
-        return `URL must be from zkillboard.com or br.evetools.org (got: ${host})`
+        return `URL must be a zkillboard.com /related/ link (got: ${host})`
       }
     } catch {
       return 'Invalid URL'
@@ -226,7 +227,7 @@ function SourceRowEditor({ row, error, canRemove, onChange, onRemove }: RowEdito
             type="url"
             value={row.url}
             onChange={(e) => onChange({ url: e.target.value })}
-            placeholder="https://zkillboard.com/related/... or https://br.evetools.org/br/..."
+            placeholder="https://zkillboard.com/related/..."
           />
         </div>
       ) : (

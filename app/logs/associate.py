@@ -47,7 +47,15 @@ from app.observability.logging import log
 
 
 def _floor_to_bucket(ts: dt.datetime, bucket_seconds: int = BUCKET_SECONDS) -> dt.datetime:
-    """Floor *ts* down to the nearest *bucket_seconds* boundary (UTC-aware)."""
+    """Floor *ts* down to the nearest *bucket_seconds* boundary (UTC-aware).
+
+    Log event timestamps are UTC, but SQLite returns them tz-naive. Calling
+    ``.timestamp()`` on a naive datetime makes Python interpret it in the
+    server's LOCAL timezone — which silently shifts every bucket when the server
+    is not on UTC (e.g. BST = UTC+1 shifts buckets -1h). Normalise to UTC first.
+    """
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.UTC)
     epoch = ts.timestamp()
     floored = (epoch // bucket_seconds) * bucket_seconds
     return dt.datetime.fromtimestamp(floored, tz=dt.UTC)
