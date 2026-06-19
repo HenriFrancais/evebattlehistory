@@ -350,11 +350,13 @@ class ContributionOut(BaseModel):
     module_name: str | None = None
     icon_type_id: int | None = None
     weapon_category: str | None = None
+    target_ship: str | None = None
+    quality: str | None = None
 
 
 class ContributionsOut(BaseModel):
-    at: int
-    bucket_seconds: int
+    from_ts: int
+    to_ts: int
     rows: list[ContributionOut]
 
 

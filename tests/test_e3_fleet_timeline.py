@@ -503,7 +503,7 @@ async def test_api_fleet_timeline_accessible_by_member(tmp_path, monkeypatch) ->
 async def test_fleet_contributions_source_target(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     import datetime as _dt
 
-    from app.analytics.fleet import fleet_contributions
+    from app.analytics.fleet import fleet_snapshot
     from app.db.models import GamelogFile, LogEvent
 
     async with db_session_maker() as session:
@@ -525,7 +525,8 @@ async def test_fleet_contributions_source_target(db_session_maker) -> None:  # t
     from app.config import get_settings
 
     async with db_session_maker() as session:
-        rows = await fleet_contributions(session, br_id, int(ts.timestamp()), get_settings())
+        frm = int(ts.timestamp())
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
 
     assert rows, "expected contribution rows"
     top = rows[0]
@@ -548,7 +549,7 @@ async def test_clean_target_name_strips_tags() -> None:
 async def test_contributions_damage_row_has_weapon_icon(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     import datetime as _dt
 
-    from app.analytics.fleet import fleet_contributions
+    from app.analytics.fleet import fleet_snapshot
     from app.config import get_settings
     from app.db.models import GamelogFile, InventoryType, LogEvent
 
@@ -570,7 +571,8 @@ async def test_contributions_damage_row_has_weapon_icon(db_session_maker) -> Non
         await session.commit()
 
     async with db_session_maker() as session:
-        rows = await fleet_contributions(session, br_id, int(ts.timestamp()), get_settings())
+        frm = int(ts.timestamp())
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
 
     dmg = next(r for r in rows if r.target_name == "Enemy1")
     assert dmg.module_name == "250mm Railgun II"
@@ -581,7 +583,7 @@ async def test_contributions_damage_row_has_weapon_icon(db_session_maker) -> Non
 async def test_contributions_non_damage_row_has_no_weapon(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     import datetime as _dt
 
-    from app.analytics.fleet import fleet_contributions
+    from app.analytics.fleet import fleet_snapshot
     from app.config import get_settings
     from app.db.models import GamelogFile, LogEvent
 
@@ -601,12 +603,54 @@ async def test_contributions_non_damage_row_has_no_weapon(db_session_maker) -> N
         await session.commit()
 
     async with db_session_maker() as session:
-        rows = await fleet_contributions(session, br_id, int(ts.timestamp()), get_settings())
+        frm = int(ts.timestamp())
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
 
     rep = next(r for r in rows if r.target_name == "Friend1")
     assert rep.module_name is None
     assert rep.icon_type_id is None
     assert rep.weapon_category is None
+
+
+async def test_fleet_snapshot_range_ship_and_quality(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import GamelogFile, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        gf = GamelogFile(uploaded_by_user="u", claimed_character_id=CHAR_A, resolved_via="filename",
+                         stored_path="/x", sha256="qq", mime="text/plain", size=1,
+                         parse_status="parsed", event_count=3,
+                         uploaded_at=_dt.datetime.now(_dt.UTC))
+        session.add(gf)
+        await session.flush()
+        t0 = BUCKET_TS_1                       # 20:00:00
+        t1 = BUCKET_TS_2                       # 20:00:05
+        t_out = t1 + _dt.timedelta(seconds=30)  # outside the window
+        # Two damage hits on Enemy1 (Loki) with differing quality + one outside-range hit.
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t0, effect_type="damage",
+                             direction="out", amount=300.0, quality="Smashes",
+                             other_name="Enemy1", other_ship_name="Loki", fight_id=fight_id))
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t1, effect_type="damage",
+                             direction="out", amount=100.0, quality="Smashes",
+                             other_name="Enemy1", other_ship_name="Loki", fight_id=fight_id))
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t_out, effect_type="damage",
+                             direction="out", amount=999.0, quality="Grazes",
+                             other_name="Enemy1", other_ship_name="Loki", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(t0.timestamp())
+    to = int(t1.timestamp()) + 1
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, to, get_settings())
+
+    enemy = next(r for r in rows if r.target_name == "Enemy1")
+    assert enemy.target_ship == "Loki"
+    assert enemy.value == pytest.approx(400.0)   # 300 + 100; the 999 is outside the range
+    assert enemy.quality == "Smashes"            # dominant quality
 
 
 async def test_kill_has_victim_character_name(db_session_maker) -> None:  # type: ignore[no-untyped-def]

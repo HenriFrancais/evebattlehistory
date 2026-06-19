@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
-from app.analytics.fleet import fleet_contributions, fleet_timeline
+from app.analytics.fleet import fleet_snapshot, fleet_timeline
 from app.analytics.sides_config import load_overrides
 from app.api.access import acting_user
 from app.api.auth import can_create_br
@@ -25,7 +25,7 @@ from app.api.schemas import (
     TimelineFightInfo,
 )
 from app.config import get_app_config, get_settings
-from app.db.models import BUCKET_SECONDS, BattleReport
+from app.db.models import BattleReport
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
@@ -95,22 +95,22 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
     )
 
 
-@router.get("/api/brs/{br_id}/contributions")
-async def get_contributions(br_id: str, session: SessionDep, at: int) -> ContributionsOut:
-    """All source→target activity at a single time bucket, grouped by type.
-
-    `at` = epoch seconds (a bucket timestamp).
-    """
+@router.get("/api/brs/{br_id}/snapshot")
+async def get_snapshot(
+    br_id: str, session: SessionDep, from_ts: int, to_ts: int
+) -> ContributionsOut:
+    """All source→target activity in the half-open window [from_ts, to_ts)."""
     await _require_br(br_id, session)
-    contribs = await fleet_contributions(session, br_id, at, get_settings())
+    contribs = await fleet_snapshot(session, br_id, from_ts, to_ts, get_settings())
     return ContributionsOut(
-        at=at,
-        bucket_seconds=BUCKET_SECONDS,
+        from_ts=from_ts,
+        to_ts=to_ts,
         rows=[
             ContributionOut(
                 source_character_id=c.source_character_id,
                 source_name=c.source_name,
                 target_name=c.target_name,
+                target_ship=c.target_ship,
                 effect_type=c.effect_type,
                 direction=c.direction,
                 group=c.group,
@@ -118,6 +118,7 @@ async def get_contributions(br_id: str, session: SessionDep, at: int) -> Contrib
                 module_name=c.module_name,
                 icon_type_id=c.icon_type_id,
                 weapon_category=c.weapon_category,
+                quality=c.quality,
             )
             for c in contribs
         ],

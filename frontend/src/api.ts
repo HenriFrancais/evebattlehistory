@@ -334,18 +334,20 @@ export interface Contribution {
   source_character_id: number | null
   source_name: string
   target_name: string
+  target_ship: string | null
   effect_type: string
   direction: string
-  group: string // 'damage' | 'cap' | 'ewar'
+  group: string
   value: number
   module_name: string | null
   icon_type_id: number | null
   weapon_category: string | null
+  quality: string | null
 }
 
 export interface ContributionsResponse {
-  at: number
-  bucket_seconds: number
+  from_ts: number
+  to_ts: number
   rows: Contribution[]
 }
 
@@ -536,8 +538,8 @@ export const api = {
     jsonFetch<FightEwar>(`${API}/brs/${brId}/fights/${fightId}/ewar`),
   fleetTimeline: (brId: string) =>
     jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
-  contributions: (brId: string, at: number) =>
-    jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/contributions?at=${at}`),
+  snapshot: (brId: string, from: number, to: number) =>
+    jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/snapshot?from_ts=${from}&to_ts=${to}`),
   composition: (brId: string) =>
     jsonFetch<CompositionResponse>(`${API}/brs/${brId}/composition`),
   getSides: (brId: string) => jsonFetch<BrSides>(`${API}/brs/${brId}/sides`),

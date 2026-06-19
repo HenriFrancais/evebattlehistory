@@ -81,6 +81,8 @@ class Contribution:
     module_name: str | None = None
     icon_type_id: int | None = None
     weapon_category: str | None = None
+    target_ship: str | None = None
+    quality: str | None = None
 
 
 async def _resolve_char_names(
@@ -122,31 +124,33 @@ async def _resolve_char_names(
     return names
 
 
-async def fleet_contributions(
-    session: AsyncSession, br_id: str, at_epoch: int, settings: Settings
+async def fleet_snapshot(
+    session: AsyncSession, br_id: str, from_ts: int, to_ts: int, settings: Settings
 ) -> list[Contribution]:
-    """Break down ALL activity at a single 5s bucket into source→target rows
-    (which of our pilots applied what to whom), grouped by type and sorted
-    most→least. Source ids are resolved to names (DB → ESI)."""
+    """Break down ALL activity in the half-open window [from_ts, to_ts) into source→target
+    rows, grouped by (source, target+ship, effect, direction), sorted by value desc. Damage
+    rows resolve a weapon icon and a dominant hit-quality. (from_ts > to_ts is swapped.)"""
     fight_ids = list(
         (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
     )
     if not fight_ids:
         return []
-
-    bucket = (at_epoch // BUCKET_SECONDS) * BUCKET_SECONDS
-    start = dt.datetime.fromtimestamp(bucket, tz=dt.UTC).replace(tzinfo=None)
-    end = dt.datetime.fromtimestamp(bucket + BUCKET_SECONDS, tz=dt.UTC).replace(tzinfo=None)
+    if from_ts > to_ts:
+        from_ts, to_ts = to_ts, from_ts
+    start = dt.datetime.fromtimestamp(from_ts, tz=dt.UTC).replace(tzinfo=None)
+    end = dt.datetime.fromtimestamp(to_ts, tz=dt.UTC).replace(tzinfo=None)
 
     rows = (
         await session.execute(
             select(
                 LogEvent.character_id,
                 LogEvent.other_name,
+                LogEvent.other_ship_name,
                 LogEvent.effect_type,
                 LogEvent.direction,
                 LogEvent.amount,
                 LogEvent.module_name,
+                LogEvent.quality,
             ).where(
                 LogEvent.fight_id.in_(fight_ids),
                 LogEvent.ts >= start,
@@ -156,42 +160,46 @@ async def fleet_contributions(
         )
     ).all()
 
-    agg: dict[tuple[int | None, str, str, str], float] = {}
-    # Per damage group, track HP per module so we can pick the dominant weapon.
-    module_dmg: dict[tuple[int | None, str, str, str], dict[str, float]] = {}
-    for cid, other, eff, direction, amount, module in rows:
-        key = (cid, _clean_target_name(other), eff or "", direction or "")
+    Key = tuple[int | None, str, str, str, str]  # (cid, target, ship, eff, dir)
+    agg: dict[Key, float] = {}
+    module_dmg: dict[Key, dict[str, float]] = {}
+    quality_ct: dict[Key, dict[str, int]] = {}
+    for cid, other, oship, eff, direction, amount, module, quality in rows:
+        key = (
+            cid, _clean_target_name(other), _clean_target_name(oship), eff or "", direction or "",
+        )
         contrib = 1.0 if eff in _COUNT_EFFECTS else abs(amount or 0.0)
         agg[key] = agg.get(key, 0.0) + contrib
-        if eff == "damage" and module:
-            module_dmg.setdefault(key, {})[module] = (
-                module_dmg.setdefault(key, {}).get(module, 0.0) + abs(amount or 0.0)
-            )
+        if eff == "damage":
+            if module:
+                module_dmg.setdefault(key, {})
+                module_dmg[key][module] = module_dmg[key].get(module, 0.0) + abs(amount or 0.0)
+            if quality:
+                quality_ct.setdefault(key, {})
+                quality_ct[key][quality] = quality_ct[key].get(quality, 0) + 1
 
-    # Dominant module per damage group + the family fallback names it may need.
-    top_module: dict[tuple[int | None, str, str, str], str] = {
-        key: max(mods.items(), key=lambda kv: kv[1])[0] for key, mods in module_dmg.items()
+    top_module: dict[Key, str] = {
+        k: max(m.items(), key=lambda kv: kv[1])[0] for k, m in module_dmg.items()
     }
-    wanted_names: set[str] = set()
+    wanted: set[str] = set()
     for name in top_module.values():
-        wanted_names.add(name)
+        wanted.add(name)
         fb = classify_weapon(name).fallback_name
         if fb:
-            wanted_names.add(fb)
+            wanted.add(fb)
     name_to_type: dict[str, int] = {}
-    if wanted_names:
+    if wanted:
         for inv in (
-            await session.execute(
-                select(InventoryType).where(InventoryType.name.in_(wanted_names))
-            )
+            await session.execute(select(InventoryType).where(InventoryType.name.in_(wanted)))
         ).scalars():
             name_to_type[inv.name] = inv.type_id
 
     names = await _resolve_char_names(session, settings, {k[0] for k in agg if k[0] is not None})
 
     out: list[Contribution] = []
-    for (cid, other, eff, direction), val in agg.items():
-        module = top_module.get((cid, other, eff, direction))
+    for (cid, other, oship, eff, direction), val in agg.items():
+        key = (cid, other, oship, eff, direction)
+        module = top_module.get(key)
         icon_type_id: int | None = None
         category: str | None = None
         if module is not None:
@@ -200,11 +208,15 @@ async def fleet_contributions(
             icon_type_id = name_to_type.get(module) or (
                 name_to_type.get(wc.fallback_name) if wc.fallback_name else None
             )
+        quality: str | None = None
+        if key in quality_ct:
+            quality = max(quality_ct[key].items(), key=lambda kv: kv[1])[0]
         out.append(
             Contribution(
                 source_character_id=cid,
                 source_name=(names.get(cid) or f"Char {cid}") if cid is not None else "?",
                 target_name=other,
+                target_ship=(oship if oship != "?" else None),
                 effect_type=eff,
                 direction=direction,
                 group=_EFFECT_GROUP.get(eff, "other"),
@@ -212,6 +224,7 @@ async def fleet_contributions(
                 module_name=module,
                 icon_type_id=icon_type_id,
                 weapon_category=category,
+                quality=quality,
             )
         )
     out.sort(key=lambda c: c.value, reverse=True)
