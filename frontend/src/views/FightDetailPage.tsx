@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { BrDetail, CharacterReconcileRow, FightEwar, FightOut, FightReconcile } from '../api'
 import { api } from '../api'
-import { fmtIsk } from '../format'
+import { fmtDateTime, fmtIsk } from '../format'
 
 function DpsSparkline({ series }: { series: import('../api').DpsPoint[] }) {
   if (series.length === 0) {
@@ -233,7 +233,7 @@ export function FightDetailPage() {
           <span className="dim">System {fight.system_id}</span>
           {fight.started_at && (
             <span className="dim" style={{ marginLeft: '1rem' }}>
-              {new Date(fight.started_at).toLocaleString()}
+              {fmtDateTime(fight.started_at)} UTC
             </span>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { FightOut, FightSideOut } from '../api'
-import { fmtIsk } from '../format'
+import { fmtIsk, fmtTime } from '../format'
 
 const SIDE_LABEL: Record<string, string> = {
   friendly: 'Friendly',
@@ -21,7 +21,7 @@ function SideChip({ side }: { side: FightSideOut }) {
 
 function FightRow({ fight, brId }: { fight: FightOut; brId?: string }) {
   const time = fight.started_at
-    ? new Date(fight.started_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    ? fmtTime(fight.started_at)
     : '??:??'
   return (
     <div className="fight-card" data-testid="fight-card">

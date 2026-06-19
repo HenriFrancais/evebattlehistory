@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { MyLogFile } from '../api'
 import { api } from '../api'
 import { BulkUploader } from '../components/BulkUploader'
+import { fmtDateTime } from '../format'
 
 function StatusChip({ status }: { status: string }) {
   if (status === 'parsed') return <span className="chip chip-parsed">parsed</span>
@@ -14,7 +15,7 @@ function StatusChip({ status }: { status: string }) {
 function fmtDate(s: string | null): string {
   if (!s) return '—'
   try {
-    return new Date(s).toLocaleString()
+    return `${fmtDateTime(s)} UTC`
   } catch {
     return s
   }

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { type CharacterTimeline, type TimelineEvent, type TimelineEventList, ApiError, api } from '../api'
 import { TimelineChart } from '../components/TimelineChart'
+import { fmtTime } from '../format'
 import { toUplotData } from '../timeline'
 
 function formatTs(ts: string): string {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return fmtTime(ts, true)
 }
 
 function EventsPanel({

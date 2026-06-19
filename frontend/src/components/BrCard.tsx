@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { BrSummary } from '../api'
-import { fmtIsk } from '../format'
+import { fmtDate, fmtIsk } from '../format'
 
 interface Props {
   br: BrSummary
@@ -13,9 +13,7 @@ function ResultBadge({ result }: { result: string | null }) {
 }
 
 export function BrCard({ br }: Props) {
-  const date = br.battle_at
-    ? new Date(br.battle_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    : new Date(br.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  const dateStr = br.battle_at ? fmtDate(br.battle_at) : fmtDate(br.created_at)
 
   return (
     <div className="br-card" data-testid="br-card">
@@ -27,7 +25,7 @@ export function BrCard({ br }: Props) {
         {br.source_url && (
           <a href={br.source_url} target="_top" rel="noopener noreferrer">View source ↗</a>
         )}
-        <span>{date}</span>
+        <span>{dateStr}</span>
         <ResultBadge result={br.result} />
         {br.isk_efficiency != null && (
           <span title="ISK efficiency">{(br.isk_efficiency * 100).toFixed(1)}% eff</span>
