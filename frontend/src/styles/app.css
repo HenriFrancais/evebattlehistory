@@ -443,6 +443,7 @@ nav a:hover { color: var(--accent); }
 .comp-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .comp-ship-sub { font-size: 0.72rem; flex: none; }
 .comp-lost { color: var(--bad); }
+.comp-reship { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
 .comp-user-group { margin-bottom: 0.4rem; }
 .comp-user-head { font-size: 0.72rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.3rem 0 0.15rem; }
 @media (max-width: 40rem) { .comp-twoside { grid-template-columns: 1fr; } }

@@ -47,6 +47,7 @@ function PilotRow({ p }: { p: CompositionPilot }) {
         {p.character_name}{p.lost && <span className="comp-lost" title="lost ship"> ✗</span>}
       </span>
       <span className="dim comp-ship-sub">{p.ship_name}</span>
+      {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
     </div>
   )
 }

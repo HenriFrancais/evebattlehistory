@@ -50,4 +50,22 @@ describe('FleetsPanel', () => {
     await user.click(screen.getByRole('button', { name: /By user/i }))
     expect(screen.getByText(/hfrench/)).toBeInTheDocument()
   })
+
+  it('shows a reship badge on reshipped pilots in per-character', async () => {
+    vi.mocked(api.composition).mockResolvedValue({
+      by_user_available: false,
+      sides: [{ side_kind: 'friendly', pilot_count: 1,
+        ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1 },
+                { ship_type_id: 11987, ship_name: 'Guardian', count: 1 }],
+        pilots: [
+          { character_id: 1, character_name: 'Talun', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: true, user_name: null },
+          { character_id: 1, character_name: 'Talun', ship_type_id: 11987, ship_name: 'Guardian', lost: false, reship: true, user_name: null },
+        ] }],
+    })
+    const user = userEvent.setup()
+    render(<FleetsPanel brId="br1" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /Per-character/i }))
+    expect(screen.getAllByText(/reship/i).length).toBeGreaterThanOrEqual(1)
+  })
 })
