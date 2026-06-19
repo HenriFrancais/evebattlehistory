@@ -105,6 +105,9 @@ async def get_contributions(br_id: str, session: SessionDep, at: int) -> Contrib
                 direction=c.direction,
                 group=c.group,
                 value=c.value,
+                module_name=c.module_name,
+                icon_type_id=c.icon_type_id,
+                weapon_category=c.weapon_category,
             )
             for c in contribs
         ],

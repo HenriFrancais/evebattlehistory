@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import classify_entity
+from app.analytics.weapons import classify_weapon
 from app.config import Settings
 from app.observability.logging import log
 from app.db.models import (
@@ -77,6 +78,9 @@ class Contribution:
     direction: str
     group: str
     value: float
+    module_name: str | None = None
+    icon_type_id: int | None = None
+    weapon_category: str | None = None
 
 
 async def _resolve_char_names(
@@ -142,6 +146,7 @@ async def fleet_contributions(
                 LogEvent.effect_type,
                 LogEvent.direction,
                 LogEvent.amount,
+                LogEvent.module_name,
             ).where(
                 LogEvent.fight_id.in_(fight_ids),
                 LogEvent.ts >= start,
@@ -152,25 +157,63 @@ async def fleet_contributions(
     ).all()
 
     agg: dict[tuple[int | None, str, str, str], float] = {}
-    for cid, other, eff, direction, amount in rows:
+    # Per damage group, track HP per module so we can pick the dominant weapon.
+    module_dmg: dict[tuple[int | None, str, str, str], dict[str, float]] = {}
+    for cid, other, eff, direction, amount, module in rows:
         key = (cid, _clean_target_name(other), eff or "", direction or "")
         contrib = 1.0 if eff in _COUNT_EFFECTS else abs(amount or 0.0)
         agg[key] = agg.get(key, 0.0) + contrib
+        if eff == "damage" and module:
+            module_dmg.setdefault(key, {})[module] = (
+                module_dmg.setdefault(key, {}).get(module, 0.0) + abs(amount or 0.0)
+            )
+
+    # Dominant module per damage group + the family fallback names it may need.
+    top_module: dict[tuple[int | None, str, str, str], str] = {
+        key: max(mods.items(), key=lambda kv: kv[1])[0] for key, mods in module_dmg.items()
+    }
+    wanted_names: set[str] = set()
+    for name in top_module.values():
+        wanted_names.add(name)
+        fb = classify_weapon(name).fallback_name
+        if fb:
+            wanted_names.add(fb)
+    name_to_type: dict[str, int] = {}
+    if wanted_names:
+        for inv in (
+            await session.execute(
+                select(InventoryType).where(InventoryType.name.in_(wanted_names))
+            )
+        ).scalars():
+            name_to_type[inv.name] = inv.type_id
 
     names = await _resolve_char_names(session, settings, {k[0] for k in agg if k[0] is not None})
 
-    out = [
-        Contribution(
-            source_character_id=cid,
-            source_name=(names.get(cid) or f"Char {cid}") if cid is not None else "?",
-            target_name=other,
-            effect_type=eff,
-            direction=direction,
-            group=_EFFECT_GROUP.get(eff, "other"),
-            value=val,
+    out: list[Contribution] = []
+    for (cid, other, eff, direction), val in agg.items():
+        module = top_module.get((cid, other, eff, direction))
+        icon_type_id: int | None = None
+        category: str | None = None
+        if module is not None:
+            wc = classify_weapon(module)
+            category = wc.category
+            icon_type_id = name_to_type.get(module) or (
+                name_to_type.get(wc.fallback_name) if wc.fallback_name else None
+            )
+        out.append(
+            Contribution(
+                source_character_id=cid,
+                source_name=(names.get(cid) or f"Char {cid}") if cid is not None else "?",
+                target_name=other,
+                effect_type=eff,
+                direction=direction,
+                group=_EFFECT_GROUP.get(eff, "other"),
+                value=val,
+                module_name=module,
+                icon_type_id=icon_type_id,
+                weapon_category=category,
+            )
         )
-        for (cid, other, eff, direction), val in agg.items()
-    ]
     out.sort(key=lambda c: c.value, reverse=True)
     return out
 

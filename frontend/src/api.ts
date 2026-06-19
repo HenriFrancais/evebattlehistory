@@ -336,6 +336,9 @@ export interface Contribution {
   direction: string
   group: string // 'damage' | 'cap' | 'ewar'
   value: number
+  module_name: string | null
+  icon_type_id: number | null
+  weapon_category: string | null
 }
 
 export interface ContributionsResponse {

@@ -543,3 +543,66 @@ async def test_clean_target_name_strips_tags() -> None:
     assert _clean_target_name("Proteus Nate Marston [NVACA] &lt;NV&gt;") == "Proteus Nate Marston"
     assert _clean_target_name("Tsawind") == "Tsawind"
     assert _clean_target_name("Name [CORP] <ALLI>") == "Name"
+
+
+async def test_contributions_damage_row_has_weapon_icon(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_contributions
+    from app.config import get_settings
+    from app.db.models import GamelogFile, InventoryType, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # SDE row so the exact module name resolves to a type_id.
+        session.add(InventoryType(type_id=3174, name="250mm Railgun II"))
+        gf = GamelogFile(uploaded_by_user="u", claimed_character_id=CHAR_A, resolved_via="filename",
+                         stored_path="/x", sha256="zz", mime="text/plain", size=1,
+                         parse_status="parsed", event_count=1,
+                         uploaded_at=_dt.datetime.now(_dt.UTC))
+        session.add(gf)
+        await session.flush()
+        ts = BUCKET_TS_1
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=ts,
+                             effect_type="damage", direction="out", amount=400.0,
+                             other_name="Enemy1", module_name="250mm Railgun II", fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        rows = await fleet_contributions(session, br_id, int(ts.timestamp()), get_settings())
+
+    dmg = next(r for r in rows if r.target_name == "Enemy1")
+    assert dmg.module_name == "250mm Railgun II"
+    assert dmg.icon_type_id == 3174
+    assert dmg.weapon_category == "hybrid"
+
+
+async def test_contributions_non_damage_row_has_no_weapon(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_contributions
+    from app.config import get_settings
+    from app.db.models import GamelogFile, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        gf = GamelogFile(uploaded_by_user="u", claimed_character_id=CHAR_A, resolved_via="filename",
+                         stored_path="/x", sha256="yy", mime="text/plain", size=1,
+                         parse_status="parsed", event_count=1,
+                         uploaded_at=_dt.datetime.now(_dt.UTC))
+        session.add(gf)
+        await session.flush()
+        ts = BUCKET_TS_1
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=ts,
+                             effect_type="rep_armor", direction="out", amount=500.0,
+                             other_name="Friend1", module_name="Large Remote Armor Repairer II",
+                             fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        rows = await fleet_contributions(session, br_id, int(ts.timestamp()), get_settings())
+
+    rep = next(r for r in rows if r.target_name == "Friend1")
+    assert rep.module_name is None
+    assert rep.icon_type_id is None
+    assert rep.weapon_category is None

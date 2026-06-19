@@ -345,6 +345,9 @@ class ContributionOut(BaseModel):
     direction: str
     group: str  # 'damage' | 'cap' | 'ewar'
     value: float
+    module_name: str | None = None
+    icon_type_id: int | None = None
+    weapon_category: str | None = None
 
 
 class ContributionsOut(BaseModel):
