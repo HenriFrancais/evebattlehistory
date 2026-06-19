@@ -12,7 +12,6 @@ from app.analytics.sides_config import load_overrides
 from app.api.access import acting_user
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
-from app.config import get_app_config, get_settings
 from app.api.schemas import (
     CompositionOut,
     CompositionPilotOut,
@@ -25,6 +24,7 @@ from app.api.schemas import (
     KillEventOut,
     TimelineFightInfo,
 )
+from app.config import get_app_config, get_settings
 from app.db.models import BUCKET_SECONDS, BattleReport
 from app.roster.snapshot import get_roster_store
 
