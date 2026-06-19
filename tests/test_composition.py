@@ -91,6 +91,51 @@ async def test_composition_attaches_user_when_provided(db_session_maker) -> None
     assert pilot.user_name == "hfrench"
 
 
+CAPSULE = 670
+GUARDIAN = 11987
+
+
+@pytest.mark.asyncio
+async def test_composition_excludes_capsules_and_flags_reships(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import InventoryType, Killmail, KillmailAttacker, FightKill
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER flies Absolution (attacker_idx 0)
+        session.add(InventoryType(type_id=GUARDIAN, name="Guardian"))
+        session.add(InventoryType(type_id=CAPSULE, name="Capsule"))
+        km_id = (await session.execute(
+            select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+        )).scalar_one()
+        # Reship: same ATTACKER also appears in a Guardian on the same killmail.
+        session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=1, character_id=ATTACKER,
+                                     ship_type_id=GUARDIAN, damage_done=1, final_blow=False))
+        # A capsule victim for ATTACKER (podded) must NOT add a Capsule hull.
+        session.add(Killmail(killmail_id=km_id + 1,
+                             killmail_time=dt.datetime(2026, 6, 10, 20, 1, tzinfo=dt.UTC),
+                             solar_system_id=31002222, victim_character_id=ATTACKER,
+                             victim_ship_type_id=CAPSULE, npc_kill=False, solo_kill=False))
+        session.add(FightKill(fight_id=fight_id, killmail_id=km_id + 1, side_idx=0))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = [p for s in result.sides for p in s.pilots]
+    hulls = {p.ship_name for p in pilots if p.character_id == ATTACKER}
+    assert hulls == {"Absolution", "Guardian"}            # both hulls, capsule excluded
+    assert all(p.reship for p in pilots if p.character_id == ATTACKER)
+    assert not any(p.ship_name == "Capsule" for p in pilots)
+    # ATTACKER counted once toward pilot_count despite two hulls
+    side = next(s for s in result.sides if any(p.character_id == ATTACKER for p in s.pilots))
+    assert sum(1 for p in side.pilots if p.character_id == ATTACKER) == 2  # two hull rows
+    assert side.pilot_count == len({p.character_id for p in side.pilots})
+
+
 @pytest.mark.asyncio
 async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from fastapi.testclient import TestClient

@@ -164,7 +164,8 @@ async def get_composition(
                 pilots=[CompositionPilotOut(character_id=p.character_id,
                                             character_name=p.character_name,
                                             ship_type_id=p.ship_type_id, ship_name=p.ship_name,
-                                            lost=p.lost, user_name=p.user_name) for p in s.pilots],
+                                            lost=p.lost, reship=p.reship,
+                                            user_name=p.user_name) for p in s.pilots],
             )
             for s in result.sides
         ],

@@ -363,6 +363,7 @@ export interface CompositionPilot {
   ship_type_id: number | null
   ship_name: string
   lost: boolean
+  reship: boolean
   user_name: string | null
 }
 

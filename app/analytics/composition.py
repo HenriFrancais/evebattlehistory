@@ -2,9 +2,11 @@
 callers) char→user grouping. Killmail-derived: a pilot is any character seen as
 a Killmail victim or a KillmailAttacker across the BR's fights.
 
-Each pilot maps to exactly one ship and one side:
-  - ship: the victim ship if the pilot died, else their most-frequent attacker ship.
-  - side: classify_entity(alliance_id, corp_id, baseline, overrides).
+Capsules (type_id 670) are excluded everywhere. Each character maps to a *hull
+set* — the distinct non-capsule ships they flew as victim or attacker:
+  - a character with >1 hull is a reship (every hull row flagged reship=True);
+  - a capsule-only (podded) character becomes one hull-less "Unknown" row;
+  - side: classify_entity(alliance_id, corp_id, baseline, overrides), victim wins.
 Consistent with the kill-marker classification on the fleet timeline.
 """
 
@@ -29,6 +31,8 @@ from app.db.models import (
 
 _SIDE_ORDER = ("friendly", "hostile", "unassigned")
 
+CAPSULE_TYPE_ID = 670
+
 
 @dataclass
 class CompositionPilot:
@@ -37,6 +41,7 @@ class CompositionPilot:
     ship_type_id: int | None
     ship_name: str
     lost: bool
+    reship: bool
     user_name: str | None
 
 
@@ -61,11 +66,10 @@ class CompositionResult:
 
 
 @dataclass
-class _Pilot:
+class _Acc:
     side: str
-    ship_type_id: int | None
-    lost: bool
-    attacker_ships: Counter[int]  # ship_type_id -> occurrences (for non-victims)
+    hulls: dict[int, bool]  # non-capsule ship_type_id → lost?
+    podded: bool            # appeared only in a capsule
 
 
 async def fleet_composition(
@@ -97,9 +101,16 @@ async def fleet_composition(
             baseline_corps=baseline_corps, overrides=overrides,
         )
 
-    pilots: dict[int, _Pilot] = {}
+    acc: dict[int, _Acc] = {}
 
-    # Victims first — authoritative ship + side, lost=True.
+    def _ensure(char_id: int, side: str) -> _Acc:
+        a = acc.get(char_id)
+        if a is None:
+            a = _Acc(side=side, hulls={}, podded=False)
+            acc[char_id] = a
+        return a
+
+    # Victims: authoritative side + a lost hull (capsules → podded, not a hull).
     for char_id, ship_id, alli, corp in (
         await session.execute(
             select(
@@ -112,10 +123,14 @@ async def fleet_composition(
     ).all():
         if char_id is None:
             continue
-        pilots[char_id] = _Pilot(side=_side(alli, corp), ship_type_id=ship_id,
-                                 lost=True, attacker_ships=Counter())
+        a = _ensure(char_id, _side(alli, corp))
+        a.side = _side(alli, corp)  # victim entity wins for side
+        if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
+            a.hulls[ship_id] = True
+        elif ship_id == CAPSULE_TYPE_ID:
+            a.podded = True
 
-    # Attackers — fill in pilots who didn't die; accumulate candidate ships.
+    # Attackers: side if unseen, plus any non-capsule hull they flew.
     for char_id, ship_id, alli, corp in (
         await session.execute(
             select(
@@ -128,22 +143,12 @@ async def fleet_composition(
     ).all():
         if char_id is None:
             continue
-        p = pilots.get(char_id)
-        if p is None:
-            p = _Pilot(side=_side(alli, corp), ship_type_id=None, lost=False,
-                       attacker_ships=Counter())
-            pilots[char_id] = p
-        if not p.lost and ship_id is not None:
-            p.attacker_ships[ship_id] += 1
+        a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
+        if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
+            a.hulls.setdefault(ship_id, False)
 
-    # Resolve each non-victim pilot's ship to its most common attacker ship.
-    for p in pilots.values():
-        if not p.lost and p.ship_type_id is None and p.attacker_ships:
-            p.ship_type_id = p.attacker_ships.most_common(1)[0][0]
-
-    # Resolve names.
-    char_names = await _resolve_char_names(session, settings, set(pilots))
-    ship_ids = {p.ship_type_id for p in pilots.values() if p.ship_type_id is not None}
+    char_names = await _resolve_char_names(session, settings, set(acc))
+    ship_ids = {sid for a in acc.values() for sid in a.hulls}
     ship_names: dict[int, str] = {}
     if ship_ids:
         for inv in (
@@ -151,20 +156,24 @@ async def fleet_composition(
         ).scalars():
             ship_names[inv.type_id] = inv.name
 
-    # Group into sides.
     by_side: dict[str, list[CompositionPilot]] = {}
-    for char_id, p in pilots.items():
-        by_side.setdefault(p.side, []).append(
-            CompositionPilot(
-                character_id=char_id,
-                character_name=char_names.get(char_id) or f"Char {char_id}",
-                ship_type_id=p.ship_type_id,
-                ship_name=(ship_names.get(p.ship_type_id, "Unknown")
-                           if p.ship_type_id is not None else "Unknown"),
-                lost=p.lost,
-                user_name=(char_to_user.get(char_id) if char_to_user else None),
+    for char_id, a in acc.items():
+        name = char_names.get(char_id) or f"Char {char_id}"
+        user = char_to_user.get(char_id) if char_to_user else None
+        is_reship = len(a.hulls) > 1
+        if a.hulls:
+            for sid, lost in a.hulls.items():
+                by_side.setdefault(a.side, []).append(
+                    CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
+                                     ship_name=ship_names.get(sid, "Unknown"), lost=lost,
+                                     reship=is_reship, user_name=user)
+                )
+        else:
+            # Capsule-only / no hull recorded.
+            by_side.setdefault(a.side, []).append(
+                CompositionPilot(character_id=char_id, character_name=name, ship_type_id=None,
+                                 ship_name="Unknown", lost=a.podded, reship=False, user_name=user)
             )
-        )
 
     sides: list[CompositionSide] = []
     for side_kind in _SIDE_ORDER:
@@ -180,6 +189,7 @@ async def fleet_composition(
             CompositionShip(ship_type_id=sid, ship_name=ship_names.get(sid, "Unknown"), count=c)
             for sid, c in counts.most_common()
         ]
-        sides.append(CompositionSide(side_kind=side_kind, pilot_count=len(plist),
+        pilot_count = len({p.character_id for p in plist})
+        sides.append(CompositionSide(side_kind=side_kind, pilot_count=pilot_count,
                                      ships=ships, pilots=plist))
     return CompositionResult(sides=sides)

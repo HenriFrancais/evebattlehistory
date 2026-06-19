@@ -389,6 +389,7 @@ class CompositionPilotOut(BaseModel):
     ship_type_id: int | None
     ship_name: str
     lost: bool
+    reship: bool = False
     user_name: str | None = None
 
 
