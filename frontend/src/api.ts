@@ -364,6 +364,7 @@ export interface CompositionPilot {
   ship_name: string
   lost: boolean
   reship: boolean
+  killmail_id: number | null
   user_name: string | null
 }
 

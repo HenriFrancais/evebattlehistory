@@ -43,6 +43,7 @@ class CompositionPilot:
     lost: bool
     reship: bool
     user_name: str | None
+    killmail_id: int | None
 
 
 @dataclass
@@ -68,7 +69,7 @@ class CompositionResult:
 @dataclass
 class _Acc:
     side: str
-    hulls: dict[int, bool]  # non-capsule ship_type_id → lost?
+    hulls: dict[int, tuple[bool, int | None]]  # ship_type_id → (lost?, killmail_id)
     podded: bool            # appeared only in a capsule
 
 
@@ -111,9 +112,10 @@ async def fleet_composition(
         return a
 
     # Victims: authoritative side + a lost hull (capsules → podded, not a hull).
-    for char_id, ship_id, alli, corp in (
+    for km_id, char_id, ship_id, alli, corp in (
         await session.execute(
             select(
+                Killmail.killmail_id,
                 Killmail.victim_character_id,
                 Killmail.victim_ship_type_id,
                 Killmail.victim_alliance_id,
@@ -126,7 +128,7 @@ async def fleet_composition(
         a = _ensure(char_id, _side(alli, corp))
         a.side = _side(alli, corp)  # victim entity wins for side
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
-            a.hulls[ship_id] = True
+            a.hulls[ship_id] = (True, km_id)
         elif ship_id == CAPSULE_TYPE_ID:
             a.podded = True
 
@@ -145,7 +147,7 @@ async def fleet_composition(
             continue
         a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
-            a.hulls.setdefault(ship_id, False)
+            a.hulls.setdefault(ship_id, (False, None))
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}
@@ -162,17 +164,18 @@ async def fleet_composition(
         user = char_to_user.get(char_id) if char_to_user else None
         is_reship = len(a.hulls) > 1
         if a.hulls:
-            for sid, lost in a.hulls.items():
+            for sid, (lost, km_id) in a.hulls.items():
                 by_side.setdefault(a.side, []).append(
                     CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
                                      ship_name=ship_names.get(sid, "Unknown"), lost=lost,
-                                     reship=is_reship, user_name=user)
+                                     reship=is_reship, user_name=user, killmail_id=km_id)
                 )
         else:
             # Capsule-only / no hull recorded.
             by_side.setdefault(a.side, []).append(
                 CompositionPilot(character_id=char_id, character_name=name, ship_type_id=None,
-                                 ship_name="Unknown", lost=a.podded, reship=False, user_name=user)
+                                 ship_name="Unknown", lost=a.podded, reship=False,
+                                 user_name=user, killmail_id=None)
             )
 
     sides: list[CompositionSide] = []

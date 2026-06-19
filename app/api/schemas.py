@@ -390,6 +390,7 @@ class CompositionPilotOut(BaseModel):
     ship_name: str
     lost: bool
     reship: bool = False
+    killmail_id: int | None = None
     user_name: str | None = None
 
 

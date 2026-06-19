@@ -137,6 +137,30 @@ async def test_composition_excludes_capsules_and_flags_reships(db_session_maker)
 
 
 @pytest.mark.asyncio
+async def test_composition_lost_hull_has_killmail_id(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # VICTIM lost ship type 1 ("TestShip") on a km
+        km_id = (await session.execute(
+            select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+        )).scalar_one()
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    victim = next(p for s in result.sides for p in s.pilots if p.character_id == VICTIM)
+    assert victim.lost is True and victim.killmail_id == km_id
+    attacker = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert attacker.killmail_id is None  # not lost
+
+
+@pytest.mark.asyncio
 async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from fastapi.testclient import TestClient
 

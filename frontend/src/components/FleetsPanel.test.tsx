@@ -15,8 +15,8 @@ const base: CompositionResponse = {
   sides: [
     { side_kind: 'friendly', pilot_count: 2, ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 2 }],
       pilots: [
-        { character_id: 1, character_name: 'A', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: false, user_name: null },
-        { character_id: 2, character_name: 'B', ship_type_id: 22428, ship_name: 'Absolution', lost: true, reship: false, user_name: null },
+        { character_id: 1, character_name: 'A', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: false, killmail_id: null, user_name: null },
+        { character_id: 2, character_name: 'B', ship_type_id: 22428, ship_name: 'Absolution', lost: true, reship: false, killmail_id: 100, user_name: null },
       ] },
   ],
 }
@@ -58,8 +58,8 @@ describe('FleetsPanel', () => {
         ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1 },
                 { ship_type_id: 11987, ship_name: 'Guardian', count: 1 }],
         pilots: [
-          { character_id: 1, character_name: 'Talun', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: true, user_name: null },
-          { character_id: 1, character_name: 'Talun', ship_type_id: 11987, ship_name: 'Guardian', lost: false, reship: true, user_name: null },
+          { character_id: 1, character_name: 'Talun', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: true, killmail_id: null, user_name: null },
+          { character_id: 1, character_name: 'Talun', ship_type_id: 11987, ship_name: 'Guardian', lost: false, reship: true, killmail_id: null, user_name: null },
         ] }],
     })
     const user = userEvent.setup()
