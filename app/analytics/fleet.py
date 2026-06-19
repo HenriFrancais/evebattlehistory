@@ -320,6 +320,7 @@ class KillEvent:
     """Epoch seconds of the killmail."""
     killmail_id: int
     victim_character_id: int | None
+    victim_character_name: str | None
     victim_ship_name: str
     victim_ship_type_id: int | None
     side_kind: str | None
@@ -472,6 +473,19 @@ async def fleet_timeline(
         )
         km_map: dict[int, Killmail] = {km.killmail_id: km for km in km_rows}
 
+        victim_ids = {
+            km.victim_character_id for km in km_map.values() if km.victim_character_id is not None
+        }
+        victim_names: dict[int, str] = {}
+        if victim_ids:
+            for ch in (
+                await session.execute(
+                    select(Character).where(Character.character_id.in_(victim_ids))
+                )
+            ).scalars():
+                if ch.name:
+                    victim_names[ch.character_id] = ch.name
+
         ship_type_ids = {
             km.victim_ship_type_id for km in km_map.values() if km.victim_ship_type_id is not None
         }
@@ -505,6 +519,11 @@ async def fleet_timeline(
                     ts=_epoch(km.killmail_time),
                     killmail_id=km_id,
                     victim_character_id=km.victim_character_id,
+                    victim_character_name=(
+                        victim_names.get(km.victim_character_id)
+                        if km.victim_character_id is not None
+                        else None
+                    ),
                     victim_ship_name=ship_name,
                     victim_ship_type_id=km.victim_ship_type_id,
                     side_kind=side_kind,

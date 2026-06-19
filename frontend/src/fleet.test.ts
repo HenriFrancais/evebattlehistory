@@ -34,7 +34,7 @@ const fleetWithData: FleetTimeline = {
     mk('jam', 'in', [1, 1, 1]),
   ],
   kills: [
-    { ts: 1005, killmail_id: 42, victim_character_id: 999, victim_ship_name: 'Tengu', victim_ship_type_id: 17738, side_kind: 'hostile', isk: 1_500_000_000 },
+    { ts: 1005, killmail_id: 42, victim_character_id: 999, victim_character_name: 'Tengu Pilot', victim_ship_name: 'Tengu', victim_ship_type_id: 17738, side_kind: 'hostile', isk: 1_500_000_000 },
   ],
   fights: [],
   bucket_seconds: 5,

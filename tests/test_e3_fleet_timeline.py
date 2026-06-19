@@ -606,3 +606,47 @@ async def test_contributions_non_damage_row_has_no_weapon(db_session_maker) -> N
     assert rep.module_name is None
     assert rep.icon_type_id is None
     assert rep.weapon_category is None
+
+
+async def test_kill_has_victim_character_name(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.fleet import fleet_timeline
+    from app.db.models import Character
+
+    victim_id = 2300000001  # fresh id; CHAR_A/CHAR_B already exist via _insert_fight
+    km_time = FIGHT_START + dt.timedelta(seconds=60)
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        session.add(Character(character_id=victim_id, name="Mara Sant",
+                              last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+        await _insert_killmail(session, fight_id=fight_id, side_idx=1, victim_char_id=victim_id,
+                               ship_type_id=_SHIP_TYPE_ID, total_value=1.0, killmail_time=km_time)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id)
+
+    k = next(k for k in tl.kills if k.victim_character_id == victim_id)
+    assert k.victim_character_name == "Mara Sant"
+
+
+async def test_kill_unknown_victim_name_is_none(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.fleet import fleet_timeline
+    from app.db.models import Character
+
+    km_time = FIGHT_START + dt.timedelta(seconds=90)
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # Character row exists but has no name → must resolve to None gracefully.
+        session.add(Character(character_id=777000777, name=None,
+                              last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+        await _insert_killmail(session, fight_id=fight_id, side_idx=1, victim_char_id=777000777,
+                               ship_type_id=_SHIP_TYPE_ID, total_value=1.0, killmail_time=km_time)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id)
+
+    k = next(k for k in tl.kills if k.victim_character_id == 777000777)
+    assert k.victim_character_name is None

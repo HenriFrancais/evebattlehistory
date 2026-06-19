@@ -329,6 +329,7 @@ class KillEventOut(BaseModel):
     ts: int
     killmail_id: int
     victim_character_id: int | None
+    victim_character_name: str | None
     victim_ship_name: str
     victim_ship_type_id: int | None
     side_kind: str | None

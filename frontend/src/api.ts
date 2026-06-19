@@ -312,6 +312,7 @@ export interface KillEvent {
   ts: number  // epoch seconds
   killmail_id: number
   victim_character_id: number | null
+  victim_character_name: string | null
   victim_ship_name: string
   victim_ship_type_id: number | null
   side_kind: string | null

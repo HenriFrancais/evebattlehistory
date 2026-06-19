@@ -62,6 +62,7 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
                 ts=k.ts,
                 killmail_id=k.killmail_id,
                 victim_character_id=k.victim_character_id,
+                victim_character_name=k.victim_character_name,
                 victim_ship_name=k.victim_ship_name,
                 victim_ship_type_id=k.victim_ship_type_id,
                 side_kind=k.side_kind,

@@ -49,8 +49,8 @@ const fleetWithData: FleetTimeline = {
     mk('scram', 'in', [2, 2, 2]),
   ],
   kills: [
-    { ts: 1005, killmail_id: 42, victim_character_id: 999, victim_ship_name: 'Tengu', victim_ship_type_id: 17738, side_kind: 'hostile', isk: 1_500_000_000 },
-    { ts: 1008, killmail_id: 43, victim_character_id: null, victim_ship_name: 'Loki', victim_ship_type_id: 29990, side_kind: 'friendly', isk: null },
+    { ts: 1005, killmail_id: 42, victim_character_id: 999, victim_character_name: 'Tengu Pilot', victim_ship_name: 'Tengu', victim_ship_type_id: 17738, side_kind: 'hostile', isk: 1_500_000_000 },
+    { ts: 1008, killmail_id: 43, victim_character_id: null, victim_character_name: null, victim_ship_name: 'Loki', victim_ship_type_id: 29990, side_kind: 'friendly', isk: null },
   ],
   fights: [],
   bucket_seconds: 5,
