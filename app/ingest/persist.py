@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -216,6 +216,20 @@ async def persist_killmails(
     existing_ids = set(result.scalars())
 
     new_kms = [km for km in parsed if km.killmail_id not in existing_ids]
+
+    # Backfill ISK value on refresh: existing rows may have been inserted before a
+    # value was known. For parsed killmails already present whose total_value is now
+    # known, fill it WITHOUT overwriting an existing non-null value.
+    for km in parsed:
+        if km.killmail_id in existing_ids and km.total_value is not None:
+            await session.execute(
+                update(Killmail)
+                .where(
+                    Killmail.killmail_id == km.killmail_id,
+                    Killmail.total_value.is_(None),
+                )
+                .values(total_value=km.total_value)
+            )
 
     if not new_kms:
         return 0

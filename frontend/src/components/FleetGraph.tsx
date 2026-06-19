@@ -402,11 +402,21 @@ function PanelChart({
 
     // Click a moment in time → extend the two-click range. Uses the cursor's
     // exact time (any x is selectable, not just snapped data points).
+    // Track mousedown X so a drag-to-zoom's terminating click (which moves the
+    // pointer) is NOT registered as a spurious range point.
+    let downX: number | null = null
+    const onDown = (ev: MouseEvent) => {
+      downX = ev.clientX
+    }
     const onClick = (ev: MouseEvent) => {
+      const moved = downX != null ? Math.abs(ev.clientX - downX) : 0
+      downX = null
+      if (moved > 4) return // a drag (zoom), not a click
       const rect = u.over.getBoundingClientRect()
       const t = u.posToVal(ev.clientX - rect.left, 'x')
       if (Number.isFinite(t)) onRangeClick(t)
     }
+    u.over?.addEventListener('mousedown', onDown)
     u.over?.addEventListener('click', onClick)
     const onResize = () => u.setSize({ width: el.clientWidth || 800, height })
     window.addEventListener('resize', onResize)

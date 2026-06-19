@@ -124,7 +124,11 @@ export function SnapshotPanel({ brId, range }: { brId: string; range: { from: nu
       {loading && rows.length === 0 && <p className="dim">Loading…</p>}
       {error && <p className="error-text">{error}</p>}
       {!loading && !error && targets.length === 0 && (
-        <p className="dim" style={{ fontSize: '0.78rem' }}>No logged activity in this window.</p>
+        <p className="dim" style={{ fontSize: '0.78rem' }}>
+          {range.from === range.to
+            ? 'Pick an end point on the graph.'
+            : 'No logged activity in this window.'}
+        </p>
       )}
       <div className="focus-list">
         {targets.map((g) => <TargetCard key={`${g.target}-${g.ship ?? ''}`} group={g} />)}

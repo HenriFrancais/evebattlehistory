@@ -566,10 +566,6 @@ export function BrDetailPage() {
             </div>
           )}
           <div>
-            <div className="stat-label">ISK Killed</div>
-            <div className="stat-value">{fmtIsk(br.our_isk_destroyed)}</div>
-          </div>
-          <div>
             <div className="stat-label">ISK Lost</div>
             <div className="stat-value">{fmtIsk(br.our_isk_lost)}</div>
           </div>

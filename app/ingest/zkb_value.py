@@ -21,7 +21,7 @@ ZKB_API = "https://zkillboard.com/api"
 _MAX_CONCURRENCY = 4
 
 
-async def _fetch_value(client: httpx.AsyncClient, km_id: int, km_hash: str | None) -> float | None:
+async def _fetch_value(client: httpx.AsyncClient, km_id: int) -> float | None:
     """Return zkb.totalValue for one killmail, or None on any failure."""
     try:
         resp = await client.get(f"{ZKB_API}/killID/{km_id}/")
@@ -46,7 +46,7 @@ async def backfill_killmail_values(
         return 0
     rows = (
         await session.execute(
-            select(Killmail.killmail_id, Killmail.hash)
+            select(Killmail.killmail_id)
             .join(BrKillmail, BrKillmail.killmail_id == Killmail.killmail_id)
             .where(BrKillmail.br_id == br_id, Killmail.total_value.is_(None))
         )
@@ -55,19 +55,26 @@ async def backfill_killmail_values(
         return 0
 
     sem = asyncio.Semaphore(_MAX_CONCURRENCY)
-    updated = 0
     async with httpx.AsyncClient(
         headers={"User-Agent": "nv-br", "Accept-Encoding": "gzip"}, timeout=30.0
     ) as client:
-        async def _one(km_id: int, km_hash: str | None) -> None:
-            nonlocal updated
+        # Fetch concurrently (bounded), but DO NOT touch the shared AsyncSession
+        # here — concurrent session.execute on one session is unsafe.
+        async def _one(km_id: int) -> tuple[int, float] | None:
             async with sem:
-                value = await _fetch_value(client, km_id, km_hash)
-            if value is not None:
-                await session.execute(
-                    update(Killmail).where(Killmail.killmail_id == km_id).values(total_value=value)
-                )
-                updated += 1
+                value = await _fetch_value(client, km_id)
+            return (km_id, value) if value is not None else None
 
-        await asyncio.gather(*[_one(int(kid), kh) for kid, kh in rows])
+        results = await asyncio.gather(*[_one(int(kid)) for (kid,) in rows])
+
+    # Apply DB updates sequentially on the session after fetching completes.
+    updated = 0
+    for res in results:
+        if res is None:
+            continue
+        km_id, value = res
+        await session.execute(
+            update(Killmail).where(Killmail.killmail_id == km_id).values(total_value=value)
+        )
+        updated += 1
     return updated

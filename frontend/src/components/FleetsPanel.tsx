@@ -56,7 +56,7 @@ function CharacterView({ side }: { side: CompositionSide }) {
   return (
     <div>
       <SideHeader side={side} />
-      {side.pilots.map((p) => <PilotRow key={p.character_id} p={p} />)}
+      {side.pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} />)}
     </div>
   )
 }
@@ -77,7 +77,7 @@ function UserView({ side }: { side: CompositionSide }) {
       {groups.map(([user, pilots]) => (
         <div key={user} className="comp-user-group">
           <div className="comp-user-head">▸ {user}</div>
-          {pilots.map((p) => <PilotRow key={p.character_id} p={p} />)}
+          {pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} />)}
         </div>
       ))}
     </div>

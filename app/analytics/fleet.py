@@ -35,7 +35,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.sides_config import classify_entity
 from app.analytics.weapons import classify_weapon
 from app.config import Settings
-from app.observability.logging import log
 from app.db.models import (
     BUCKET_SECONDS,
     BrFight,
@@ -47,6 +46,7 @@ from app.db.models import (
     LogEvent,
     LogEventBucket,
 )
+from app.observability.logging import log
 
 # Effect → panel group (matches the frontend grouping).
 _EFFECT_GROUP: dict[str, str] = {
@@ -208,9 +208,9 @@ async def fleet_snapshot(
             icon_type_id = name_to_type.get(module) or (
                 name_to_type.get(wc.fallback_name) if wc.fallback_name else None
             )
-        quality: str | None = None
+        quality_label: str | None = None
         if key in quality_ct:
-            quality = max(quality_ct[key].items(), key=lambda kv: kv[1])[0]
+            quality_label = max(quality_ct[key].items(), key=lambda kv: kv[1])[0]
         out.append(
             Contribution(
                 source_character_id=cid,
@@ -224,7 +224,7 @@ async def fleet_snapshot(
                 module_name=module,
                 icon_type_id=icon_type_id,
                 weapon_category=category,
-                quality=quality,
+                quality=quality_label,
             )
         )
     out.sort(key=lambda c: c.value, reverse=True)
@@ -274,7 +274,11 @@ def _contribution(effect_type: str, sum_amount: float, event_count: int) -> floa
 def _series_sort_key(key: str) -> tuple[int, int]:
     effect, _, direction = key.partition(":")
     e = _EFFECT_ORDER.index(effect) if effect in _EFFECT_ORDER else len(_EFFECT_ORDER)
-    d = _DIRECTION_ORDER.index(direction) if direction in _DIRECTION_ORDER else len(_DIRECTION_ORDER)
+    d = (
+        _DIRECTION_ORDER.index(direction)
+        if direction in _DIRECTION_ORDER
+        else len(_DIRECTION_ORDER)
+    )
     return (e, d)
 
 

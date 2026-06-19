@@ -99,7 +99,7 @@ GUARDIAN = 11987
 async def test_composition_excludes_capsules_and_flags_reships(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     from app.analytics.composition import fleet_composition
     from app.config import get_settings
-    from app.db.models import InventoryType, Killmail, KillmailAttacker, FightKill
+    from app.db.models import FightKill, InventoryType, Killmail, KillmailAttacker
 
     async with db_session_maker() as session:
         br_id, fight_id = await _seed(session)  # ATTACKER flies Absolution (attacker_idx 0)

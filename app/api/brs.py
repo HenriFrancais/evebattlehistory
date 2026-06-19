@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.sides_config import fight_side_losses, load_overrides
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import (
@@ -26,9 +27,8 @@ from app.api.schemas import (
     FightOut,
     FightSideOut,
 )
-from app.analytics.sides_config import fight_side_losses, load_overrides
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrFight, BrSource, Fight, FightSide, SolarSystem
+from app.db.models import BattleReport, BrFight, BrSource, Fight, SolarSystem
 from app.fights.participants import ParticipantInfo, br_participants
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
