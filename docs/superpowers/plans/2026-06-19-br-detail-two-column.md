@@ -27,7 +27,7 @@
 - Modify: `frontend/src/components/BrCard.tsx:16-19`, `frontend/src/components/FightList.tsx:23-25`, `frontend/src/views/FightDetailPage.tsx:234-238`, `frontend/src/views/CharacterTimelinePage.tsx:7-9`, `frontend/src/views/LogsPage.tsx:16-18`
 
 **Interfaces:**
-- Produces: `fmtDate(x)`, `fmtTime(x, withSeconds?)`, `fmtDateTime(x)` where `x: Date | number | string` (number = epoch **seconds**, string = ISO). Used by Tasks 6, 7, 8.
+- Produces: `fmtDate(x)`, `fmtTime(x, withSeconds?)`, `fmtDateTime(x)` where `x: Date | number | string` (number = epoch **seconds**, string = ISO), and `fmtCompact(n)` (compact magnitude: `1.5M` / `1.5k` / integer). Used by Tasks 6, 7, 8.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -59,6 +59,16 @@ describe('date/time formatting (UTC)', () => {
     expect(fmtDateTime(new Date(ISO))).toBe('2026-06-16 19:21')
   })
   void EPOCH_S
+})
+
+import { fmtCompact } from './format'
+
+describe('fmtCompact', () => {
+  it('formats millions, thousands, and small values', () => {
+    expect(fmtCompact(1_500_000)).toBe('1.5M')
+    expect(fmtCompact(9200)).toBe('9.2k')
+    expect(fmtCompact(42)).toBe('42')
+  })
 })
 ```
 
@@ -93,6 +103,14 @@ export function fmtTime(x: Date | number | string, withSeconds = false): string 
 export function fmtDateTime(x: Date | number | string): string {
   const iso = toDate(x).toISOString()
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+}
+
+/** Compact magnitude: 1.5M / 1.5k / integer (preserves sign). */
+export function fmtCompact(n: number): string {
+  const a = Math.abs(n)
+  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (a >= 1e3) return `${(n / 1e3).toFixed(1)}k`
+  return `${Math.round(n)}`
 }
 ```
 
@@ -1261,21 +1279,14 @@ Expected: FAIL — cannot resolve `./MomentDetailPanel`.
 
 - [ ] **Step 3: Create MomentDetailPanel.tsx**
 
-Move these symbols **out of** `FleetSection.tsx` and **into** `MomentDetailPanel.tsx`: `EFFECT_ICON`, `EFFECT_LABEL`, `EffectIcon`, `Row` type, `TargetGroup`, `groupByTarget`, `TargetCard`, `GROUP_TOTALS`, `ContributionsPanel`, plus the `fmtCompact` helper (copy it; it is also used by FleetGraph — keep a copy in each file or export it from a shared module — for this task, keep a local copy in each). Then wrap them as a self-fetching panel. Full new file:
+Move these symbols **out of** `FleetSection.tsx` and **into** `MomentDetailPanel.tsx`: `EFFECT_ICON`, `EFFECT_LABEL`, `EffectIcon`, `Row` type, `TargetGroup`, `groupByTarget`, `TargetCard`, `GROUP_TOTALS`, `ContributionsPanel`. Import `fmtCompact` from `../format` (added in Task 1) — do not redefine it locally. Then wrap them as a self-fetching panel. Full new file:
 
 ```tsx
 // Moment detail: the source→target breakdown for one clicked 5s bucket.
 import { useEffect, useState } from 'react'
 import type { Contribution, ContributionsResponse } from '../api'
 import { api } from '../api'
-import { fmtTime } from '../format'
-
-function fmtCompact(n: number): string {
-  const a = Math.abs(n)
-  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (a >= 1e3) return `${(n / 1e3).toFixed(1)}k`
-  return `${Math.round(n)}`
-}
+import { fmtCompact, fmtTime } from '../format'
 
 const EFFECT_ICON: Record<string, number> = {
   damage: 485, rep_armor: 11355, rep_shield: 3586, neut: 533, nos: 530,
@@ -1420,7 +1431,7 @@ Expected: PASS (2 tests).
 
 - [ ] **Step 5: Create FleetGraph.tsx by extraction**
 
-Create `frontend/src/components/FleetGraph.tsx` containing everything currently in `FleetSection.tsx` **except** the moment-detail symbols moved in Step 3. Concretely, move into `FleetGraph.tsx`: the colour constants, `killColor`, `hexToRgba`, `fmtCompact` (local copy), all plugin functions (`zeroBaselinePlugin`, `killMarkersPlugin`, `fightEdgesPlugin`, `sliderPlugin`), `PanelChart`, `ToggleLegend`, `KillLegend`, and a new top-level `FleetGraph` component. Change three things relative to the old `FleetSection`:
+Create `frontend/src/components/FleetGraph.tsx` containing everything currently in `FleetSection.tsx` **except** the moment-detail symbols moved in Step 3. Concretely, move into `FleetGraph.tsx`: the colour constants, `killColor`, `hexToRgba`, all plugin functions (`zeroBaselinePlugin`, `killMarkersPlugin`, `fightEdgesPlugin`, `sliderPlugin`), `PanelChart`, `ToggleLegend`, `KillLegend`, and a new top-level `FleetGraph` component. Import `fmtCompact` and `fmtIsk` from `../format` (do not keep a local `fmtCompact`). Change three things relative to the old `FleetSection`:
 
 1. **Props** — `FleetGraph` takes `{ brId, reloadKey?, selectedTs, onSelectTs }` and uses `selectedTs` / `onSelectTs` in place of the internal `sliderTime` state. Keep `sliderTimeRef`, `positionersRef`, and the debounced contributions fetch **out** — those move to the page/MomentDetailPanel. `handleSliderChange` becomes:
 
