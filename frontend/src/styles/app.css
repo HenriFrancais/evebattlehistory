@@ -374,13 +374,15 @@ nav a:hover { color: var(--accent); }
 .fleet-slider { position: absolute; top: 0; height: 100%; width: 0; border-left: 2px solid var(--accent); pointer-events: auto; cursor: ew-resize; z-index: 4; }
 .fleet-slider-grip { position: absolute; top: -1px; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 2px; background: var(--accent); cursor: ew-resize; }
 
-.contrib-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); padding: 0.5rem 0.7rem; }
+.contrib-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); padding: 0.5rem 0.7rem; display: flex; flex-direction: column; max-height: calc(100vh - 7rem); overflow-y: auto; }
 .contrib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; font-variant-numeric: tabular-nums; }
-/* Per-type totals strip (replaces the old on-graph overlay). */
-.focus-totals { display: flex; gap: 0.6rem; flex-wrap: wrap; font-size: 0.75rem; padding-bottom: 0.35rem; margin-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
-.focus-total { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Effect-family clusters: each row group collapses to a summary, expands on hover/focus. */
+.snap-cluster { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
+.snap-cluster-head { padding: 0.35rem 0.5rem; font-size: 0.8rem; font-weight: 600; background: var(--panel-2); cursor: default; }
+.snap-cluster-body { max-height: 0; overflow: hidden; transition: max-height 0.15s ease; }
+.snap-cluster:hover .snap-cluster-body, .snap-cluster:focus-within .snap-cluster-body { max-height: none; padding: 0.4rem; }
 /* Target focus cards: one per ship, sources nested with effect icons. */
-.focus-list { display: flex; flex-direction: column; gap: 0.45rem; max-height: 30rem; overflow-y: auto; }
+.focus-list { display: flex; flex-direction: column; gap: 0.45rem; overflow: visible; max-height: none; }
 .focus-card { border: 1px solid var(--border); border-radius: 5px; padding: 0.3rem 0.4rem; background: var(--panel); }
 .focus-card-head { font-size: 0.8rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.2rem; }
 .focus-row { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; line-height: 1.6; }

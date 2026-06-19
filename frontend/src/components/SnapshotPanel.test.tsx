@@ -50,4 +50,12 @@ describe('SnapshotPanel', () => {
     // weapon icon
     expect((screen.getByTitle('250mm Railgun II') as HTMLImageElement).src).toContain('/types/3174/')
   })
+
+  it('clusters by effect family with summaries; expands a cluster on demand', async () => {
+    vi.mocked(api.snapshot).mockResolvedValue(resp) // resp has damage + rep_armor rows
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} />)
+    await waitFor(() => expect(screen.getByTestId('fleet-contrib')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('cluster-damage')).toBeInTheDocument())
+    expect(screen.getByTestId('cluster-reps')).toBeInTheDocument()
+  })
 })

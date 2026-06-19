@@ -54,7 +54,7 @@ function TargetCard({ group }: { group: TargetGroup }) {
   return (
     <div className="focus-card">
       <div className="focus-card-head" data-testid="focus-card-head" title={head}>{head}</div>
-      {group.rows.slice(0, 12).map((r, i) => (
+      {group.rows.map((r, i) => (
         <div className="focus-row" key={i}>
           <RowIcon row={r} />
           <span className="focus-src" title={r.source_name}>{r.source_name}</span>
@@ -63,17 +63,20 @@ function TargetCard({ group }: { group: TargetGroup }) {
           <span className="focus-val">{fmtCompact(r.value)}</span>
         </div>
       ))}
-      {group.rows.length > 12 && (
-        <div className="dim" style={{ fontSize: '0.7rem' }}>+{group.rows.length - 12} more…</div>
-      )}
     </div>
   )
 }
 
-const GROUP_TOTALS = [
-  { id: 'damage', label: 'Dmg/Rep' },
-  { id: 'cap', label: 'Cap' },
-  { id: 'ewar', label: 'EWAR' },
+// Group effect types into the four display families.
+const EFFECT_FAMILY: Record<string, string> = {
+  damage: 'damage',
+  rep_armor: 'reps', rep_shield: 'reps',
+  neut: 'cap', nos: 'cap', cap_transfer: 'cap',
+  scram: 'ewar', disrupt: 'ewar', jam: 'ewar',
+}
+const FAMILY_ORDER: { id: string; label: string }[] = [
+  { id: 'damage', label: 'Damage' }, { id: 'reps', label: 'Reps' },
+  { id: 'cap', label: 'Cap' }, { id: 'ewar', label: 'EWAR' },
 ]
 
 export function SnapshotPanel({ brId, range }: { brId: string; range: { from: number; to: number } | null }) {
@@ -105,25 +108,15 @@ export function SnapshotPanel({ brId, range }: { brId: string; range: { from: nu
   }
 
   const rows = data?.rows ?? []
-  const targets = groupByTarget(rows)
+  const hasRows = rows.length > 0
   return (
     <div className="contrib-panel" data-testid="fleet-contrib">
       <div className="contrib-head">
         <strong>{fmtTime(range.from, true)} → {fmtTime(range.to, true)} UTC</strong>
       </div>
-      <div className="focus-totals">
-        {GROUP_TOTALS.map((g) => {
-          const sum = rows.filter((r) => r.group === g.id).reduce((a, r) => a + r.value, 0)
-          return (
-            <span key={g.id} className="focus-total">
-              <span className="dim">{g.label}</span> {fmtCompact(sum)}
-            </span>
-          )
-        })}
-      </div>
       {loading && rows.length === 0 && <p className="dim">Loading…</p>}
       {error && <p className="error-text">{error}</p>}
-      {!loading && !error && targets.length === 0 && (
+      {!loading && !error && !hasRows && (
         <p className="dim" style={{ fontSize: '0.78rem' }}>
           {range.from === range.to
             ? 'Pick an end point on the graph.'
@@ -131,7 +124,22 @@ export function SnapshotPanel({ brId, range }: { brId: string; range: { from: nu
         </p>
       )}
       <div className="focus-list">
-        {targets.map((g) => <TargetCard key={`${g.target}-${g.ship ?? ''}`} group={g} />)}
+        {FAMILY_ORDER.map(({ id, label }) => {
+          const famRows = rows.filter((r) => EFFECT_FAMILY[r.effect_type] === id)
+          if (famRows.length === 0) return null
+          const targets = groupByTarget(famRows)
+          const sum = famRows.reduce((a, r) => a + r.value, 0)
+          return (
+            <div className="snap-cluster" data-testid={`cluster-${id}`} key={id} tabIndex={0}>
+              <div className="snap-cluster-head">
+                {label} · {targets.length} {targets.length === 1 ? 'target' : 'targets'} · {fmtCompact(sum)}
+              </div>
+              <div className="snap-cluster-body">
+                {targets.map((g) => <TargetCard key={`${g.target}-${g.ship ?? ''}`} group={g} />)}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
