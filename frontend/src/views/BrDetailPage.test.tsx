@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BrDetail, BrSourceOut, FightWithBrId, MeResponse, UserCoverage } from '../api'
+import type { BrDetail, BrSourceOut, MeResponse, UserCoverage } from '../api'
 import { ApiError } from '../api'
 import { BrDetailPage } from './BrDetailPage'
 
@@ -19,7 +19,7 @@ vi.mock('../api', async (importOriginal) => {
       filterFights: vi.fn(),
       fleetTimeline: vi.fn(),
       composition: vi.fn(),
-      contributions: vi.fn(),
+      snapshot: vi.fn(),
       getSources: vi.fn(),
       patchBrTitle: vi.fn(),
       addSource: vi.fn(),
@@ -160,7 +160,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.filterFights).mockReset()
     vi.mocked(api.fleetTimeline).mockReset()
     vi.mocked(api.composition).mockReset()
-    vi.mocked(api.contributions).mockReset()
+    vi.mocked(api.snapshot).mockReset()
     vi.mocked(api.getSources).mockReset()
     vi.mocked(api.patchBrTitle).mockReset()
     vi.mocked(api.addSource).mockReset()
@@ -171,7 +171,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.getSources).mockResolvedValue([])
     vi.mocked(api.getBrStatus).mockResolvedValue({ br_id: 'br1', status: 'ready', progress_pct: 100, error_text: null })
     vi.mocked(api.composition).mockResolvedValue({ by_user_available: false, sides: [] })
-    vi.mocked(api.contributions).mockResolvedValue({ at: 0, bucket_seconds: 5, rows: [] })
+    vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 0, to_ts: 0, rows: [] })
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {
@@ -242,88 +242,6 @@ describe('BrDetailPage', () => {
     expect(links[0]).toHaveAttribute('href', '/brs/br1/characters/111')
   })
 
-  it('fight filter: applying filter calls filterFights with br_id and narrows fights list', async () => {
-    const filteredFight: FightWithBrId = {
-      fight_id: 99,
-      system_id: 30001111,
-      started_at: '2026-06-10T19:00:00Z',
-      ended_at: '2026-06-10T19:30:00Z',
-      isk_destroyed_total: 500_000_000,
-      largest_side_pilots: 5,
-      sides: [],
-      br_id: 'br1',
-    }
-    vi.mocked(api.getBr).mockResolvedValue(mockBr)
-    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
-    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
-    vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
-    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
-
-    renderBrDetailPage()
-
-    // Wait for BR to load
-    await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
-
-    // Open the filter details panel
-    const summary = screen.getByText(/Filter sub-engagements/i)
-    fireEvent.click(summary)
-
-    // Fill in a filter value — change field to capitals_involved, value is auto-populated
-    // Actually use isk_destroyed_total (numeric) so we can type a value
-    const valueInput = screen.getByTestId('filter-row-0-value')
-    await userEvent.type(valueInput, '1')
-
-    // Apply the filter
-    fireEvent.click(screen.getByTestId('filter-apply'))
-
-    // Wait for filter to be applied
-    await waitFor(() => expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument())
-
-    // filterFights should have been called with br_id='br1'
-    expect(vi.mocked(api.filterFights)).toHaveBeenCalledWith(
-      expect.any(Object),
-      'br1'
-    )
-
-    // The count indicator should show filtered results
-    expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument()
-  })
-
-  it('fight filter: clearing filter restores original fights list', async () => {
-    const filteredFight: FightWithBrId = {
-      fight_id: 99,
-      system_id: 30001111,
-      started_at: '2026-06-10T19:00:00Z',
-      ended_at: '2026-06-10T19:30:00Z',
-      isk_destroyed_total: 500_000_000,
-      largest_side_pilots: 5,
-      sides: [],
-      br_id: 'br1',
-    }
-    vi.mocked(api.getBr).mockResolvedValue(mockBr)
-    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
-    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
-    vi.mocked(api.filterFights).mockResolvedValue([filteredFight])
-    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
-
-    renderBrDetailPage()
-    await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
-
-    // Open filter and apply
-    const summary = screen.getByText(/Filter sub-engagements/i)
-    fireEvent.click(summary)
-    const valueInput = screen.getByTestId('filter-row-0-value')
-    await userEvent.type(valueInput, '1')
-    fireEvent.click(screen.getByTestId('filter-apply'))
-    await waitFor(() => expect(screen.getByTestId('fight-filter-count')).toBeInTheDocument())
-
-    // Clear the filter
-    fireEvent.click(screen.getByTestId('fight-filter-clear'))
-
-    // Count indicator should be gone
-    await waitFor(() => expect(screen.queryByTestId('fight-filter-count')).not.toBeInTheDocument())
-  })
-
   it('lays out fleet graph and detail rail in two columns', async () => {
     vi.mocked(api.getBr).mockResolvedValue(mockBr)
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
@@ -335,6 +253,21 @@ describe('BrDetailPage', () => {
     expect(screen.getByTestId('br-col-main')).toBeInTheDocument()
     expect(screen.getByTestId('br-col-side')).toBeInTheDocument()
     // moment detail starts in its empty state
+    expect(screen.getByTestId('moment-detail-empty')).toBeInTheDocument()
+  })
+
+  it('shows Summary then Sides, no Engagements/filter, Snapshot in the rail', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+    renderBrDetailPage()
+    await waitFor(() => expect(screen.getByTestId('br-detail-grid')).toBeInTheDocument())
+    expect(screen.getByTestId('summary-section')).toBeInTheDocument()
+    expect(screen.getByTestId('sides-section')).toBeInTheDocument()
+    expect(screen.queryByText(/Filter sub-engagements/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^Engagements$/i })).not.toBeInTheDocument()
     expect(screen.getByTestId('moment-detail-empty')).toBeInTheDocument()
   })
 

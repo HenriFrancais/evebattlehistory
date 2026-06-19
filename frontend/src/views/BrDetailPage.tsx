@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, FightOut, FightWithBrId, FilterGroup, MeResponse, UserCoverage } from '../api'
+import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
-import { FilterBuilder } from '../components/FilterBuilder'
-import { FightList } from '../components/FightList'
 import { FleetGraph } from '../components/FleetGraph'
-import { MomentDetailPanel } from '../components/MomentDetailPanel'
+import { SnapshotPanel } from '../components/SnapshotPanel'
 import { FleetsPanel } from '../components/FleetsPanel'
 import { SidesEditor } from '../components/SidesEditor'
 import { IngestProgress } from '../components/IngestProgress'
@@ -435,14 +433,11 @@ export function BrDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [fullCoverage, setFullCoverage] = useState<UserCoverage[] | null>(null)
-  const [filteredFights, setFilteredFights] = useState<FightWithBrId[] | null>(null)
-  const [fightFilterActive, setFightFilterActive] = useState(false)
-  const [fightFilterError, setFightFilterError] = useState<string | null>(null)
   // E4b: refresh state
   const [refreshStatus, setRefreshStatus] = useState<BrStatus | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [sidesVersion, setSidesVersion] = useState(0)
-  const [selectedTs, setSelectedTs] = useState<number | null>(null)
+  const [range, setRange] = useState<{ from: number; to: number } | null>(null)
 
   const load = useCallback(() => {
     if (!id) return
@@ -480,24 +475,6 @@ export function BrDetailPage() {
     return () => { cancelled = true }
   }, [br, id, me])
 
-  async function handleFightFilterApply(tree: FilterGroup) {
-    if (!id) return
-    setFightFilterError(null)
-    try {
-      const result = await api.filterFights(tree, id)
-      setFilteredFights(result)
-      setFightFilterActive(true)
-    } catch (e: unknown) {
-      setFightFilterError(String((e as Error)?.message ?? e))
-    }
-  }
-
-  function handleFightFilterClear() {
-    setFilteredFights(null)
-    setFightFilterActive(false)
-    setFightFilterError(null)
-  }
-
   async function handleRefresh() {
     if (!id) return
     setRefreshing(true)
@@ -529,8 +506,6 @@ export function BrDetailPage() {
     progress_pct: br.progress_pct,
     error_text: null,
   }
-
-  const displayFights: FightOut[] = filteredFights ?? br.fights
 
   const canCreate = me?.can_create_br ?? false
 
@@ -566,8 +541,18 @@ export function BrDetailPage() {
         )}
       </div>
 
-      <div className="panel">
+      <div className="panel" data-testid="summary-section">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
+          <div>
+            <div className="stat-label">System</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>
+              {br.systems.length ? br.systems.join(', ') : '—'}
+            </div>
+          </div>
+          <div>
+            <div className="stat-label">ISK Destroyed</div>
+            <div className="stat-value">{fmtIsk(br.our_isk_destroyed)}</div>
+          </div>
           {br.result && (
             <div>
               <div className="stat-label">Result</div>
@@ -623,28 +608,10 @@ export function BrDetailPage() {
         </div>
       )}
 
-      <h2 style={{ margin: 0 }}>Engagements</h2>
-
-      <details>
-        <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: '0.5rem' }}>
-          Filter sub-engagements
-        </summary>
-        <FilterBuilder scope="fight" onApply={handleFightFilterApply} onClear={handleFightFilterClear} />
-        {fightFilterError && <p className="error-text">{fightFilterError}</p>}
-      </details>
-
-      {fightFilterActive && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span className="dim" data-testid="fight-filter-count">
-            Showing {filteredFights?.length ?? 0} of {br.fights.length} sub-engagements
-          </span>
-          <button className="btn" onClick={handleFightFilterClear} data-testid="fight-filter-clear">
-            Clear filter
-          </button>
-        </div>
-      )}
-
-      <FightList fights={displayFights} brId={br.br_id} />
+      <section className="panel" data-testid="sides-section">
+        <h2 style={{ margin: '0 0 0.75rem' }}>Sides</h2>
+        {id && <SidesEditor brId={id} onChange={() => setSidesVersion((v) => v + 1)} />}
+      </section>
 
       <div className="br-detail-grid" data-testid="br-detail-grid">
         <div className="br-col-main" data-testid="br-col-main">
@@ -654,22 +621,14 @@ export function BrDetailPage() {
           <section data-testid="fleet-graph-section" className="panel">
             <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
             {id && (
-              <FleetGraph brId={id} reloadKey={sidesVersion} selectedTs={selectedTs} onSelectTs={setSelectedTs} />
+              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} />
             )}
           </section>
         </div>
         <div className="br-col-side" data-testid="br-col-side">
           <section className="panel">
-            <h3 style={{ margin: '0 0 0.5rem' }}>Moment Detail</h3>
-            {id && <MomentDetailPanel brId={id} at={selectedTs} />}
-          </section>
-          <section data-testid="sides-section" className="panel">
-            <details>
-              <summary style={{ fontWeight: 600 }}>Sides <span className="dim" style={{ fontWeight: 400 }}>(classify alliances/corps)</span></summary>
-              <div style={{ marginTop: '0.6rem' }}>
-                {id && <SidesEditor brId={id} onChange={() => setSidesVersion((v) => v + 1)} />}
-              </div>
-            </details>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
+            {id && <SnapshotPanel brId={id} range={range} />}
           </section>
         </div>
       </div>
