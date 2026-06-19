@@ -170,7 +170,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.getSources).mockResolvedValue([])
     vi.mocked(api.getBrStatus).mockResolvedValue({ br_id: 'br1', status: 'ready', progress_pct: 100, error_text: null })
     vi.mocked(api.composition).mockResolvedValue({ by_user_available: false, sides: [] })
-    vi.mocked(api.contributions).mockResolvedValue({ at: 0, sides: [] } as never)
+    vi.mocked(api.contributions).mockResolvedValue({ at: 0, bucket_seconds: 5, rows: [] })
   })
 
   it('member (can_create_br=false) sees my-coverage with missing indicator', async () => {

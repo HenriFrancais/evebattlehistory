@@ -103,7 +103,9 @@ async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type:
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setenv("DATA_SOURCE", "demo")
     monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
-    get_settings.cache_clear(); get_app_config.cache_clear(); reset_engine_for_tests()
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    reset_engine_for_tests()
     settings = get_settings()
     await init_models(settings)
     session_maker = get_sessionmaker(settings)
@@ -122,4 +124,6 @@ async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type:
     assert all(p["user_name"] is None for s in member.json()["sides"] for p in s["pilots"])
     assert creator.status_code == 200
 
-    reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()
+    reset_engine_for_tests()
+    get_settings.cache_clear()
+    get_app_config.cache_clear()

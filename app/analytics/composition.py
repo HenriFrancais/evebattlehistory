@@ -65,7 +65,7 @@ class _Pilot:
     side: str
     ship_type_id: int | None
     lost: bool
-    attacker_ships: Counter  # ship_type_id -> occurrences (for non-victims)
+    attacker_ships: Counter[int]  # ship_type_id -> occurrences (for non-victims)
 
 
 async def fleet_composition(
@@ -172,7 +172,7 @@ async def fleet_composition(
         if not plist:
             continue
         plist.sort(key=lambda x: (x.ship_name, x.character_name))
-        counts: Counter = Counter()
+        counts: Counter[int] = Counter()
         for pilot in plist:
             if pilot.ship_type_id is not None:
                 counts[pilot.ship_type_id] += 1

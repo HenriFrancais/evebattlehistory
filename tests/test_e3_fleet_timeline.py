@@ -565,7 +565,8 @@ async def test_contributions_damage_row_has_weapon_icon(db_session_maker) -> Non
         ts = BUCKET_TS_1
         session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=ts,
                              effect_type="damage", direction="out", amount=400.0,
-                             other_name="Enemy1", module_name="250mm Railgun II", fight_id=fight_id))
+                             other_name="Enemy1", module_name="250mm Railgun II",
+                             fight_id=fight_id))
         await session.commit()
 
     async with db_session_maker() as session:

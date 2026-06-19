@@ -26,3 +26,6 @@ frontend/dist/
 
 # Superpowers brainstorm mockups
 .superpowers/
+
+# TypeScript incremental build cache
+frontend/tsconfig.tsbuildinfo
