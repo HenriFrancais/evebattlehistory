@@ -26,6 +26,7 @@ from app.api.schemas import (
 )
 from app.config import get_app_config, get_settings
 from app.db.models import BUCKET_SECONDS, BattleReport
+from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
 router = APIRouter()
@@ -139,7 +140,8 @@ async def get_composition(
             roster = await get_roster_store(settings).get()
             char_to_user = dict(roster.char_to_user)
             by_user_available = True
-        except Exception:  # roster unavailable → no user grouping
+        except Exception as exc:  # roster unavailable → no user grouping (fail closed)
+            log.warning("composition.roster_unavailable", br_id=br_id, error=str(exc))
             char_to_user = None
             by_user_available = False
     overrides = await load_overrides(session, br_id)
