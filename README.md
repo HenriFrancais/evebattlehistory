@@ -22,7 +22,7 @@ Browser
 ```
 
 The FastAPI app (`app/main.py`) mounts every router and the built SPA under a configurable
-**URL prefix** (`/br` in production, empty in local dev), enforces the bearer in
+**URL prefix** (`/fc/br` in production, empty in local dev), enforces the bearer in
 `NVToolsAuthMiddleware`, and emits the CSP frame-ancestors header on every response.
 
 ### Repository layout
@@ -50,7 +50,7 @@ Two layers:
 | Var | Default | Purpose |
 |---|---|---|
 | `NV_TOKEN` | `dev-token-change-me` | **Inbound** bearer the NV Tools proxy must present; every non-health request without it gets 401. |
-| `URL_PREFIX` | *(empty)* | Path the app mounts under (e.g. `/br`). Empty = served at root (local dev). |
+| `URL_PREFIX` | *(empty)* | Path the app mounts under (e.g. `/fc/br`). Empty = served at root (local dev). |
 | `DATA_SOURCE` | `real` | `real` = call NV Tools portal + ESI/zKill; `demo` = read `data_demo/` fixtures. |
 | `NV_API_URL` | `https://tools.novacancies.space/api` | **Outbound** NV Tools portal API (roster lookup). |
 | `NV_API_TOKEN` | *(empty)* | Outbound bearer for `NV_API_URL` — **separate** from `NV_TOKEN`. |
@@ -139,75 +139,128 @@ runtime serving the API **and** the built SPA via gunicorn (uvicorn workers), bo
 `127.0.0.1:8000` and running as a non-root user. A Caddy reverse proxy on the VM terminates
 TLS and forwards to that loopback port.
 
-### 1. Configure
+> **Before you build, confirm the URL prefix with the NV Tools admin.** Ask: *"for public
+> `/<ns>/<prefix>/`, what exact path do you forward to my upstream?"* The default here is
+> **`/fc/br`**. The compose file bakes `URL_PREFIX` into the SPA at build time (the
+> `VITE_URL_PREFIX` build arg sets the asset base path), so changing it later means a
+> **rebuild**, not just a restart. Caddy must pass the prefix through unchanged.
+
+### Step 0 — Prerequisites on the VM
+
+- A Linux VM you control, with a DNS hostname the NV Tools admin will point at it.
+- **Docker** + the **Docker Compose plugin** (`docker compose version`).
+- **Caddy** installed as a system service (`systemctl status caddy`).
+- Inbound firewall: open **443** and **SSH only**. The app container never listens publicly.
+- Outbound HTTPS to `tools.novacancies.space` (portal roster API), ESI, and zKillboard.
+
+### Step 1 — Get the code
+
+```bash
+git clone https://github.com/HenriFrancais/evebattlehistory.git
+cd evebattlehistory
+```
+
+### Step 2 — Configure secrets & settings
 
 ```bash
 cd deploy
-cp ../.env.example .env          # then edit:
+cp ../.env.example .env
+nano .env            # fill in the values below
 ```
 
 Set in `deploy/.env` for production:
 
 ```ini
-NV_TOKEN=<shared secret the NV Tools admin gives you>   # MUST match exactly
-URL_PREFIX=/br                                           # the path NV Tools forwards (confirm with admin!)
+NV_TOKEN=<shared secret the NV Tools admin gives you>   # INBOUND bearer — must match EXACTLY
+URL_PREFIX=/fc/br                                        # the path NV Tools forwards (confirm with admin!)
 DATA_SOURCE=real
-NV_API_TOKEN=<outbound portal bearer>
-DEV_MODE=false                                           # never true in prod
-RESTORE_ON_START=true                                    # optional: pull latest backup if DB absent
+NV_API_URL=https://tools.novacancies.space/api          # portal API base (default is fine)
+NV_API_TOKEN=<outbound portal bearer>                   # OUTBOUND bearer for roster lookups (separate value)
+DEV_MODE=false                                          # NEVER true in production (it bypasses auth)
+RESTORE_ON_START=true                                   # optional: pull latest backup if the DB is absent
+# Backups (optional) — see the Backups section below:
+BACKUP_RCLONE_REMOTE=                                   # e.g. nvbr-gdrive:nvbr/backups (empty = disabled)
+BACKUP_KEEP=30
+BACKUP_HOUR=3
 ```
 
-> **URL-prefix gotcha:** `URL_PREFIX` must equal the exact path NV Tools forwards to your
-> upstream. Ask the admin: *"for public `/<ns>/<prefix>/`, what path do you send to my
-> upstream?"* The compose file passes `URL_PREFIX` to the image as the `VITE_URL_PREFIX`
-> build arg so the SPA's asset paths match — change it and you must rebuild. Caddy must
-> **not** strip the prefix.
+There are **two distinct tokens**: `NV_TOKEN` is the *inbound* bearer NV Tools presents to you;
+`NV_API_TOKEN` is the *outbound* bearer you present to the portal API. They are different values.
 
-### 2. Build & run
+### Step 3 — Build & run
 
 ```bash
-cd deploy
+# from deploy/
 docker compose up -d --build           # app only
-# or, with the daily backup sidecar (needs ./rclone-config/rclone.conf):
+# or, with the daily Google-Drive backup sidecar (see Backups — needs ./rclone-config/rclone.conf):
 docker compose --profile backup up -d --build
 ```
 
-`docker-compose.yml` binds `127.0.0.1:8000:8000`, mounts a named `nvbr_data` volume at
-`/app/var` (SQLite DB + logs persist across restarts), and adds a healthcheck on
-`${URL_PREFIX}/healthz`.
+`docker-compose.yml` binds `127.0.0.1:8000:8000` (loopback only), mounts a named `nvbr_data`
+volume at `/app/var` (SQLite DB + uploaded logs persist across rebuilds), and healthchecks
+`${URL_PREFIX}/healthz`. The image builds the SPA and bakes the processed CCP SDE at build time.
 
-### 3. TLS reverse proxy (Caddy)
+Check it came up:
+
+```bash
+docker compose ps                                  # nvbr should be "healthy"
+docker compose logs -f nvbr                        # watch startup
+```
+
+### Step 4 — TLS reverse proxy (Caddy)
+
+The VM **must** terminate TLS and forward to the loopback container — NV Tools only runs the
+*auth* proxy; it still needs a reachable `https://<hostname>` upstream on your VM.
+
+Edit `deploy/Caddyfile` and set your hostname, then install it:
 
 ```bash
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
-# edit: replace your-nvbr-hostname.example with the hostname the admin assigns
+sudo nano /etc/caddy/Caddyfile     # replace your-nvbr-hostname.example with the real hostname
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Caddy auto-provisions a Let's Encrypt cert once DNS for the hostname points at the VM. It
-forwards to `127.0.0.1:8000` and leaves the prefix + `Authorization`/`X-User-*` headers
-untouched (default `reverse_proxy` behaviour — do **not** use `handle_path`). The container
-binds loopback only; the sole inbound ports open on the VM should be `443` and SSH.
+Dedicated hostname (simplest) — passes every path through to the app:
 
-### 4. Hand off to the NV Tools admin
+```caddyfile
+br.your-vm-hostname.example {
+	reverse_proxy http://127.0.0.1:8000
+}
+```
+
+Sharing one hostname with other NV apps — match the prefix (do **not** use `handle_path`, which
+strips the prefix the app needs):
+
+```caddyfile
+your-vm-hostname.example {
+	@nvbr path /fc/br /fc/br/*
+	reverse_proxy @nvbr 127.0.0.1:8000
+	# ... other apps' matchers ...
+}
+```
+
+Caddy auto-provisions a Let's Encrypt cert once DNS for the hostname points at the VM, and leaves
+the prefix + `Authorization`/`X-User-*` headers untouched (default `reverse_proxy` behaviour).
+
+### Step 5 — Hand off to the NV Tools admin
 
 Give them the VM's **public IP** and hostname. They set DNS, point NV Tools at your
-`https://<hostname>` upstream, and confirm the bearer matches `NV_TOKEN`.
+`https://<hostname>` upstream under the agreed prefix, and confirm the bearer matches `NV_TOKEN`.
 
-### 5. Verify (in order)
+### Step 6 — Verify (in order)
 
 ```bash
 # App enforces auth on loopback (health is open; /api/* needs the bearer)
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/br/healthz   # 200
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/br/api/me    # 401
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/fc/br/healthz   # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/fc/br/api/me    # 401
 
 # Through Caddy over TLS
-curl -is https://<hostname>/br/api/me | head -1                             # 401 → Caddy reaches the app
+curl -is https://<hostname>/fc/br/api/me | head -1                             # 401 → Caddy reaches the app
 
 # With the bearer + identity headers → 200 and the CSP header present
 curl -is -H "Authorization: Bearer <NV_TOKEN>" -H "X-User-Name: You" \
-     -H "X-User-Rank: CEO" https://<hostname>/br/api/me \
+     -H "X-User-Rank: CEO" https://<hostname>/fc/br/api/me \
   | grep -iE "HTTP/|content-security-policy"
 ```
 
@@ -218,48 +271,113 @@ never did (DNS / Caddy / `:443` missing).
 ### Updating a deployment
 
 ```bash
-cd deploy && git pull && docker compose up -d --build
+cd evebattlehistory && git pull
+cd deploy && docker compose up -d --build
 ```
 
-The SQLite DB and logs live in the `nvbr_data` volume and survive rebuilds.
+The SQLite DB and uploaded logs live in the `nvbr_data` volume and survive rebuilds. Because raw
+logs are retained, parser improvements can be applied retroactively:
+
+```bash
+docker compose exec nvbr python -m app.logs.reparse     # re-parse all stored logs in place
+```
 
 ---
 
 ## Backups (rclone → Google Drive)
 
-An optional sidecar takes a daily WAL-consistent SQLite snapshot (online-backup API — no lock
-on the live DB), copies uploaded logs, and pushes to a dedicated Google Drive folder.
+An optional sidecar takes a daily WAL-consistent SQLite snapshot (online-backup API — no lock on
+the live DB), copies the uploaded logs alongside it, and pushes both to a dedicated Google Drive
+folder via rclone. The DB **and** the raw logs are in every snapshot, so a restore can re-parse
+everything if the parser changes.
 
-### One-time setup
+### Step 1 — Create a dedicated Google account & folder
 
-1. Install rclone (or use the one baked into the image) and authenticate a **dedicated**
-   corporate Google account: `rclone config` → new remote named `nvbr-gdrive` (type `drive`),
-   targeting an isolated sub-folder.
-2. Copy the resulting config to `deploy/rclone-config/rclone.conf` (mount the **directory**, not
-   the file, so rclone can rewrite it on OAuth token refresh).
+Use a **dedicated corporate Google account** (not a personal one) so retention only ever touches
+these snapshots. In its Google Drive, create an isolated folder, e.g. `nvbr/backups`.
 
-### Settings (`deploy/.env`)
+### Step 2 — Authenticate rclone (headless VM)
+
+A VM has no browser, so do the OAuth dance on a **desktop with a browser**, then copy the token
+to the VM. (Full detail: <https://rclone.org/remote_setup/>.)
+
+**On your laptop/desktop** (with rclone installed):
+
+```bash
+rclone authorize "drive"
+# A browser opens → log in as the dedicated account → approve.
+# rclone prints a JSON token blob. Copy it.
+```
+
+**On the VM**, run the interactive config and paste that token when asked:
+
+```bash
+rclone config
+#  n) New remote
+#  name> nvbr-gdrive
+#  Storage> drive
+#  client_id / client_secret> (blank is fine)
+#  scope> 1   (Full access)  — or "drive.file" to scope to rclone-created files only
+#  Edit advanced config? > n
+#  Use auto config? > n          ← important on a headless box
+#  config_token> <paste the JSON token from rclone authorize>
+#  Configure this as a Shared Drive? > n
+#  y) Yes this is OK
+#  q) Quit config
+```
+
+Verify the remote works and can see the folder:
+
+```bash
+rclone lsd nvbr-gdrive:nvbr      # should list the "backups" folder (create it if missing)
+rclone mkdir nvbr-gdrive:nvbr/backups
+```
+
+### Step 3 — Place the rclone config where the sidecar can read it
+
+```bash
+mkdir -p deploy/rclone-config
+cp ~/.config/rclone/rclone.conf deploy/rclone-config/rclone.conf
+```
+
+> Mount the **directory** (`deploy/rclone-config/`), never the single file — rclone rewrites
+> `rclone.conf` in place when it refreshes the OAuth token, which fails on a bind-mounted file.
+> The compose `backup` service already mounts the directory and runs as root so it can read it.
+
+### Step 4 — Configure backup settings in `deploy/.env`
 
 | Var | Default | Description |
 |---|---|---|
-| `BACKUP_RCLONE_REMOTE` | *(empty — disabled)* | e.g. `nvbr-gdrive:nvbr/backups` |
-| `BACKUP_KEEP` | `30` | Daily snapshots to retain |
-| `BACKUP_HOUR` | `3` | UTC hour to run |
-| `RESTORE_ON_START` | `false` | On boot, pull the latest snapshot if the DB is absent |
+| `BACKUP_RCLONE_REMOTE` | *(empty — disabled)* | Destination, e.g. `nvbr-gdrive:nvbr/backups` |
+| `BACKUP_KEEP` | `30` | Daily snapshots to retain (older ones are purged) |
+| `BACKUP_HOUR` | `3` | UTC hour to run the daily backup |
+| `RESTORE_ON_START` | `false` | On boot, pull the latest snapshot **if the local DB is absent** |
 
-### Run with backups
+Set at minimum: `BACKUP_RCLONE_REMOTE=nvbr-gdrive:nvbr/backups`.
+
+### Step 5 — Start with the backup sidecar
 
 ```bash
-cd deploy && docker compose --profile backup up -d
+cd deploy && docker compose --profile backup up -d --build
+```
+
+### Verify & operate
+
+```bash
+# Run a backup immediately (don't wait for the scheduled hour):
+docker compose exec backup python -m app.backup
+# Confirm a timestamped snapshot landed on Drive:
+docker compose exec backup rclone lsf nvbr-gdrive:nvbr/backups
 ```
 
 - **Backup:** `python -m app.backup` snapshots the DB + logs and pushes to
-  `<BACKUP_RCLONE_REMOTE>/<YYYYMMDD-HHMMSS>/`; older snapshots beyond `BACKUP_KEEP` are purged.
-- **Restore on startup:** if `RESTORE_ON_START=true` and the DB is absent, the latest snapshot
-  is pulled before models initialise. A failed restore logs and continues with a fresh DB —
-  it never blocks startup.
-- **Sidecar:** `scripts/backup-loop.sh` sleeps until `BACKUP_HOUR:00 UTC` daily, then runs the
-  backup; a failed run logs and continues.
+  `<BACKUP_RCLONE_REMOTE>/<YYYYMMDD-HHMMSS>/`; snapshots beyond `BACKUP_KEEP` are purged.
+- **Daily sidecar:** `scripts/backup-loop.sh` sleeps until `BACKUP_HOUR:00 UTC`, then runs the
+  backup; a failed run logs and continues (never crashes the loop).
+- **Restore on startup:** with `RESTORE_ON_START=true`, a fresh VM (empty `nvbr_data` volume)
+  pulls the latest snapshot before the models initialise. A failed restore logs and continues
+  with a fresh DB — it never blocks startup. To force a restore, stop the app, clear the volume,
+  set `RESTORE_ON_START=true`, and start again.
 
 ---
 

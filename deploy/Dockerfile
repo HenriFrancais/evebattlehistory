@@ -1,9 +1,9 @@
 # Multistage build: 1) Vite frontend, 2) Python runtime with rclone.
 #
 # Build args:
-#   VITE_URL_PREFIX  — e.g. "/br". Must match Settings.url_prefix at runtime.
+#   VITE_URL_PREFIX  — e.g. "/fc/br". Must match Settings.url_prefix at runtime.
 
-ARG VITE_URL_PREFIX=/br
+ARG VITE_URL_PREFIX=/fc/br
 
 # ── Stage 1: Build the Vite SPA ─────────────────────────────────────────────
 FROM node:22-slim AS frontend-build

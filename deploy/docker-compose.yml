@@ -12,12 +12,12 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       args:
-        VITE_URL_PREFIX: ${URL_PREFIX:-/br}
+        VITE_URL_PREFIX: ${URL_PREFIX:-/fc/br}
     image: nvbr:latest
     restart: unless-stopped
     env_file: .env
     environment:
-      URL_PREFIX: ${URL_PREFIX:-/br}
+      URL_PREFIX: ${URL_PREFIX:-/fc/br}
       DB_PATH: /app/var/db/nvbr.db
       LOG_DIR: /app/var/logs
     volumes:
@@ -25,7 +25,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000${URL_PREFIX:-/br}/healthz"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000${URL_PREFIX:-/fc/br}/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
