@@ -38,6 +38,11 @@ COPY app ./app
 COPY scripts ./scripts
 RUN uv pip install --system --no-cache .
 
+# Runtime data assets read from disk at /app/data (e.g. capital_ships.json,
+# loaded by app/fights/capitals.py). Not part of the installed wheel, so copy
+# explicitly. Placed after the install so editing data doesn't bust that layer.
+COPY data ./data
+
 # Copy the built SPA from stage 1.
 COPY --from=frontend-build /src/frontend/dist ./frontend/dist
 
