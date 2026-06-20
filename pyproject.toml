@@ -13,6 +13,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
+    "gunicorn>=23.0",   # prod process manager; runs uvicorn workers (deploy/Dockerfile CMD)
 ]
 
 [build-system]
