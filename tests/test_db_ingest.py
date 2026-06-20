@@ -104,6 +104,26 @@ async def test_foreign_keys_pragma_on(tmp_path):
     reset_engine_for_tests()
 
 
+# Test 3c: busy_timeout PRAGMA is set so concurrent writers wait, not 500
+@pytest.mark.asyncio
+async def test_busy_timeout_pragma_set(tmp_path):
+    from sqlalchemy import text
+
+    from app.config import Settings
+    from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+
+    reset_engine_for_tests()
+    settings = Settings(db_path=tmp_path / "bt_test.db", demo_data_dir=Path("./data_demo"))
+    await init_models(settings)
+
+    session_maker = get_sessionmaker(settings)
+    async with session_maker() as session:
+        value = (await session.execute(text("PRAGMA busy_timeout"))).scalar()
+
+    assert value == 5000, f"Expected PRAGMA busy_timeout=5000, got {value!r}"
+    reset_engine_for_tests()
+
+
 # Test 4: persist_killmails creates killmails from demo fixtures
 # Uses an explicit fixed list of the 5 original demo-battle killmail files
 # (km_101..km_105) so that adding new fixture files doesn't silently change

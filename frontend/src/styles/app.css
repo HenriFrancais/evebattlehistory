@@ -70,33 +70,17 @@ a:hover { color: var(--link-hover); }
   padding: 1rem;
 }
 
-nav {
+/* Dev-only floating impersonation control (no app header — embedded in iframe). */
+.dev-bar {
+  position: fixed;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  z-index: 50;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  padding: 0.5rem 1rem;
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-}
-
-nav a {
-  color: var(--text);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-nav a:hover { color: var(--accent); }
-
-.nav-title {
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 1rem;
-}
-
-.nav-coming-soon {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  cursor: default;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
 .badge {
@@ -114,30 +98,38 @@ nav a:hover { color: var(--accent); }
 .badge-source { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
 .badge-pending { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
 
-.br-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.br-card:hover { border-color: var(--accent); }
-
-.br-card-title { font-size: 1rem; font-weight: 600; }
-.br-card-title a { color: var(--text); text-decoration: none; }
-.br-card-title a:hover { color: var(--accent); }
-
-.br-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
+/* Battle-report timeline table */
+.tl-month { margin-top: 1.25rem; }
+.tl-month-head {
+  font-size: 0.95rem;
+  font-weight: 600;
   color: var(--text-dim);
-  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
 }
+.tl-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.tl-table th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.tl-table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.tl-table tr:hover td { background: var(--panel-2); }
+.tl-table .tl-num { text-align: right; white-space: nowrap; }
+.tl-table .tl-center { text-align: center; }
+.tl-title { color: var(--text); text-decoration: none; font-weight: 600; }
+.tl-title:hover { color: var(--accent); }
+.tl-sub { font-size: 0.72rem; }
+.tl-logs { white-space: nowrap; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.1rem; }
 
 .win-rate-summary {
   background: var(--panel);
@@ -385,6 +377,8 @@ nav a:hover { color: var(--accent); }
 .focus-list { display: flex; flex-direction: column; gap: 0.45rem; overflow: visible; max-height: none; }
 .focus-card { border: 1px solid var(--border); border-radius: 5px; padding: 0.3rem 0.4rem; background: var(--panel); }
 .focus-card-head { font-size: 0.8rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 0.2rem; }
+.snap-fam { margin: 0.1rem 0 0.25rem; }
+.snap-fam-head { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0.2rem 0 0.05rem; }
 .focus-row { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; line-height: 1.6; }
 .contrib-eff-icon { flex: none; border-radius: 2px; }
 .contrib-eff-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); flex: none; }

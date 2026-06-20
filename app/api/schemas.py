@@ -92,6 +92,17 @@ class BrSummary(BaseModel):
     fight_count: int
     battle_at: dt.datetime | None
     created_at: dt.datetime
+    # Timeline-list extras (populated by list/filter endpoints; default elsewhere).
+    systems: list[str] = []
+    our_name: str | None = None
+    opponent_name: str | None = None
+    friendly_pilots: int = 0
+    enemy_pilots: int = 0
+    you_present: bool = False
+    your_present: int = 0
+    your_logged: int = 0
+    roster_present: int = 0
+    roster_logged: int = 0
 
 
 class BrDetail(BrSummary):

@@ -1,11 +1,11 @@
 """FastAPI router for POST /api/fights/filter and POST /api/brs/filter."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
 from app.analytics.filters import FilterError, compile_br_filter, compile_fight_filter
-from app.api.brs import _br_to_summary, compute_br_summary
+from app.api.brs import _br_to_summary, compute_br_summary, enrich_summaries
 from app.api.deps import SessionDep
 from app.api.schemas import (
     BrFilterRequest,
@@ -84,7 +84,9 @@ async def filter_fights(body: FightFilterRequest, session: SessionDep) -> list[F
 
 
 @router.post("/api/brs/filter")
-async def filter_brs(body: BrFilterRequest, session: SessionDep) -> FilteredBrResponse:
+async def filter_brs(
+    body: BrFilterRequest, session: SessionDep, request: Request
+) -> FilteredBrResponse:
     try:
         stmt = compile_br_filter(body.tree)
     except FilterError as exc:
@@ -94,5 +96,5 @@ async def filter_brs(body: BrFilterRequest, session: SessionDep) -> FilteredBrRe
     brs = list(result.scalars())
 
     summary = compute_br_summary(brs)
-    br_list = [_br_to_summary(b) for b in brs]
+    br_list = await enrich_summaries(session, request, [_br_to_summary(b) for b in brs])
     return FilteredBrResponse(summary=summary, brs=br_list)

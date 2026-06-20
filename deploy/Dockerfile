@@ -69,4 +69,4 @@ USER appuser
 CMD ["sh", "-c", \
      "mkdir -p /app/var/sde \
       && cp -n /app/sde-baked/inventory_types.jsonl /app/sde-baked/manifest.json /app/var/sde/ 2>/dev/null || true; \
-      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 2 -b 127.0.0.1:8000"]
+      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4 -b 127.0.0.1:8000"]

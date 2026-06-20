@@ -88,11 +88,11 @@ export function SidesEditor({ brId, onChange }: { brId: string; onChange?: () =>
 
   return (
     <div data-testid="sides-editor">
-      <p className="dim" style={{ fontSize: '0.82rem', margin: '0 0 0.5rem' }}>
-        {sides.can_edit
-          ? 'Move entities between sides with the arrows. NV blues start friendly; everyone else starts unassigned. Assigning sides drives the kill colours and per-fight ISK lost.'
-          : 'Side assignment is managed by FC / High Command.'}
-      </p>
+      {!sides.can_edit && (
+        <p className="dim" style={{ fontSize: '0.82rem', margin: '0 0 0.5rem' }}>
+          Side assignment is managed by FC / High Command.
+        </p>
+      )}
       <div className="sides-columns">
         {COLUMNS.map((col) => {
           const entities = sides.entities.filter((e) => e.side === col.side)

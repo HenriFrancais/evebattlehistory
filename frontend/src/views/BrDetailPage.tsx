@@ -49,7 +49,7 @@ function MyCoverageSection({ id }: { id: string }) {
       {myCoverage.characters.length === 0 ? (
         <p className="dim">No characters found.</p>
       ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.35rem' }}>
           {myCoverage.characters.map((char) => (
             <div key={char.character_id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <Link to={`/brs/${id}/characters/${char.character_id}`} style={{ fontWeight: 500 }}>
@@ -513,7 +513,7 @@ export function BrDetailPage() {
     <div className="page">
       <div className="page-header">
         <div>
-          <Link to="/" className="dim" style={{ fontSize: '0.85rem' }}>← Timeline</Link>
+          <Link to="/" className="dim" style={{ fontSize: '0.85rem' }}>← Overview</Link>
           {canCreate ? (
             <EditableTitle
               brId={br.br_id}
@@ -525,19 +525,15 @@ export function BrDetailPage() {
           )}
         </div>
         {canCreate && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <button
-              data-testid="refresh-btn"
-              className="btn"
-              disabled={refreshing}
-              onClick={() => { void handleRefresh() }}
-              title="Pulls in late kills"
-              style={{ fontSize: '0.85rem' }}
-            >
-              {refreshing ? 'Refreshing…' : '↻ Refresh'}
-            </button>
-            <span className="dim" style={{ fontSize: '0.8rem' }}>Pulls in late kills</span>
-          </div>
+          <button
+            data-testid="refresh-btn"
+            className="btn"
+            disabled={refreshing}
+            onClick={() => { void handleRefresh() }}
+            style={{ fontSize: '0.85rem' }}
+          >
+            {refreshing ? 'Refreshing…' : '↻ Refresh'}
+          </button>
         )}
       </div>
 

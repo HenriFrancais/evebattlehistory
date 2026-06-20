@@ -106,3 +106,46 @@ async def test_sides_get_and_override_flow(tmp_path, monkeypatch) -> None:  # ty
         assert ents[ENEMY_ALLI]["overridden"] is False
 
     reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_sides_override_updates_br_summary(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Moving an entity between sides re-derives the BR headline ISK / result."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+    from app.main import create_app
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear(); get_app_config.cache_clear(); reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+    sm = get_sessionmaker(settings)
+    async with sm() as session:
+        br_id = await _seed(session)
+        await session.commit()
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        # The single kill is an enemy loss worth 1.0 ISK.
+        # Mark the alliance hostile → we destroyed it.
+        client.put(f"/api/brs/{br_id}/sides", headers=CREATOR_HEADERS,
+                   json={"entity_type": "alliance", "entity_id": ENEMY_ALLI, "side": "hostile"})
+        br = client.get(f"/api/brs/{br_id}").json()
+        assert br["our_isk_destroyed"] == pytest.approx(1.0)
+        assert br["our_isk_lost"] == pytest.approx(0.0)
+        assert br["isk_efficiency"] == pytest.approx(1.0)
+        assert br["result"] == "win"
+
+        # Move it to friendly → that ISK now counts as our loss.
+        client.put(f"/api/brs/{br_id}/sides", headers=CREATOR_HEADERS,
+                   json={"entity_type": "alliance", "entity_id": ENEMY_ALLI, "side": "friendly"})
+        br = client.get(f"/api/brs/{br_id}").json()
+        assert br["our_isk_destroyed"] == pytest.approx(0.0)
+        assert br["our_isk_lost"] == pytest.approx(1.0)
+        assert br["isk_efficiency"] == pytest.approx(0.0)
+        assert br["result"] == "loss"
+
+    reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()

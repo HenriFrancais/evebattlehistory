@@ -27,6 +27,11 @@ def _register_pragma_listener(engine: AsyncEngine) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        # Wait up to 5s for a held write lock instead of failing instantly with
+        # SQLITE_BUSY ("database is locked"). Essential under concurrency: WAL
+        # permits concurrent readers but only one writer, so a reader/writer that
+        # meets an in-flight commit must wait rather than 500.
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 

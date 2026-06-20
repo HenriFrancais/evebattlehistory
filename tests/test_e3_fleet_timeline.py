@@ -538,6 +538,38 @@ async def test_fleet_contributions_source_target(db_session_maker) -> None:  # t
     assert [r.value for r in rows] == sorted((r.value for r in rows), reverse=True)
 
 
+async def test_fleet_snapshot_character_id_scopes_to_one_pilot(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """fleet_snapshot(character_id=…) returns only that character's log perspective."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import GamelogFile, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        ts = BUCKET_TS_1
+        for cid, sha in ((CHAR_A, "aa"), (CHAR_B, "bb")):
+            gf = GamelogFile(uploaded_by_user="u", claimed_character_id=cid, resolved_via="filename",
+                             stored_path=f"/{sha}", sha256=sha, mime="text/plain", size=1,
+                             parse_status="parsed", event_count=1,
+                             uploaded_at=_dt.datetime.now(_dt.UTC))
+            session.add(gf)
+            await session.flush()
+            session.add(LogEvent(file_id=gf.file_id, character_id=cid, ts=ts,
+                                 effect_type="damage", direction="out", amount=100.0,
+                                 other_name=f"Enemy-of-{cid}", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        all_rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+        a_rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings(), character_id=CHAR_A)
+
+    assert {r.source_character_id for r in all_rows} == {CHAR_A, CHAR_B}
+    assert {r.source_character_id for r in a_rows} == {CHAR_A}
+
+
 async def test_clean_target_name_strips_tags() -> None:
     from app.analytics.fleet import _clean_target_name
 

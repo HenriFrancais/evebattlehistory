@@ -22,6 +22,7 @@ from collections import defaultdict
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.sides_config import recompute_br_outcome
 from app.db.models import (
     BattleReport,
     BrFight,
@@ -40,7 +41,7 @@ from app.db.models import (
 from app.fights.capitals import is_capital_type_name
 from app.fights.cluster import FightCluster, cluster_kills
 from app.fights.labelling import SideInfo, label_sides
-from app.fights.outcomes import SideStats, classify_br_result, compute_fight_sides
+from app.fights.outcomes import SideStats, compute_fight_sides
 from app.fights.sides import SideResult, assign_sides
 from app.observability.logging import log
 
@@ -210,8 +211,6 @@ async def aggregate_br(
     clusters: list[FightCluster] = cluster_kills(wrapped)  # type: ignore[arg-type]
 
     # 4. Process each fight cluster
-    br_our_destroyed = 0.0
-    br_our_lost = 0.0
     fight_seq = 0
     earliest_start: dt.datetime | None = None
 
@@ -331,14 +330,9 @@ async def aggregate_br(
                     fight.capitals_involved = True
                     break
 
-        # Accumulate BR-level ISK by side_kind
+        # Accumulate BR-level ship counts by side_kind (used by the ship_fielded filter).
         for side_idx, sd in per_side_stats.items():
             side_kind = labels.get(side_idx)
-            if side_kind == "friendly":
-                br_our_lost += sd.isk_lost
-            elif side_kind == "hostile":
-                br_our_destroyed += sd.isk_lost
-
             if side_kind is not None:
                 for ship_id, cnt in sd.ship_counts.items():
                     br_ship_accumulator[(side_kind, ship_id)] += cnt
@@ -351,32 +345,29 @@ async def aggregate_br(
             br_id=br_id, side_kind=side_kind, ship_type_id=ship_id, count=cnt
         ))
 
-    # BR-level efficiency and result
-    isk_eff: float | None = (
-        br_our_destroyed / (br_our_destroyed + br_our_lost)
-        if (br_our_destroyed + br_our_lost) > 0
-        else None
-    )
-    br_result = classify_br_result(br_our_destroyed, br_our_lost)
-
-    # Update BattleReport
-    br_row_result = await session.execute(
-        select(BattleReport).where(BattleReport.br_id == br_id)
-    )
-    br_row = br_row_result.scalar_one_or_none()
+    # Set battle window + fight count, then derive the ISK / result headline from
+    # the per-entity side allocation (baseline blues + overrides) — the same basis
+    # the Sides editor and per-fight stats use, so the summary stays consistent.
+    br_row = (
+        await session.execute(select(BattleReport).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
     if br_row is not None:
-        br_row.our_isk_destroyed = br_our_destroyed
-        br_row.our_isk_lost = br_our_lost
-        br_row.isk_efficiency = isk_eff
-        br_row.result = br_result
         br_row.battle_at = earliest_start
         br_row.fight_count = fight_seq
+
+    await session.flush()
+    outcome = await recompute_br_outcome(
+        session,
+        br_id,
+        baseline_alliances=our_alliance_set,
+        baseline_corps=our_corp_set,
+    )
 
     await session.flush()
     log.info(
         "aggregate_br.done",
         br_id=br_id,
         fight_count=fight_seq,
-        result=br_result,
-        isk_efficiency=isk_eff,
+        result=outcome["result"],
+        isk_efficiency=outcome["isk_efficiency"],
     )

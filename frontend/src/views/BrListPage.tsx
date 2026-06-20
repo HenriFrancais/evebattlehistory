@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type BrListResponse, type FilteredBrResponse, type FilterGroup, type MeResponse, api } from '../api'
-import { BrCard } from '../components/BrCard'
+import { BrTimelineTable } from '../components/BrTimelineTable'
 import { FilterBuilder } from '../components/FilterBuilder'
 import { WinRateSummary } from '../components/WinRateSummary'
 
@@ -44,22 +44,20 @@ export function BrListPage() {
 
   const displayData = filteredData ?? data
 
-  // Sort newest battle first
-  const sorted = [...displayData.brs].sort((a, b) => {
-    const ta = a.battle_at ?? a.created_at
-    const tb = b.battle_at ?? b.created_at
-    return tb.localeCompare(ta)
-  })
-
   return (
     <div className="page">
       <div className="page-header">
-        <h1 style={{ margin: 0 }}>Battle Report Timeline</h1>
-        {me.can_create_br && (
-          <Link to="/brs/new" className="btn btn-primary" data-testid="new-br-btn">
-            + New Battle Report
+        <h1 style={{ margin: 0 }}>Overview</h1>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <Link to="/logs" className="btn" data-testid="logs-btn">
+            Logs
           </Link>
-        )}
+          {me.can_create_br && (
+            <Link to="/brs/new" className="btn btn-primary" data-testid="new-br-btn">
+              + New Battle Report
+            </Link>
+          )}
+        </div>
       </div>
 
       <details>
@@ -82,8 +80,7 @@ export function BrListPage() {
       )}
 
       <WinRateSummary summary={displayData.summary} />
-      {sorted.length === 0 && <p className="dim">No battle reports yet.</p>}
-      {sorted.map((br) => <BrCard key={br.br_id} br={br} />)}
+      <BrTimelineTable brs={displayData.brs} />
     </div>
   )
 }

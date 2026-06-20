@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.composition import fleet_composition
 from app.analytics.fleet import fleet_snapshot, fleet_timeline
 from app.analytics.sides_config import load_overrides
-from app.api.access import acting_user
+from app.api.access import acting_user, can_view_character
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
 from app.api.schemas import (
@@ -102,6 +102,51 @@ async def get_snapshot(
     """All source→target activity in the half-open window [from_ts, to_ts)."""
     await _require_br(br_id, session)
     contribs = await fleet_snapshot(session, br_id, from_ts, to_ts, get_settings())
+    return ContributionsOut(
+        from_ts=from_ts,
+        to_ts=to_ts,
+        rows=[
+            ContributionOut(
+                source_character_id=c.source_character_id,
+                source_name=c.source_name,
+                target_name=c.target_name,
+                target_ship=c.target_ship,
+                effect_type=c.effect_type,
+                direction=c.direction,
+                group=c.group,
+                value=c.value,
+                module_name=c.module_name,
+                icon_type_id=c.icon_type_id,
+                weapon_category=c.weapon_category,
+                quality=c.quality,
+            )
+            for c in contribs
+        ],
+    )
+
+
+@router.get("/api/brs/{br_id}/characters/{character_id}/snapshot")
+async def get_character_snapshot(
+    br_id: str,
+    character_id: int,
+    request: Request,
+    session: SessionDep,
+    from_ts: int,
+    to_ts: int,
+) -> ContributionsOut:
+    """One character's source↔target activity in [from_ts, to_ts).
+
+    Access-gated like the per-character timeline: elevated users (FC/HC) may view
+    anyone; others only their own characters.
+    """
+    await _require_br(br_id, session)
+    settings = get_settings()
+    acting = await acting_user(request, settings)
+    if not await can_view_character(acting, character_id, settings):
+        raise HTTPException(status_code=403, detail="Not permitted to view this character")
+    contribs = await fleet_snapshot(
+        session, br_id, from_ts, to_ts, settings, character_id=character_id
+    )
     return ContributionsOut(
         from_ts=from_ts,
         to_ts=to_ts,

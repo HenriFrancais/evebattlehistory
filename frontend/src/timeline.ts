@@ -1,62 +1,38 @@
-// Pure transform: CharacterTimeline API response → uPlot data + series config.
-// No uPlot import — this module is unit-tested in jsdom without canvas.
+// Pure transform: CharacterTimeline API response → FleetTimeline shape so the
+// shared FleetGraphCore can render a single pilot. Unit-tested in jsdom (no canvas).
 
-import type { CharacterTimeline, TimelineSeriesItem } from './api'
+import type { CharacterTimeline, FleetTimeline } from './api'
 
-export interface SeriesConfig {
-  key: string
-  label: string
-  stroke: string
-  direction: 'in' | 'out' | null
-}
-
-export interface UplotData {
-  data: (number | null)[][]
-  seriesConfig: SeriesConfig[]
-}
-
-// Colour palette: warm = outgoing (damage out, regen out), cool = incoming
-// Uses a small rotating palette per direction so multiple series of the same
-// direction get distinguishable colours.
-const WARM = ['#ff7043', '#ffa726', '#ffca28', '#ef5350']
-const COOL = ['#42a5f5', '#26c6da', '#66bb6a', '#ab47bc']
-const NEUTRAL = ['#8893a7', '#b0bec5', '#cfd8dc']
-
-function pickColour(item: TimelineSeriesItem, idxInDirection: number): string {
-  if (item.direction === 'out') return WARM[idxInDirection % WARM.length]
-  if (item.direction === 'in') return COOL[idxInDirection % COOL.length]
-  return NEUTRAL[idxInDirection % NEUTRAL.length]
-}
-
-function makeLabel(item: TimelineSeriesItem): string {
-  const type = item.effect_type ?? 'unknown'
-  const dir = item.direction
-  if (dir === 'out') return `${type} out`
-  if (dir === 'in') return `${type} in`
-  return type
-}
-
-export function toUplotData(timeline: CharacterTimeline): UplotData {
-  const xs = timeline.x
-
-  const outCount: Record<string, number> = { out: 0, in: 0, null: 0 }
-
-  const data: (number | null)[][] = [xs]
-  const seriesConfig: SeriesConfig[] = []
-
-  for (const s of timeline.series) {
-    const dirKey = s.direction ?? 'null'
-    const idxInDir = outCount[dirKey] ?? 0
-    outCount[dirKey] = idxInDir + 1
-
-    data.push(s.values)
-    seriesConfig.push({
-      key: s.key,
-      label: makeLabel(s),
-      stroke: pickColour(s, idxInDir),
-      direction: s.direction === 'in' ? 'in' : s.direction === 'out' ? 'out' : null,
-    })
+/** Smallest positive gap between consecutive x values (bucket width), or 5s default. */
+function deriveBucketSeconds(x: number[]): number {
+  let min = Infinity
+  for (let i = 1; i < x.length; i++) {
+    const d = x[i] - x[i - 1]
+    if (d > 0 && d < min) min = d
   }
+  return Number.isFinite(min) ? min : 5
+}
 
-  return { data, seriesConfig }
+/**
+ * Adapt a per-character timeline into the FleetTimeline shape so the shared
+ * FleetGraphCore (families/smoothing/toggles) can render it. No kill markers
+ * (those are fleet-level). The effect_type/direction vocabulary matches the
+ * fleet families, so toFleetView groups them identically.
+ */
+export function toFleetTimeline(ct: CharacterTimeline): FleetTimeline {
+  return {
+    x: ct.x,
+    series: ct.series.map((s) => ({
+      key: s.key,
+      effect_type: s.effect_type ?? '',
+      direction: s.direction ?? '',
+      metric: 'amount',
+      values: s.values,
+    })),
+    kills: [],
+    fights: ct.fights,
+    bucket_seconds: deriveBucketSeconds(ct.x),
+    t_start: ct.t_start,
+    t_end: ct.t_end,
+  }
 }

@@ -29,7 +29,7 @@ import datetime as dt
 import re
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import classify_entity
@@ -47,6 +47,7 @@ from app.db.models import (
     LogEventBucket,
 )
 from app.observability.logging import log
+from app.roster.snapshot import get_roster_store
 
 # Effect → panel group (matches the frontend grouping).
 _EFFECT_GROUP: dict[str, str] = {
@@ -88,8 +89,14 @@ class Contribution:
 async def _resolve_char_names(
     session: AsyncSession, settings: Settings, char_ids: set[int]
 ) -> dict[int, str]:
-    """Resolve character ids → names: DB Character first, then ESI for the rest
-    (persisting newly-resolved names back to Character as a cache)."""
+    """Resolve character ids → names without any network call or write.
+
+    Reads persisted ``Character`` rows (populated at ingest) first, then falls
+    back to the in-memory roster snapshot for log-only roster members. Runs on
+    read (GET) endpoints, so it must NOT hit ESI or commit — that would block the
+    event loop and take a write lock under concurrency. Unresolved ids are left
+    out (callers render ``Char {id}``).
+    """
     if not char_ids:
         return {}
     names: dict[int, str] = {}
@@ -102,34 +109,34 @@ async def _resolve_char_names(
     missing = [cid for cid in char_ids if cid not in names]
     if missing:
         try:
-            if settings.data_source == "demo":
-                from app.esi.demo import DemoEsiClient
-
-                esi: object = DemoEsiClient(settings.demo_data_dir)
-            else:
-                from app.esi.client import get_esi_client
-
-                esi = get_esi_client(settings)
-            resolved = await esi.resolve_names(missing)  # type: ignore[attr-defined]
-            now = dt.datetime.now(dt.UTC)
-            for cid, info in resolved.items():
-                nm = info.get("name") if isinstance(info, dict) else None
-                if not nm:
-                    continue
-                names[cid] = nm
-                await session.merge(Character(character_id=cid, name=nm, last_seen_at=now))
-            await session.commit()
-        except Exception as exc:  # network/ESI failure — fall back to ids
-            log.warning("contributions.name_resolve_failed", error=str(exc))
+            roster = await get_roster_store(settings).get()
+            roster_names = {
+                c.character_id: c.character_name for u in roster.users for c in u.characters
+            }
+            for cid in missing:
+                nm = roster_names.get(cid)
+                if nm:
+                    names[cid] = nm
+        except Exception as exc:  # roster unavailable — fall back to ids
+            log.warning("contributions.name_resolve_roster_failed", error=str(exc))
     return names
 
 
 async def fleet_snapshot(
-    session: AsyncSession, br_id: str, from_ts: int, to_ts: int, settings: Settings
+    session: AsyncSession,
+    br_id: str,
+    from_ts: int,
+    to_ts: int,
+    settings: Settings,
+    character_id: int | None = None,
 ) -> list[Contribution]:
-    """Break down ALL activity in the half-open window [from_ts, to_ts) into source→target
+    """Break down activity in the half-open window [from_ts, to_ts) into source→target
     rows, grouped by (source, target+ship, effect, direction), sorted by value desc. Damage
-    rows resolve a weapon icon and a dominant hit-quality. (from_ts > to_ts is swapped.)"""
+    rows resolve a weapon icon and a dominant hit-quality. (from_ts > to_ts is swapped.)
+
+    When *character_id* is given, only that character's log perspective is included
+    (their outgoing + incoming events) — the per-pilot snapshot.
+    """
     fight_ids = list(
         (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
     )
@@ -139,6 +146,15 @@ async def fleet_snapshot(
         from_ts, to_ts = to_ts, from_ts
     start = dt.datetime.fromtimestamp(from_ts, tz=dt.UTC).replace(tzinfo=None)
     end = dt.datetime.fromtimestamp(to_ts, tz=dt.UTC).replace(tzinfo=None)
+
+    conditions = [
+        LogEvent.fight_id.in_(fight_ids),
+        LogEvent.ts >= start,
+        LogEvent.ts < end,
+        LogEvent.effect_type.in_(_KNOWN_EFFECTS),
+    ]
+    if character_id is not None:
+        conditions.append(LogEvent.character_id == character_id)
 
     rows = (
         await session.execute(
@@ -151,12 +167,7 @@ async def fleet_snapshot(
                 LogEvent.amount,
                 LogEvent.module_name,
                 LogEvent.quality,
-            ).where(
-                LogEvent.fight_id.in_(fight_ids),
-                LogEvent.ts >= start,
-                LogEvent.ts < end,
-                LogEvent.effect_type.in_(_KNOWN_EFFECTS),
-            )
+            ).where(*conditions)
         )
     ).all()
 
@@ -262,13 +273,6 @@ _DIRECTION_ORDER = ("out", "in")
 
 def _metric_for(effect_type: str) -> str:
     return "count" if effect_type in _COUNT_EFFECTS else "amount"
-
-
-def _contribution(effect_type: str, sum_amount: float, event_count: int) -> float:
-    """Magnitude a bucket contributes to its series."""
-    if effect_type in _COUNT_EFFECTS:
-        return float(event_count)
-    return abs(sum_amount)
 
 
 def _series_sort_key(key: str) -> tuple[int, int]:
@@ -423,38 +427,48 @@ async def fleet_timeline(
             t_end=None,
         )
 
-    # 2. Fetch all LogEventBucket rows for all characters across all BR fights -----
-    bucket_rows = list(
-        (
-            await session.execute(
-                select(LogEventBucket).where(
-                    LogEventBucket.fight_id.in_(fight_ids),
-                )
+    # 2. Aggregate buckets in SQL: one row per (bucket_ts, effect, direction) across
+    #    all characters/fights. Amount effects use SUM(ABS(sum_amount)) (exactly the
+    #    prior per-row sum-of-abs); count effects use SUM(event_count). Equivalent to
+    #    the old Python loop but transfers far fewer rows and sums off the event loop.
+    agg_rows = (
+        await session.execute(
+            select(
+                LogEventBucket.bucket_ts,
+                LogEventBucket.effect_type,
+                LogEventBucket.direction,
+                func.sum(func.abs(LogEventBucket.sum_amount)).label("amt"),
+                func.sum(LogEventBucket.event_count).label("cnt"),
             )
-        ).scalars()
-    )
+            .where(
+                LogEventBucket.fight_id.in_(fight_ids),
+                LogEventBucket.effect_type.in_(_KNOWN_EFFECTS),
+                LogEventBucket.direction.in_(_DIRECTION_ORDER),
+            )
+            .group_by(
+                LogEventBucket.bucket_ts,
+                LogEventBucket.effect_type,
+                LogEventBucket.direction,
+            )
+        )
+    ).all()
 
-    # 3. Build x-axis from contributing (known-effect, directional) buckets --------
-    def _relevant(b: LogEventBucket) -> bool:
-        return b.effect_type in _KNOWN_EFFECTS and b.direction in _DIRECTION_ORDER
-
-    x_set: set[int] = {_epoch(b.bucket_ts) for b in bucket_rows if _relevant(b)}
+    # 3. Build x-axis from contributing buckets ------------------------------------
+    x_set: set[int] = {_epoch(bucket_ts) for bucket_ts, _e, _d, _a, _c in agg_rows}
     x: list[int] = sorted(x_set)
     x_index: dict[int, int] = {ts: i for i, ts in enumerate(x)}
 
-    # 4. Accumulate magnitudes into per-(effect,direction) value arrays ------------
+    # 4. Place per-(effect,direction) magnitudes into value arrays ------------------
     series_values: dict[str, list[float | None]] = {}
-    for b in bucket_rows:
-        if not _relevant(b):
-            continue
-        key = f"{b.effect_type}:{b.direction}"
+    for bucket_ts, effect, direction, amt, cnt in agg_rows:
+        key = f"{effect}:{direction}"
         arr = series_values.get(key)
         if arr is None:
             arr = [None] * len(x)
             series_values[key] = arr
-        idx = x_index[_epoch(b.bucket_ts)]
-        current = arr[idx]
-        arr[idx] = (current or 0.0) + _contribution(b.effect_type, b.sum_amount, b.event_count)
+        idx = x_index[_epoch(bucket_ts)]
+        value = float(cnt) if effect in _COUNT_EFFECTS else float(amt or 0.0)
+        arr[idx] = (arr[idx] or 0.0) + value
 
     series: list[FleetSeriesOut] = []
     for key in sorted(series_values, key=_series_sort_key):

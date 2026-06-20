@@ -1,4 +1,4 @@
-// Drop zone + file input; headline workflow is selecting a whole folder of logs.
+// Drop zone + multi-file input; pick one or more log files (or drag & drop them).
 // Shows per-file status chips after upload and summary counts.
 // Props: onUploaded: () => void (called after successful upload to refresh table)
 
@@ -92,7 +92,7 @@ export function BulkUploader({ onUploaded }: Props) {
         onDragLeave={handleDragLeave}
         onClick={() => inputRef.current?.click()}
       >
-        <p style={{ margin: 0, color: 'var(--text-dim)' }}>Select log folder or drag &amp; drop files</p>
+        <p style={{ margin: 0, color: 'var(--text-dim)' }}>Select log files or drag &amp; drop them</p>
         {files.length > 0 && (
           <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem' }}>
             {files.length} file{files.length !== 1 ? 's' : ''} selected
@@ -102,7 +102,6 @@ export function BulkUploader({ onUploaded }: Props) {
           ref={inputRef}
           type="file"
           multiple
-          {...{ webkitdirectory: '' }}
           style={{ display: 'none' }}
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
           aria-label="Select log files"

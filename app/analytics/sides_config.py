@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     Alliance,
+    BattleReport,
     BrFight,
     BrSideOverride,
     Corporation,
@@ -24,6 +25,7 @@ from app.db.models import (
     Killmail,
     KillmailAttacker,
 )
+from app.fights.outcomes import classify_br_result
 
 EntityKey = tuple[str, int]  # (entity_type, entity_id) where entity_type ∈ {"alliance","corp"}
 
@@ -141,6 +143,72 @@ async def fight_side_losses(
     for (fid, side), chars in pilots.items():
         out[fid][side]["pilots"] = len(chars)
     return out
+
+
+async def recompute_br_outcome(
+    session: AsyncSession,
+    br_id: str,
+    *,
+    baseline_alliances: set[int],
+    baseline_corps: set[int],
+) -> dict[str, float | str | None]:
+    """Re-derive a BR's headline stats from the current per-entity side allocation.
+
+    Unlike the ingest-time killmail 2-colouring, this uses the same friendly /
+    hostile / unassigned classification (baseline blues + FC/HC overrides) that
+    drives the per-fight ISK figures, so the BR summary stays consistent with the
+    Sides editor:
+
+    - ``our_isk_lost``       = ISK lost by the **friendly** side ("us").
+    - ``our_isk_destroyed``  = ISK lost by **everyone else** (hostile + unassigned)
+      — i.e. what we killed in the "us vs them" model.
+    - ``isk_efficiency``     = destroyed / (destroyed + lost), or ``None`` when 0.
+    - ``result``             = win / tie / loss via :func:`classify_br_result`.
+
+    Writes the values onto the BattleReport row (caller commits) and returns them.
+    """
+    fight_ids = list(
+        (
+            await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))
+        ).scalars()
+    )
+    overrides = await load_overrides(session, br_id)
+    losses = await fight_side_losses(
+        session,
+        fight_ids,
+        baseline_alliances=baseline_alliances,
+        baseline_corps=baseline_corps,
+        overrides=overrides,
+    )
+
+    our_lost = 0.0
+    our_destroyed = 0.0
+    for side_map in losses.values():
+        for side, agg in side_map.items():
+            if side == "friendly":
+                our_lost += agg["isk_lost"]
+            else:
+                our_destroyed += agg["isk_lost"]
+
+    denom = our_destroyed + our_lost
+    isk_eff: float | None = our_destroyed / denom if denom > 0 else None
+    result = classify_br_result(our_destroyed, our_lost)
+
+    br = (
+        await session.execute(select(BattleReport).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if br is not None:
+        br.our_isk_destroyed = our_destroyed
+        br.our_isk_lost = our_lost
+        br.isk_efficiency = isk_eff
+        br.result = result
+
+    return {
+        "our_isk_destroyed": our_destroyed,
+        "our_isk_lost": our_lost,
+        "isk_efficiency": isk_eff,
+        "result": result,
+    }
 
 
 async def br_entities(

@@ -10,7 +10,20 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.sql import Select
 
-from app.db.models import BattleReport, BrShipCount, Fight, FightShipCount, FightSide, InventoryType
+from app.db.models import (
+    Alliance,
+    BattleReport,
+    BrFight,
+    BrShipCount,
+    Corporation,
+    Fight,
+    FightKill,
+    FightShipCount,
+    FightSide,
+    InventoryType,
+    Killmail,
+    KillmailAttacker,
+)
 
 
 class FilterError(ValueError):
@@ -57,6 +70,44 @@ def _apply_num_op(col: Any, op: str, value: Any) -> Any:
     raise FilterError(f"Unknown numeric op: {op!r}")
 
 
+def _entity_involved_clause(node: dict[str, Any], *, scope: str) -> Any:
+    """Match BRs/fights where a corp or alliance name contains *name* (substring).
+
+    Searches both victims and attackers across the unit's killmails, case-insensitively.
+    ``scope`` is 'br' (correlate to BattleReport) or 'fight' (correlate to Fight).
+    """
+    name = node.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise FilterError("entity_involved leaf requires non-empty 'name' (str)")
+    pattern = f"%{name.strip().lower()}%"
+
+    def _exists(km_model: Any, join_cond: Any, name_model: Any) -> Any:
+        stmt = (
+            select(1)
+            .select_from(km_model)
+            .join(FightKill, FightKill.killmail_id == km_model.killmail_id)
+            .join(name_model, join_cond)
+            .where(func.lower(name_model.name).like(pattern))
+        )
+        if scope == "br":
+            stmt = stmt.join(BrFight, BrFight.fight_id == FightKill.fight_id).where(
+                BrFight.br_id == BattleReport.br_id
+            )
+        else:
+            stmt = stmt.where(FightKill.fight_id == Fight.fight_id)
+        return stmt.exists()
+
+    clauses = [
+        _exists(Killmail, Alliance.alliance_id == Killmail.victim_alliance_id, Alliance),
+        _exists(Killmail,
+                Corporation.corporation_id == Killmail.victim_corporation_id, Corporation),
+        _exists(KillmailAttacker, Alliance.alliance_id == KillmailAttacker.alliance_id, Alliance),
+        _exists(KillmailAttacker,
+                Corporation.corporation_id == KillmailAttacker.corporation_id, Corporation),
+    ]
+    return or_(*clauses)
+
+
 def _compile_node_fight(node: dict[str, Any]) -> Any:
     # Group node
     if "op" in node and "clauses" in node:
@@ -76,6 +127,9 @@ def _compile_node_fight(node: dict[str, Any]) -> Any:
     # Validate field is whitelisted (SECURITY: no raw field names reach DB)
     if field == "ship_count":
         return _compile_ship_count_leaf(node)
+
+    if field == "entity_involved":
+        return _entity_involved_clause(node, scope="fight")
 
     if field not in _FIGHT_FIELDS:
         raise FilterError(f"Unknown fight field: {field!r}")
@@ -167,6 +221,9 @@ def _compile_node_br(node: dict[str, Any]) -> Any:
 
     if field == "ship_fielded":
         return _compile_ship_fielded_leaf(node)
+
+    if field == "entity_involved":
+        return _entity_involved_clause(node, scope="br")
 
     if field not in _BR_FIELDS:
         raise FilterError(f"Unknown BR field: {field!r}")

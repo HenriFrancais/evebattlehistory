@@ -39,6 +39,17 @@ export interface BrSummary {
   fight_count: number
   battle_at: string | null
   created_at: string
+  // Timeline-list extras (populated by list/filter endpoints).
+  systems?: string[]
+  our_name?: string | null
+  opponent_name?: string | null
+  friendly_pilots?: number
+  enemy_pilots?: number
+  you_present?: boolean
+  your_present?: number
+  your_logged?: number
+  roster_present?: number
+  roster_logged?: number
 }
 
 export interface BrListResponse {
@@ -227,7 +238,17 @@ export interface FilterShipLeafFight {
   side: FilterSide
 }
 
-export type FilterClause = FilterLeaf | FilterShipLeafBr | FilterShipLeafFight | FilterGroup
+export interface FilterEntityLeaf {
+  field: 'entity_involved'
+  name: string
+}
+
+export type FilterClause =
+  | FilterLeaf
+  | FilterShipLeafBr
+  | FilterShipLeafFight
+  | FilterEntityLeaf
+  | FilterGroup
 export interface FilterGroup {
   op: 'and' | 'or'
   clauses: FilterClause[]
@@ -405,15 +426,33 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Impersonation (DEV_MODE only): in-memory, never a cookie.
+// Impersonation (DEV_MODE only). Persisted in sessionStorage (never a cookie)
+// so a forced full reload — used to make the app behave exactly as if that user
+// opened the service — keeps the selected identity for subsequent requests.
 // ---------------------------------------------------------------------------
 
-let _impersonateName: string | null = null
+const _IMPERSONATE_KEY = 'nvbr_impersonate'
+
+function _readImpersonate(): string | null {
+  try {
+    return sessionStorage.getItem(_IMPERSONATE_KEY)
+  } catch {
+    return null
+  }
+}
+
+let _impersonateName: string | null = _readImpersonate()
 const _impersonateListeners: Array<() => void> = []
 
 /** Set the active impersonation user (or null to clear). */
 export function setImpersonateUser(name: string | null): void {
   _impersonateName = name
+  try {
+    if (name) sessionStorage.setItem(_IMPERSONATE_KEY, name)
+    else sessionStorage.removeItem(_IMPERSONATE_KEY)
+  } catch {
+    // sessionStorage unavailable (e.g. SSR/tests) — fall back to in-memory only.
+  }
   _impersonateListeners.forEach((cb) => cb())
 }
 
@@ -542,6 +581,10 @@ export const api = {
     jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
   snapshot: (brId: string, from: number, to: number) =>
     jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/snapshot?from_ts=${from}&to_ts=${to}`),
+  characterSnapshot: (brId: string, charId: string, from: number, to: number) =>
+    jsonFetch<ContributionsResponse>(
+      `${API}/brs/${brId}/characters/${charId}/snapshot?from_ts=${from}&to_ts=${to}`,
+    ),
   composition: (brId: string) =>
     jsonFetch<CompositionResponse>(`${API}/brs/${brId}/composition`),
   getSides: (brId: string) => jsonFetch<BrSides>(`${API}/brs/${brId}/sides`),

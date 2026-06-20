@@ -290,6 +290,86 @@ def test_sql_injection_field_raises_filter_error():
             "value": 0,
         })
 
+# Test 15b: entity_involved leaf compiles for both scopes
+def test_compile_entity_involved_compiles():
+    from app.analytics.filters import compile_br_filter, compile_fight_filter
+    assert compile_br_filter({"field": "entity_involved", "name": "No Vacancies"}) is not None
+    assert compile_fight_filter({"field": "entity_involved", "name": "Goon"}) is not None
+
+
+def test_compile_entity_involved_empty_name_raises():
+    from app.analytics.filters import FilterError, compile_br_filter
+    with pytest.raises(FilterError):
+        compile_br_filter({"field": "entity_involved", "name": "   "})
+
+
+# Test 15c: entity_involved substring-matches a BR by corp/alliance name (DB integration)
+@pytest.mark.asyncio
+async def test_entity_involved_filter_matches_br_by_name(db_session_maker):
+    import uuid
+
+    from app.analytics.filters import compile_br_filter
+    from app.db.models import (
+        Alliance,
+        BattleReport,
+        BrFight,
+        Corporation,
+        Fight,
+        FightKill,
+        InventoryType,
+        Killmail,
+        KillmailAttacker,
+        SolarSystem,
+    )
+
+    now = dt.datetime(2026, 6, 1, tzinfo=dt.UTC)
+    async with db_session_maker() as session:
+        session.add(SolarSystem(system_id=31055555, name="J-Ent", security=None))
+        session.add(Alliance(alliance_id=4242, name="Hard Knocks Citizens", last_seen_at=now))
+        session.add(Corporation(corporation_id=909, name="Hostile Holders", last_seen_at=now))
+        session.add(InventoryType(type_id=1, name="TestShip"))
+        await session.flush()
+        fight = Fight(system_id=31055555, started_at=now, ended_at=now,
+                      isk_destroyed_total=1.0, largest_side_pilots=1,
+                      capitals_involved=False, distinct_alliance_count=1)
+        session.add(fight)
+        await session.flush()
+        # Victim belongs to the alliance; attacker to the corp.
+        session.add(Killmail(killmail_id=42, killmail_time=now, solar_system_id=31055555,
+                             victim_character_id=None, victim_corporation_id=None,
+                             victim_alliance_id=4242, victim_ship_type_id=1, total_value=1.0))
+        await session.flush()
+        session.add(KillmailAttacker(killmail_id=42, attacker_idx=0, character_id=None,
+                                     corporation_id=909, alliance_id=None, ship_type_id=1,
+                                     damage_done=1, final_blow=True))
+        session.add(FightKill(fight_id=fight.fight_id, killmail_id=42, side_idx=0))
+        br_id = str(uuid.uuid4())
+        session.add(BattleReport(br_id=br_id, source="t", source_url="x", source_ref="r",
+                                 created_by_user="t", status="ready", progress_pct=100,
+                                 created_at=now))
+        session.add(BrFight(br_id=br_id, fight_id=fight.fight_id, seq=0))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        # Substring, case-insensitive, alliance name.
+        rows = list((await session.execute(
+            compile_br_filter({"field": "entity_involved", "name": "hard knocks"})
+        )).scalars())
+        assert [b.br_id for b in rows] == [br_id]
+
+        # Attacker corp name also matches.
+        rows = list((await session.execute(
+            compile_br_filter({"field": "entity_involved", "name": "holders"})
+        )).scalars())
+        assert [b.br_id for b in rows] == [br_id]
+
+        # Unrelated name does not match.
+        rows = list((await session.execute(
+            compile_br_filter({"field": "entity_involved", "name": "Pandemic"})
+        )).scalars())
+        assert rows == []
+
+
 # Test 16: capitals_involved == True filter works
 def test_compile_fight_filter_capitals_involved():
     from app.analytics.filters import compile_fight_filter

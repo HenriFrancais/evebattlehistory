@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { MyLogFile } from '../api'
 import { api } from '../api'
 import { BulkUploader } from '../components/BulkUploader'
@@ -39,7 +40,10 @@ export function LogsPage() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1 style={{ margin: 0 }}>Logs</h1>
+        <div>
+          <Link to="/" className="dim" style={{ fontSize: '0.85rem' }}>← Overview</Link>
+          <h1 style={{ margin: '0.25rem 0 0' }}>Logs</h1>
+        </div>
       </div>
 
       <BulkUploader onUploaded={loadLogs} />

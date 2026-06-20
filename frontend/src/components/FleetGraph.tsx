@@ -12,7 +12,7 @@ import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { FleetTimeline, KillEvent, TimelineFightInfo } from '../api'
 import { api } from '../api'
-import { fmtCompact, fmtIsk } from '../format'
+import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
 import type { FleetPanel, FleetView, PanelSeries } from '../fleet'
 import { toFleetView } from '../fleet'
 
@@ -68,6 +68,7 @@ function zeroBaselinePlugin(): uPlot.Plugin {
 function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
   let layer: HTMLDivElement | null = null
   let tip: HTMLDivElement | null = null
+  let detachDrag: (() => void) | null = null
 
   const showTip = (k: KillEvent, ev: MouseEvent) => {
     if (!tip) return
@@ -130,6 +131,37 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
       layer.appendChild(el)
     }
     u.over.appendChild(layer)
+
+    // Drag priority: once a drag actually MOVES, make the markers inert so the
+    // zoom/snapshot drag flows smoothly across them instead of snagging on a
+    // marker's hover target. Restored on mouseup. A plain (non-moving) click is
+    // untouched, so ⌃-click → zKill still works.
+    const setInert = (on: boolean) => {
+      if (!layer) return
+      for (const node of Array.from(layer.children)) {
+        ;(node as HTMLElement).style.pointerEvents = on ? 'none' : ''
+      }
+    }
+    const onDown = () => {
+      let dragging = false
+      const onMove = () => {
+        if (!dragging) {
+          dragging = true
+          setInert(true)
+          hideTip()
+        }
+      }
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        if (dragging) setInert(false)
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    }
+    u.over.addEventListener('mousedown', onDown)
+    detachDrag = () => u.over.removeEventListener('mousedown', onDown)
+
     position(u)
   }
 
@@ -154,6 +186,8 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
       setScale: (u) => position(u),
       setSize: (u) => position(u),
       destroy: () => {
+        detachDrag?.()
+        detachDrag = null
         tip?.remove()
         tip = null
       },
@@ -172,7 +206,7 @@ function fightEdgesPlugin(fights: TimelineFightInfo[]): uPlot.Plugin {
         for (const f of fights) {
           for (const t of [f.started_at, f.ended_at]) {
             if (t == null) continue
-            const x = u.valToPos(Date.parse(t) / 1000, 'x', true)
+            const x = u.valToPos(isoToEpoch(t), 'x', true)
             ctx.beginPath()
             ctx.moveTo(x, u.bbox.top)
             ctx.lineTo(x, u.bbox.top + u.bbox.height)
@@ -302,34 +336,50 @@ function PanelChart({
 
     const visible = panel.series.filter((s) => !hiddenSeries.has(s.key))
 
-    // X domain spans the WHOLE engagement, not just logged buckets: kills and
-    // fights often extend beyond the log window. We AUGMENT the x data with the
-    // domain endpoints (null y) rather than forcing scales.x.range — a hard
-    // range would freeze the view and disable native drag-zoom / pan / reset.
-    const times: number[] = []
-    if (x.length) times.push(x[0], x[x.length - 1])
-    for (const k of kills) times.push(k.ts)
+    // X domain is bounded to the LOSS window — earliest→latest loss (kill markers
+    // and, for the per-pilot view where kills aren't passed, the kill-derived
+    // fight bounds) — with a buffer on each side. Combat logs can start well
+    // before and run long after the actual fight, so we clip that pre/post noise
+    // rather than letting it stretch the axis. Falls back to the log extent only
+    // when there are no losses at all.
+    const lossTimes: number[] = []
+    for (const k of kills) lossTimes.push(k.ts)
     for (const f of fights) {
-      if (f.started_at) times.push(Date.parse(f.started_at) / 1000)
-      if (f.ended_at) times.push(Date.parse(f.ended_at) / 1000)
+      if (f.started_at) lossTimes.push(isoToEpoch(f.started_at))
+      if (f.ended_at) lossTimes.push(isoToEpoch(f.ended_at))
     }
     let xs = x.slice()
     let cols = visible.map((s) => s.values.slice())
-    if (times.length) {
-      const t0 = Math.min(...times)
-      const t1 = Math.max(...times)
-      if (!xs.length || t0 < xs[0]) {
-        xs = [t0, ...xs]
+    let fullMin: number
+    let fullMax: number
+    if (lossTimes.length) {
+      const lo0 = Math.min(...lossTimes)
+      const hi0 = Math.max(...lossTimes)
+      // Buffer: ~5% of the window, clamped to [15s, 120s] each side.
+      const buf = Math.min(Math.max((hi0 - lo0) * 0.05, 15), 120)
+      const lo = lo0 - buf
+      const hi = hi0 + buf
+      // Clip log buckets outside the window.
+      const keep: number[] = []
+      for (let i = 0; i < xs.length; i++) if (xs[i] >= lo && xs[i] <= hi) keep.push(i)
+      xs = keep.map((i) => xs[i])
+      cols = cols.map((c) => keep.map((i) => c[i]))
+      // Pin the axis to the full window even where data doesn't reach the edges.
+      if (!xs.length || xs[0] > lo) {
+        xs = [lo, ...xs]
         cols = cols.map((c) => [null, ...c])
       }
-      if (t1 > xs[xs.length - 1]) {
-        xs = [...xs, t1]
+      if (xs[xs.length - 1] < hi) {
+        xs = [...xs, hi]
         cols = cols.map((c) => [...c, null])
       }
+      fullMin = lo
+      fullMax = hi
+    } else {
+      fullMin = xs.length ? xs[0] : 0
+      fullMax = xs.length ? xs[xs.length - 1] : 1
     }
     const data: (number | null)[][] = [xs, ...cols]
-    const fullMin = xs.length ? xs[0] : 0
-    const fullMax = xs.length ? xs[xs.length - 1] : 1
 
     const seriesDefs: uPlot.Series[] = [
       {
@@ -510,28 +560,35 @@ function KillLegend({ kills }: { kills: KillEvent[] }) {
   )
 }
 
-// --- top-level -------------------------------------------------------------
+// --- core (operates on already-fetched data) -------------------------------
 
-interface Props {
-  brId: string
-  /** Bump to force a re-fetch (e.g. after side overrides change). */
-  reloadKey?: number
+interface CoreProps {
+  /** Already-fetched timeline (fleet-wide or adapted from a single character). */
+  fleet: FleetTimeline
   /** Selected time range (epoch seconds), owned by the parent; null = none. */
   selectedRange: { from: number; to: number } | null
   onSelectRange: (r: { from: number; to: number } | null) => void
+  /** Panel height in px. */
+  height?: number
 }
 
-export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Props) {
-  const [fleet, setFleet] = useState<FleetTimeline | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+/**
+ * Stacked family panels with smoothing, per-series toggles, kill markers, and a
+ * draggable snapshot range. Shared by the fleet view and the per-character view.
+ */
+export function FleetGraphCore({
+  fleet,
+  selectedRange,
+  onSelectRange,
+  height = 165,
+}: CoreProps) {
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set())
   const [smooth, setSmooth] = useState(true)
   const [smoothScale, setSmoothScale] = useState(1)
   const [showKills, setShowKills] = useState(true)
   const initialised = useRef(false)
   // Shared x-zoom across the panels, preserved across rebuilds (toggles,
-  // smoothing) but reset when the BR data reloads.
+  // smoothing) but reset when the underlying data reloads.
   const zoomRef = useRef<[number, number] | null>(null)
   // Range mirrored in a ref so the chart plugins read it live; positioners move
   // every panel's band/handles together on drag without rebuilding charts.
@@ -545,9 +602,6 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     }
   }, [])
 
-  // Range drag (Shift-drag on the plot, or a handle drag): the reporter gives a
-  // whole new range (ordered isn't enforced here — handles can cross; the band
-  // uses min/max). Mirror + reposition live.
   const handleRangeDrag = useCallback((r: { from: number; to: number }) => {
     rangeRef.current = r
     positionersRef.current.forEach((fn) => fn())
@@ -561,45 +615,20 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     positionersRef.current.forEach((fn) => fn())
   }, [selectedRange])
 
+  // Reset zoom + re-seed defaults when the underlying data changes.
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    initialised.current = false
     zoomRef.current = null
-    rangeRef.current = null
-    onSelectRange(null)
-    api.fleetTimeline(brId).then(
-      (data) => {
-        if (!cancelled) {
-          setFleet(data)
-          setLoading(false)
-        }
-      },
-      (e: unknown) => {
-        if (!cancelled) {
-          setError(String((e as Error)?.message ?? e))
-          setLoading(false)
-        }
-      },
-    )
-    return () => {
-      cancelled = true
-    }
-    // onSelectRange is a stable parent setter; deliberately not a dep (re-fetch only on brId/reloadKey).
-  }, [brId, reloadKey])
+    initialised.current = false
+  }, [fleet])
 
-  const view: FleetView | null = useMemo(
-    () =>
-      fleet
-        ? toFleetView(fleet, { smooth, smoothScale, bucketSeconds: fleet.bucket_seconds })
-        : null,
+  const view: FleetView = useMemo(
+    () => toFleetView(fleet, { smooth, smoothScale, bucketSeconds: fleet.bucket_seconds }),
     [fleet, smooth, smoothScale],
   )
 
-  // Seed hidden set from defaults once per BR load.
+  // Seed hidden set from defaults once per data load.
   useEffect(() => {
-    if (!view || initialised.current) return
+    if (initialised.current) return
     const hidden = new Set<string>()
     for (const p of view.panels) for (const s of p.series) if (!s.defaultVisible) hidden.add(s.key)
     setHiddenSeries(hidden)
@@ -615,19 +644,14 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     })
   }, [])
 
-  if (loading) return <p className="dim">Loading fleet data…</p>
-  if (error)
-    return (
-      <p className="error-text" data-testid="fleet-error">
-        {error}
-      </p>
-    )
-  if (!view || view.x.length === 0)
+  if (view.x.length === 0)
     return (
       <p className="dim" data-testid="fleet-empty">
-        No fleet data available for this BR.
+        No timeline data available.
       </p>
     )
+
+  const hasKills = view.kills.length > 0
 
   return (
     <div data-testid="fleet-chart-area">
@@ -656,15 +680,17 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
             ×{smoothScale}
           </label>
         )}
-        <button
-          role="button"
-          aria-pressed={showKills}
-          className="fleet-legend-btn"
-          onClick={() => setShowKills((s) => !s)}
-          style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
-        >
-          {showKills ? 'Kill markers: on' : 'Kill markers: off'}
-        </button>
+        {hasKills && (
+          <button
+            role="button"
+            aria-pressed={showKills}
+            className="fleet-legend-btn"
+            onClick={() => setShowKills((s) => !s)}
+            style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+          >
+            {showKills ? 'Kill markers: on' : 'Kill markers: off'}
+          </button>
+        )}
       </div>
 
       {view.panels.map((panel) => (
@@ -675,8 +701,8 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
             x={view.x}
             hiddenSeries={hiddenSeries}
             kills={showKills ? view.kills : NO_KILLS}
-            fights={fleet?.fights ?? []}
-            height={165}
+            fights={fleet.fights ?? []}
+            height={height}
             zoomRef={zoomRef}
             rangeRef={rangeRef}
             onRangeDrag={handleRangeDrag}
@@ -687,8 +713,68 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
 
       <KillLegend kills={view.kills} />
       <p className="dim" style={{ fontSize: '0.75rem', margin: '0.2rem 0 0' }}>
-        Tip: Shift-drag a range on any graph to snapshot it (drag the handles to adjust). Plain drag zooms; double-click resets. ⌃-click a kill marker for zKill.
+        Tip: Shift-drag a range on any graph to snapshot it (drag the handles to adjust). Plain drag zooms; double-click resets.{hasKills ? ' ⌃-click a kill marker for zKill.' : ''}
       </p>
     </div>
+  )
+}
+
+// --- fleet-wide wrapper (fetches the BR's fleet timeline) -------------------
+
+interface Props {
+  brId: string
+  /** Bump to force a re-fetch (e.g. after side overrides change). */
+  reloadKey?: number
+  /** Selected time range (epoch seconds), owned by the parent; null = none. */
+  selectedRange: { from: number; to: number } | null
+  onSelectRange: (r: { from: number; to: number } | null) => void
+}
+
+export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Props) {
+  const [fleet, setFleet] = useState<FleetTimeline | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    onSelectRange(null)
+    api.fleetTimeline(brId).then(
+      (data) => {
+        if (!cancelled) {
+          setFleet(data)
+          setLoading(false)
+        }
+      },
+      (e: unknown) => {
+        if (!cancelled) {
+          setError(String((e as Error)?.message ?? e))
+          setLoading(false)
+        }
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+    // onSelectRange is a stable parent setter; deliberately not a dep (re-fetch only on brId/reloadKey).
+  }, [brId, reloadKey])
+
+  if (loading) return <p className="dim">Loading fleet data…</p>
+  if (error)
+    return (
+      <p className="error-text" data-testid="fleet-error">
+        {error}
+      </p>
+    )
+  if (!fleet || fleet.x.length === 0)
+    return (
+      <p className="dim" data-testid="fleet-empty">
+        No fleet data available for this BR.
+      </p>
+    )
+
+  return (
+    <FleetGraphCore fleet={fleet} selectedRange={selectedRange} onSelectRange={onSelectRange} />
   )
 }

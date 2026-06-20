@@ -56,6 +56,21 @@ describe('FilterBuilder', () => {
     })
   })
 
+  it('builds an entity_involved clause from an entity row', async () => {
+    const onApply = vi.fn()
+    render(<FilterBuilder scope="br" onApply={onApply} />)
+
+    fireEvent.change(screen.getByTestId('filter-row-0-type'), { target: { value: 'entity' } })
+    const entityInput = screen.getByTestId('filter-row-0-entity')
+    await userEvent.type(entityInput, 'No Vacancies')
+
+    fireEvent.click(screen.getByTestId('filter-apply'))
+
+    expect(onApply).toHaveBeenCalledOnce()
+    const tree = onApply.mock.calls[0][0] as FilterGroup
+    expect(tree.clauses[0]).toEqual({ field: 'entity_involved', name: 'No Vacancies' })
+  })
+
   it('switching scope changes available fields', () => {
     const { unmount } = render(<FilterBuilder scope="fight" onApply={vi.fn()} />)
     // Fight scope should have isk_destroyed_total as an option

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type {
   FilterClause,
+  FilterEntityLeaf,
   FilterGroup,
   FilterLeaf,
   FilterOp,
@@ -38,21 +39,11 @@ const BR_FIELDS: Record<string, FieldDef> = {
     ops: ['>=', '<=', '>', '<', '==', '!='],
     iskBillions: true,
   },
-  isk_efficiency: {
-    label: 'ISK Efficiency (0-1)',
-    kind: 'numeric',
-    ops: ['>=', '<=', '>', '<', '==', '!='],
-  },
   result: {
     label: 'Result',
     kind: 'enum',
     ops: ['==', 'in'],
     enumValues: ['win', 'loss', 'tie'],
-  },
-  fight_count: {
-    label: 'Fight Count',
-    kind: 'numeric',
-    ops: ['>=', '<=', '>', '<', '==', '!='],
   },
   battle_at: {
     label: 'Battle Date',
@@ -101,7 +92,7 @@ const FIGHT_FIELDS: Record<string, FieldDef> = {
 }
 
 interface RowState {
-  type: 'field' | 'ship'
+  type: 'field' | 'ship' | 'entity'
   // field row
   field: string
   op: string
@@ -110,15 +101,24 @@ interface RowState {
   ship: string
   count: string
   side: string
+  // entity row (corp/alliance name substring)
+  entity: string
 }
 
 function defaultRow(scope: 'br' | 'fight'): RowState {
   const firstField = scope === 'br' ? 'our_isk_destroyed' : 'isk_destroyed_total'
   const firstOp = '>='
-  return { type: 'field', field: firstField, op: firstOp, value: '', ship: '', count: '', side: scope === 'br' ? 'friendly' : 'any' }
+  return { type: 'field', field: firstField, op: firstOp, value: '', ship: '', count: '', side: scope === 'br' ? 'friendly' : 'any', entity: '' }
 }
 
 function buildClause(row: RowState, scope: 'br' | 'fight'): FilterClause | null {
+  if (row.type === 'entity') {
+    const name = row.entity.trim()
+    if (!name) return null
+    const clause: FilterEntityLeaf = { field: 'entity_involved', name }
+    return clause
+  }
+
   if (row.type === 'ship') {
     const ship = row.ship.trim()
     const count = parseInt(row.count, 10)
@@ -268,9 +268,9 @@ function FilterRow({ row, index, scope, fieldKeys, fields, onChange, onRemove }:
     onChange({ field, op: newOp, value: '' })
   }
 
-  function handleTypeChange(type: 'field' | 'ship') {
+  function handleTypeChange(type: 'field' | 'ship' | 'entity') {
     const defaultSide = scope === 'br' ? 'friendly' : 'any'
-    onChange({ type, op: '>=', value: '', ship: '', count: '', side: defaultSide })
+    onChange({ type, op: '>=', value: '', ship: '', count: '', side: defaultSide, entity: '' })
   }
 
   return (
@@ -280,14 +280,24 @@ function FilterRow({ row, index, scope, fieldKeys, fields, onChange, onRemove }:
     >
       <select
         value={row.type}
-        onChange={(e) => handleTypeChange(e.target.value as 'field' | 'ship')}
+        onChange={(e) => handleTypeChange(e.target.value as 'field' | 'ship' | 'entity')}
         data-testid={`filter-row-${index}-type`}
       >
         <option value="field">Field</option>
         <option value="ship">Ship</option>
+        <option value="entity">Entity</option>
       </select>
 
-      {row.type === 'field' ? (
+      {row.type === 'entity' ? (
+        <input
+          type="text"
+          placeholder="Corp or alliance name"
+          value={row.entity}
+          onChange={(e) => onChange({ entity: e.target.value })}
+          data-testid={`filter-row-${index}-entity`}
+          style={{ width: '16rem' }}
+        />
+      ) : row.type === 'field' ? (
         <>
           <select
             value={row.field}

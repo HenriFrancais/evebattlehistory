@@ -1,5 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { NavBar } from './components/NavBar'
+import { DevBar } from './components/DevBar'
 import { BrDetailPage } from './views/BrDetailPage'
 import { BrListPage } from './views/BrListPage'
 import { CharacterTimelinePage } from './views/CharacterTimelinePage'
@@ -10,7 +10,7 @@ import { LogsPage } from './views/LogsPage'
 export function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <NavBar />
+      <DevBar />
       <Routes>
         <Route path="/" element={<BrListPage />} />
         <Route path="/brs/new" element={<CreatePage />} />

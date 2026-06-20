@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import fight_side_losses, load_overrides
+from app.api.access import acting_user
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import (
@@ -30,6 +31,7 @@ from app.api.schemas import (
 from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrFight, BrSource, Fight, SolarSystem
 from app.fights.participants import ParticipantInfo, br_participants
+from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
@@ -326,9 +328,38 @@ def compute_br_summary(brs: list[BattleReport]) -> BrListSummary:
     )
 
 
+async def enrich_summaries(
+    session: AsyncSession,
+    request: Request,
+    summaries: list[BrSummary],
+) -> list[BrSummary]:
+    """Attach timeline-list extras (sides, pilots, presence, log coverage) to summaries."""
+    if not summaries:
+        return summaries
+    # acting_user honours DEV_MODE impersonation, so "present" / "your logs"
+    # reflect the user being viewed — matching /api/me.
+    user = await acting_user(request)
+    cfg = get_app_config()
+    settings = get_settings()
+    extras = await enrich_br_rows(
+        session,
+        settings,
+        [s.br_id for s in summaries],
+        user_name=user.user_name,
+        baseline_alliances=set(cfg.our_alliance_ids),
+        baseline_corps=set(cfg.our_corp_ids),
+    )
+    out: list[BrSummary] = []
+    for s in summaries:
+        extra = extras.get(s.br_id)
+        out.append(s.model_copy(update=vars(extra)) if extra is not None else s)
+    return out
+
+
 @router.get("/api/brs")
 async def list_brs(
     session: SessionDep,
+    request: Request,
 ) -> BrListResponse:
     """Return a list of all battle reports with aggregate summary."""
     result = await session.execute(
@@ -340,7 +371,7 @@ async def list_brs(
     brs = list(result.scalars())
 
     summary = compute_br_summary(brs)
-    br_list = [_br_to_summary(b) for b in brs]
+    br_list = await enrich_summaries(session, request, [_br_to_summary(b) for b in brs])
     return BrListResponse(summary=summary, brs=br_list)
 
 
@@ -378,7 +409,7 @@ async def get_br(
                 system_names.append(nm)
 
     return BrDetail(
-        **_br_to_summary(br).model_dump(),
+        **_br_to_summary(br).model_dump(exclude={"systems"}),
         fights=fights,
         systems=system_names,
     )
@@ -488,7 +519,7 @@ async def get_my_br_coverage(
 
     404 if the BR doesn't exist or the user has no participating characters.
     """
-    user = current_user(request)
+    user = await acting_user(request)
     settings = get_settings()
 
     exists = (
