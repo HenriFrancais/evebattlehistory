@@ -14,6 +14,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from app.api.analytics import router as analytics_router
 from app.api.brs import router as brs_router
@@ -35,6 +38,23 @@ from app.observability.logging import configure_logging, log
 from app.roster.snapshot import get_roster_store
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+class SpaStaticFiles(StaticFiles):
+    """StaticFiles with SPA history-fallback.
+
+    Serves real files normally; for any other path (e.g. ``/brs/:id`` on a hard
+    refresh or a pasted deep link) it returns ``index.html`` so the client-side
+    router can resolve the route. API paths are left to 404 as JSON.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404 and not path.startswith("api/"):
+                return await super().get_response("index.html", scope)
+            raise
 
 
 @asynccontextmanager
@@ -96,12 +116,13 @@ def create_app() -> FastAPI:
     app.include_router(sides_router, prefix=prefix)
     app.include_router(analytics_router, prefix=prefix)
     app.include_router(filters_router, prefix=prefix)
-    # Mount the built SPA last so API routes take precedence and static assets
-    # fall through to the catch-all.
+    # Mount the built SPA last so API routes take precedence. SpaStaticFiles
+    # serves index.html for unknown non-API paths so client-side routes
+    # (e.g. /brs/:id) survive a hard refresh or a direct link.
     if _FRONTEND_DIST.is_dir():
         app.mount(
             f"{prefix}/" if prefix else "/",
-            StaticFiles(directory=str(_FRONTEND_DIST), html=True),
+            SpaStaticFiles(directory=str(_FRONTEND_DIST), html=True),
             name="frontend",
         )
     return app
