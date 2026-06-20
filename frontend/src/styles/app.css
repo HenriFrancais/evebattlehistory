@@ -380,7 +380,7 @@ nav a:hover { color: var(--accent); }
 .snap-cluster { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; overflow: hidden; }
 .snap-cluster-head { padding: 0.35rem 0.5rem; font-size: 0.8rem; font-weight: 600; background: var(--panel-2); cursor: default; }
 .snap-cluster-body { max-height: 0; overflow: hidden; transition: max-height 0.15s ease; }
-.snap-cluster:hover .snap-cluster-body, .snap-cluster:focus-within .snap-cluster-body { max-height: none; padding: 0.4rem; }
+.snap-cluster:hover .snap-cluster-body, .snap-cluster:focus-within .snap-cluster-body { max-height: 200rem; padding: 0.4rem; }
 /* Target focus cards: one per ship, sources nested with effect icons. */
 .focus-list { display: flex; flex-direction: column; gap: 0.45rem; overflow: visible; max-height: none; }
 .focus-card { border: 1px solid var(--border); border-radius: 5px; padding: 0.3rem 0.4rem; background: var(--panel); }

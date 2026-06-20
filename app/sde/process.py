@@ -32,9 +32,11 @@ def _name(obj: dict[str, Any]) -> str:
     return str(n or "").strip()
 
 
-def process_sde_lines(types_lines: Iterable[str], groups_lines: Iterable[str]) -> list[dict]:
+def process_sde_lines(
+    types_lines: Iterable[str], groups_lines: Iterable[str]
+) -> list[dict[str, Any]]:
     """Return published types joined to their group/category."""
-    groups: dict[int, dict] = {}
+    groups: dict[int, dict[str, Any]] = {}
     for line in groups_lines:
         line = line.strip()
         if not line:
@@ -50,7 +52,7 @@ def process_sde_lines(types_lines: Iterable[str], groups_lines: Iterable[str]) -
         groups[gid] = {"category_id": int(cat) if isinstance(cat, int) else 0,
                        "group_name": _name(g)}
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for line in types_lines:
         line = line.strip()
         if not line:

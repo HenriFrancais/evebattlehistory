@@ -488,15 +488,16 @@ def test_post_logs_oversize_rejected_per_file(  # type: ignore[no-untyped-def]
 
 @pytest.mark.asyncio
 async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
     from app.config import get_settings
     from app.db.models import InventoryType, LogEvent
     from app.logs.ingest import ingest_log
-    from sqlalchemy import select
 
     raw = GAMELOG_HEADER + (
-        "[ 2026.06.14 20:57:34 ] (combat) 88 remote capacitor transmitted to "
-        "Guardian Jennifer Hibra [NVACA] &lt;NV&gt; - Large Inductive Compact Remote Capacitor Transmitter\n"
-    ).encode()
+        b"[ 2026.06.14 20:57:34 ] (combat) 88 remote capacitor transmitted to "
+        b"Guardian Jennifer Hibra [NVACA] &lt;NV&gt; - Large Inductive Compact Remote Capacitor Transmitter\n"
+    )
 
     async with db_session_maker() as session:
         session.add(InventoryType(type_id=11987, name="Guardian", category_id=6))

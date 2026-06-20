@@ -45,7 +45,8 @@ async def load_sde_into_db(session: AsyncSession, sde_dir: Path) -> int:
             index_elements=["type_id"],
             set_={"name": cstmt.excluded.name, "group_id": cstmt.excluded.group_id,
                   "group_name": cstmt.excluded.group_name,
-                  "category_id": cstmt.excluded.category_id},
+                  "category_id": cstmt.excluded.category_id,
+                  "category_name": cstmt.excluded.category_name},
         )
         await session.execute(cstmt)
 

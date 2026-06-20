@@ -408,28 +408,36 @@ function PanelChart({
     // Shift-drag paints the snapshot range; plain drag = zoom, double-click = zoom-out (native).
     // Capture phase + stopImmediatePropagation blocks uPlot's drag-zoom only while Shift is held;
     // without Shift this no-ops and uPlot's native gestures run untouched.
+    // Track the active drag listeners so a mid-drag unmount/rebuild removes them in
+    // cleanup — otherwise the stale `move` closure calls into a destroyed uPlot.
+    let dragMove: ((e: MouseEvent) => void) | null = null
+    let dragUp: (() => void) | null = null
+    const clearDrag = () => {
+      if (dragMove) document.removeEventListener('mousemove', dragMove)
+      if (dragUp) document.removeEventListener('mouseup', dragUp)
+      dragMove = dragUp = null
+    }
     const onShiftDown = (ev: MouseEvent) => {
       if (!ev.shiftKey) return
       ev.stopImmediatePropagation() // block uPlot's drag-zoom
       ev.preventDefault()
       const rect = u.over.getBoundingClientRect()
       const from = u.posToVal(ev.clientX - rect.left, 'x')
-      const move = (e: MouseEvent) => {
+      clearDrag() // defensively drop any prior drag listeners
+      dragMove = (e: MouseEvent) => {
         const to = u.posToVal(e.clientX - rect.left, 'x')
         onRangeDrag({ from: Math.min(from, to), to: Math.max(from, to) })
       }
-      const up = () => {
-        document.removeEventListener('mousemove', move)
-        document.removeEventListener('mouseup', up)
-      }
-      document.addEventListener('mousemove', move)
-      document.addEventListener('mouseup', up)
+      dragUp = () => clearDrag()
+      document.addEventListener('mousemove', dragMove)
+      document.addEventListener('mouseup', dragUp)
     }
     u.over?.addEventListener('mousedown', onShiftDown, true) // capture phase
     const onResize = () => u.setSize({ width: el.clientWidth || 800, height })
     window.addEventListener('resize', onResize)
     return () => {
       window.removeEventListener('resize', onResize)
+      clearDrag()
       u.destroy()
     }
   }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner])
