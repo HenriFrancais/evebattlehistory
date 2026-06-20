@@ -18,11 +18,14 @@
 # NV BR does not stream SSE, so no flush settings are needed here.
 
 your-nvbr-hostname.example {
+	# Upstream port MUST equal APP_PORT from deploy/.env (default 8000). If you
+	# changed APP_PORT because 8000 was taken on the VM, change it here too.
 	reverse_proxy http://127.0.0.1:8000
 
 	# --- Hosting several apps behind ONE hostname? ---
 	# Replace the single reverse_proxy above with per-path matchers. Do NOT use
-	# `handle_path`, which strips the matched prefix the app needs:
+	# `handle_path`, which strips the matched prefix the app needs. Each upstream
+	# port is that app's APP_PORT:
 	#
 	#   @nvbr path /fc/br /fc/br/*
 	#   reverse_proxy @nvbr 127.0.0.1:8000

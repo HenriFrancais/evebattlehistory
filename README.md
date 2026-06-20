@@ -135,9 +135,11 @@ cd frontend && npm run build        # production SPA build
 ## Containerised deployment (VM)
 
 The app ships as a single multistage image: stage 1 builds the SPA, stage 2 is a Python
-runtime serving the API **and** the built SPA via gunicorn (uvicorn workers), bound to
-`127.0.0.1:8000` and running as a non-root user. A Caddy reverse proxy on the VM terminates
-TLS and forwards to that loopback port.
+runtime serving the API **and** the built SPA via gunicorn (uvicorn workers), listening on
+`:8000` inside the container and running as a non-root user. Compose publishes that to the VM's
+loopback only (`127.0.0.1:${APP_PORT}`, default `8000`), and a host Caddy reverse proxy
+terminates TLS and forwards to it. **If 8000 is already taken on the VM, set `APP_PORT` in
+`deploy/.env`** — the container always listens on 8000 internally; only the host port moves.
 
 > **Before you build, confirm the URL prefix with the NV Tools admin.** Ask: *"for public
 > `/<ns>/<prefix>/`, what exact path do you forward to my upstream?"* The default here is
@@ -173,6 +175,7 @@ Set in `deploy/.env` for production:
 ```ini
 NV_TOKEN=<shared secret the NV Tools admin gives you>   # INBOUND bearer — must match EXACTLY
 URL_PREFIX=/fc/br                                        # the path NV Tools forwards (confirm with admin!)
+APP_PORT=8000                                            # host loopback port; change if 8000 is taken
 DATA_SOURCE=real
 NV_API_URL=https://tools.novacancies.space/api          # portal API base (default is fine)
 NV_API_TOKEN=<outbound portal bearer>                   # OUTBOUND bearer for roster lookups (separate value)
@@ -221,22 +224,25 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
+The Caddy **upstream port must equal `APP_PORT`** from `deploy/.env` (default `8000`). Examples
+below assume 8000 — change both if you set a different `APP_PORT`.
+
 Dedicated hostname (simplest) — passes every path through to the app:
 
 ```caddyfile
 br.your-vm-hostname.example {
-	reverse_proxy http://127.0.0.1:8000
+	reverse_proxy http://127.0.0.1:8000      # = APP_PORT
 }
 ```
 
 Sharing one hostname with other NV apps — match the prefix (do **not** use `handle_path`, which
-strips the prefix the app needs):
+strips the prefix the app needs); each upstream is that app's `APP_PORT`:
 
 ```caddyfile
 your-vm-hostname.example {
 	@nvbr path /fc/br /fc/br/*
-	reverse_proxy @nvbr 127.0.0.1:8000
-	# ... other apps' matchers ...
+	reverse_proxy @nvbr 127.0.0.1:8000       # = this app's APP_PORT
+	# ... other apps' matchers on their own ports ...
 }
 ```
 
@@ -251,7 +257,8 @@ Give them the VM's **public IP** and hostname. They set DNS, point NV Tools at y
 ### Step 6 — Verify (in order)
 
 ```bash
-# App enforces auth on loopback (health is open; /api/* needs the bearer)
+# App enforces auth on loopback (health is open; /api/* needs the bearer).
+# Use your APP_PORT (default 8000) for the host-side checks.
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/fc/br/healthz   # 200
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/fc/br/api/me    # 401
 

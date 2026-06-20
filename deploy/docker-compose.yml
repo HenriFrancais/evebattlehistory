@@ -23,7 +23,10 @@ services:
     volumes:
       - nvbr_data:/app/var
     ports:
-      - "127.0.0.1:8000:8000"
+      # host-loopback : container. Change APP_PORT in .env if 8000 is taken on the
+      # VM; the container always listens on 8000 internally, so only the left side
+      # moves. Point Caddy's upstream at the same APP_PORT.
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000${URL_PREFIX:-/fc/br}/healthz"]
       interval: 30s
