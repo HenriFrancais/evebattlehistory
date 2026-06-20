@@ -7,7 +7,7 @@ import uuid
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import fight_side_losses, load_overrides
@@ -29,7 +29,20 @@ from app.api.schemas import (
     FightSideOut,
 )
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrFight, BrSource, Fight, SolarSystem
+from app.db.models import (
+    BattleReport,
+    BrFight,
+    BrKillmail,
+    BrShipCount,
+    BrSideOverride,
+    BrSource,
+    Fight,
+    FightKill,
+    Killmail,
+    LogEvent,
+    LogEventBucket,
+    SolarSystem,
+)
 from app.fights.participants import ParticipantInfo, br_participants
 from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
@@ -293,6 +306,115 @@ async def refresh_br(
         progress_pct=br.progress_pct,
         error_text=br.error_text,
     )
+
+
+async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
+    """Delete a BR and all of its scoped data, in FK-dependency order.
+
+    SQLite runs with ``foreign_keys=ON`` and several BR-child FKs have no
+    ``ON DELETE CASCADE``, so rows are removed explicitly in order. Shared rows
+    are preserved: a Fight or Killmail still referenced by ANOTHER battle report
+    is kept, and user-owned raw logs (GamelogFile/LogEvent) are retained — their
+    fight stamps are cleared so they can re-associate to a future re-ingest.
+    """
+    # This BR's fights, and every killmail it references (via the link table and
+    # via those fights) — captured before anything is deleted.
+    fight_ids = list(
+        (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
+    )
+    km_ids: set[int] = set(
+        (
+            await session.execute(
+                select(BrKillmail.killmail_id).where(BrKillmail.br_id == br_id)
+            )
+        ).scalars()
+    )
+    if fight_ids:
+        km_ids.update(
+            (
+                await session.execute(
+                    select(FightKill.killmail_id).where(FightKill.fight_id.in_(fight_ids))
+                )
+            ).scalars()
+        )
+
+    # Detach user-owned logs from this BR's fights (keep the raw uploads) and drop
+    # the derived per-fight buckets.
+    if fight_ids:
+        await session.execute(
+            update(LogEvent).where(LogEvent.fight_id.in_(fight_ids)).values(fight_id=None)
+        )
+        await session.execute(
+            delete(LogEventBucket).where(LogEventBucket.fight_id.in_(fight_ids))
+        )
+
+    # BR-scoped tables.
+    await session.execute(delete(BrSideOverride).where(BrSideOverride.br_id == br_id))
+    await session.execute(delete(BrShipCount).where(BrShipCount.br_id == br_id))
+    await session.execute(delete(BrSource).where(BrSource.br_id == br_id))
+    await session.execute(delete(BrKillmail).where(BrKillmail.br_id == br_id))
+    await session.execute(delete(BrFight).where(BrFight.br_id == br_id))
+
+    # Fights no longer referenced by any BR → delete (cascades FightSide / FightKill
+    # / FightShipCount via their ON DELETE CASCADE on fight_id).
+    if fight_ids:
+        still_fights = set(
+            (
+                await session.execute(
+                    select(BrFight.fight_id).where(BrFight.fight_id.in_(fight_ids))
+                )
+            ).scalars()
+        )
+        orphan_fights = [f for f in fight_ids if f not in still_fights]
+        if orphan_fights:
+            await session.execute(delete(Fight).where(Fight.fight_id.in_(orphan_fights)))
+
+    # Killmails no longer referenced by any BR link or fight → delete (cascades
+    # KillmailAttacker / KillmailItem).
+    if km_ids:
+        km_list = list(km_ids)
+        ref_brkm = set(
+            (
+                await session.execute(
+                    select(BrKillmail.killmail_id).where(BrKillmail.killmail_id.in_(km_list))
+                )
+            ).scalars()
+        )
+        ref_fk = set(
+            (
+                await session.execute(
+                    select(FightKill.killmail_id).where(FightKill.killmail_id.in_(km_list))
+                )
+            ).scalars()
+        )
+        orphan_km = [k for k in km_list if k not in ref_brkm and k not in ref_fk]
+        if orphan_km:
+            await session.execute(delete(Killmail).where(Killmail.killmail_id.in_(orphan_km)))
+
+    # Finally the BR row itself.
+    await session.execute(delete(BattleReport).where(BattleReport.br_id == br_id))
+
+
+@router.delete("/api/brs/{br_id}", status_code=204)
+async def delete_br(
+    br_id: str,
+    request: Request,
+    session: SessionDep,
+) -> None:
+    """Delete a battle report and its scoped data. FC / High Command only."""
+    user = current_user(request)
+    if not can_create_br(user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    exists = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    await _delete_br_cascade(session, br_id)
+    await session.commit()
+    log.info("brs.deleted", br_id=br_id, user=user.user_name)
 
 
 def _source_to_out(src: BrSource) -> BrSourceOut:

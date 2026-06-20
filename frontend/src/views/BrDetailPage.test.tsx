@@ -25,6 +25,7 @@ vi.mock('../api', async (importOriginal) => {
       addSource: vi.fn(),
       deleteSource: vi.fn(),
       refreshBr: vi.fn(),
+      deleteBr: vi.fn(),
       getBrStatus: vi.fn(),
     },
   }
@@ -166,6 +167,7 @@ describe('BrDetailPage', () => {
     vi.mocked(api.addSource).mockReset()
     vi.mocked(api.deleteSource).mockReset()
     vi.mocked(api.refreshBr).mockReset()
+    vi.mocked(api.deleteBr).mockReset()
     vi.mocked(api.getBrStatus).mockReset()
     // Defaults for non-critical calls
     vi.mocked(api.getSources).mockResolvedValue([])
@@ -475,6 +477,72 @@ describe('BrDetailPage', () => {
 
       await waitFor(() => expect(vi.mocked(api.refreshBr)).toHaveBeenCalledWith('br1'))
       await waitFor(() => expect(screen.getByTestId('ingest-progress')).toBeInTheDocument())
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Delete (FC / High Command)
+  // -------------------------------------------------------------------------
+
+  describe('delete button', () => {
+    function renderWithHome() {
+      return render(
+        <MemoryRouter
+          initialEntries={['/brs/br1']}
+          future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+        >
+          <Routes>
+            <Route path="/brs/:id" element={<BrDetailPage />} />
+            <Route path="/" element={<div>overview-home</div>} />
+          </Routes>
+        </MemoryRouter>
+      )
+    }
+
+    it('non-creator does not see the Delete button', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+      renderBrDetailPage()
+      await waitFor(() => expect(screen.getByText('Test BR')).toBeInTheDocument())
+      expect(screen.queryByTestId('delete-br-btn')).not.toBeInTheDocument()
+    })
+
+    it('confirmed delete calls api.deleteBr and navigates to the overview', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.deleteBr).mockResolvedValue(undefined)
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+      renderWithHome()
+      await waitFor(() => expect(screen.getByTestId('delete-br-btn')).toBeInTheDocument())
+      fireEvent.click(screen.getByTestId('delete-br-btn'))
+
+      await waitFor(() => expect(vi.mocked(api.deleteBr)).toHaveBeenCalledWith('br1'))
+      await waitFor(() => expect(screen.getByText('overview-home')).toBeInTheDocument())
+      confirmSpy.mockRestore()
+    })
+
+    it('cancelled confirm does not delete', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+      renderWithHome()
+      await waitFor(() => expect(screen.getByTestId('delete-br-btn')).toBeInTheDocument())
+      fireEvent.click(screen.getByTestId('delete-br-btn'))
+
+      expect(vi.mocked(api.deleteBr)).not.toHaveBeenCalled()
+      expect(screen.queryByText('overview-home')).not.toBeInTheDocument()
+      confirmSpy.mockRestore()
     })
   })
 })

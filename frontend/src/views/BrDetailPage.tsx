@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
@@ -428,7 +428,9 @@ function SourcesPanel({ brId, onRefreshTriggered }: SourcesPanelProps) {
 
 export function BrDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [br, setBr] = useState<BrDetail | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [displayTitle, setDisplayTitle] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -492,6 +494,22 @@ export function BrDetailPage() {
     setRefreshStatus(status)
   }
 
+  async function handleDelete() {
+    if (!id) return
+    const label = displayTitle || `BR ${id}`
+    if (!window.confirm(`Delete "${label}"? This permanently removes the battle report and cannot be undone.`)) {
+      return
+    }
+    setDeleting(true)
+    try {
+      await api.deleteBr(id)
+      navigate('/')
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message ?? e))
+      setDeleting(false)
+    }
+  }
+
   function handleRefreshReady() {
     setRefreshStatus(null)
     load()
@@ -525,15 +543,27 @@ export function BrDetailPage() {
           )}
         </div>
         {canCreate && (
-          <button
-            data-testid="refresh-btn"
-            className="btn"
-            disabled={refreshing}
-            onClick={() => { void handleRefresh() }}
-            style={{ fontSize: '0.85rem' }}
-          >
-            {refreshing ? 'Refreshing…' : '↻ Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              data-testid="refresh-btn"
+              className="btn"
+              disabled={refreshing}
+              onClick={() => { void handleRefresh() }}
+              style={{ fontSize: '0.85rem' }}
+            >
+              {refreshing ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+            <button
+              data-testid="delete-br-btn"
+              className="btn"
+              disabled={deleting}
+              onClick={() => { void handleDelete() }}
+              title="Delete this battle report (FC / High Command)"
+              style={{ fontSize: '0.85rem', color: 'var(--bad)', borderColor: 'var(--bad)' }}
+            >
+              {deleting ? 'Deleting…' : '🗑 Delete'}
+            </button>
+          </div>
         )}
       </div>
 

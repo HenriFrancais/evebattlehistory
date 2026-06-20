@@ -527,6 +527,20 @@ export const api = {
     jsonFetch<void>(`${API}/brs/${id}/sources/${sourceId}`, { method: 'DELETE' }),
   refreshBr: (id: string) =>
     jsonFetch<BrStatus>(`${API}/brs/${id}/refresh`, { method: 'POST' }),
+  deleteBr: async (id: string): Promise<void> => {
+    // 204 No Content — don't parse a JSON body.
+    const res = await fetch(`${API}/brs/${id}`, { method: 'DELETE', headers: _impersonateHeaders() })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        if (typeof body?.detail === 'string') detail = body.detail
+      } catch {
+        // non-JSON error body; keep statusText
+      }
+      throw new ApiError(res.status, detail)
+    }
+  },
   getBr: (id: string) => jsonFetch<BrDetail>(`${API}/brs/${id}`),
   getBrStatus: (id: string) => jsonFetch<BrStatus>(`${API}/brs/${id}/status`),
   uploadLogs: async (files: File[]): Promise<LogUploadResult[]> => {
