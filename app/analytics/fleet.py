@@ -470,6 +470,7 @@ async def _build_char_side_map(
     fight_ids: list[int],
     friendly_alliances: set[int],
     friendly_corps: set[int],
+    overrides: dict[tuple[str, int], str] | None = None,
 ) -> dict[int, str]:
     """Return character_id → 'friendly' | 'hostile' from killmail participants.
 
@@ -477,7 +478,17 @@ async def _build_char_side_map(
     Attacker rows supplement missing entries.  Characters with no alliance/corp info,
     or whose alliance/corp is not in the friendly sets, are classified 'hostile' —
     this avoids ever mislabelling a non-NV pilot as friendly.
+
+    FC/HC per-BR overrides (BrSideOverride table) are applied via classify_entity so
+    that manually overridden pilots are classified consistently with kill-side logic.
+
+    Log-only pilots (logi, links, support) who have no killmail presence are
+    supplemented from the Character table using their stored alliance_id/corp_id.
+    Without this step, friendly support pilots would default to 'hostile' via the
+    unknown→hostile policy.
     """
+    effective_overrides: dict[tuple[str, int], str] = overrides or {}
+
     km_ids: list[int] = list(
         (
             await session.execute(
@@ -502,13 +513,13 @@ async def _build_char_side_map(
     ).all():
         if char_id is None:
             continue
-        side = (
-            "friendly"
-            if (alli_id is not None and alli_id in friendly_alliances)
-            or (corp_id is not None and corp_id in friendly_corps)
-            else "hostile"
+        raw_side = classify_entity(
+            alli_id, corp_id,
+            baseline_alliances=friendly_alliances,
+            baseline_corps=friendly_corps,
+            overrides=effective_overrides,
         )
-        char_side[char_id] = side
+        char_side[char_id] = "friendly" if raw_side == "friendly" else "hostile"
 
     # Attackers (fill gaps — victim entry takes precedence via setdefault)
     for char_id, alli_id, corp_id in (
@@ -522,13 +533,45 @@ async def _build_char_side_map(
     ).all():
         if char_id is None:
             continue
-        side = (
-            "friendly"
-            if (alli_id is not None and alli_id in friendly_alliances)
-            or (corp_id is not None and corp_id in friendly_corps)
-            else "hostile"
+        raw_side = classify_entity(
+            alli_id, corp_id,
+            baseline_alliances=friendly_alliances,
+            baseline_corps=friendly_corps,
+            overrides=effective_overrides,
         )
-        char_side.setdefault(char_id, side)
+        char_side.setdefault(char_id, "friendly" if raw_side == "friendly" else "hostile")
+
+    # Supplement with Character table rows for log-only pilots (logi/links/support)
+    # who have LogEventBucket rows but no killmail presence. Without this, those
+    # friendly pilots default to "hostile" via char_side_map.get(cid, "hostile").
+    log_char_ids: set[int] = set(
+        (
+            await session.execute(
+                select(LogEventBucket.character_id)
+                .where(LogEventBucket.fight_id.in_(fight_ids))
+                .distinct()
+            )
+        ).scalars()
+    )
+    missing_ids = log_char_ids - set(char_side.keys())
+    if missing_ids:
+        for char_id, alli_id, corp_id in (
+            await session.execute(
+                select(
+                    Character.character_id,
+                    Character.alliance_id,
+                    Character.corporation_id,
+                ).where(Character.character_id.in_(missing_ids))
+            )
+        ).all():
+            side = classify_entity(
+                alli_id, corp_id,
+                baseline_alliances=friendly_alliances,
+                baseline_corps=friendly_corps,
+                overrides=effective_overrides,
+            )
+            # Map "unassigned" → "hostile" (unknown-side → hostile, same policy as killmail side)
+            char_side[char_id] = "friendly" if side == "friendly" else "hostile"
 
     return char_side
 
@@ -541,6 +584,7 @@ async def _compute_leaders(
     settings: Settings,
     friendly_alliances: set[int] | None = None,
     friendly_corps: set[int] | None = None,
+    overrides: dict[tuple[str, int], str] | None = None,
 ) -> list[Leaders]:
     """Return per-bucket Leaders aligned index-for-index to *x*.
 
@@ -561,7 +605,7 @@ async def _compute_leaders(
 
     # Build character → side map from killmail participants.
     char_side_map = await _build_char_side_map(
-        session, fight_ids, eff_friendly_alliances, eff_friendly_corps
+        session, fight_ids, eff_friendly_alliances, eff_friendly_corps, overrides=overrides
     )
 
     # Fetch per-(bucket_ts, character_id, effect_type, direction) aggregates.
@@ -846,6 +890,7 @@ async def fleet_timeline(
         session, fight_ids, x, x_index, settings or get_settings(),
         friendly_alliances=friendly_alliances,
         friendly_corps=friendly_corps,
+        overrides=side_overrides,
     )
 
     return FleetTimeline(
