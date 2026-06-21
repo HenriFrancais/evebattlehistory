@@ -63,6 +63,18 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                     char, ship = split_entity(other_name, entity_names)
                     other_name = char if char is not None else other_name
                     other_ship = ship
+                # Fix (B): clean source_name/target_name for EWAR lines so they
+                # contain only the character name, stripping ship-type prefixes
+                # and corp/alliance tickers (e.g. "Proteus Nate Marston [NVACA] <NV>"
+                # → "Nate Marston").
+                source_name = e.source_name
+                target_name = e.target_name
+                if source_name:
+                    char, _ = split_entity(source_name, entity_names)
+                    source_name = char if char is not None else source_name
+                if target_name:
+                    char, _ = split_entity(target_name, entity_names)
+                    target_name = char if char is not None else target_name
                 rows.append(LogEvent(
                     file_id=gf.file_id, character_id=gf.claimed_character_id, ts=e.ts,
                     direction=e.direction, effect_type=e.effect_type, amount=e.amount,
@@ -70,7 +82,7 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                     other_corp_ticker=e.other_corp_ticker,
                     other_alliance_ticker=e.other_alliance_ticker, other_ship_name=other_ship,
                     module_name=e.module_name,
-                    source_name=e.source_name, target_name=e.target_name,
+                    source_name=source_name, target_name=target_name,
                     authoritative=e.authoritative,
                     fight_id=None,
                 ))

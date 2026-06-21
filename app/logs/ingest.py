@@ -160,12 +160,22 @@ async def ingest_log(
 
     # Recover Character (Ship) for non-damage targets the parser left merged, using
     # the SDE ship-name dictionary. Damage already splits (ship in parens).
+    # Also clean source_name/target_name on EWAR lines: the parser emits raw
+    # strings like "Proteus Nate Marston [NVACA] <NV>" — split_entity strips
+    # the ship prefix and corp/alliance tickers to leave just the character name.
     entity_names = await entity_name_set(session)
     for e in parsed.events:
         if e.effect_type and e.effect_type != "damage" and not e.other_ship_name and e.other_name:
             char, ship = split_entity(e.other_name, entity_names)
             object.__setattr__(e, "other_name", char if char is not None else e.other_name)
             object.__setattr__(e, "other_ship_name", ship)
+        # Fix (B): clean source_name/target_name for EWAR lines
+        if e.source_name:
+            char, _ = split_entity(e.source_name, entity_names)
+            object.__setattr__(e, "source_name", char if char is not None else e.source_name)
+        if e.target_name:
+            char, _ = split_entity(e.target_name, entity_names)
+            object.__setattr__(e, "target_name", char if char is not None else e.target_name)
 
     # 8. Bulk-insert LogEvent rows
     if parsed.events:

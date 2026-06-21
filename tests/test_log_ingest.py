@@ -545,7 +545,71 @@ async def test_ingest_third_party_scram_attributes_real_tackler(db_session_maker
     assert row.character_id == 2112615087       # owner column still the file owner
 
 
+_EWAR_SOURCE_TARGET_RAW_LOG = GAMELOG_HEADER + (
+    b"[ 2026.06.14 20:57:21 ] (combat) "
+    b"<color=0xffffffff><b>Warp disruption attempt</b> "
+    b"<color=0x77ffffff><font size=10>from</font> "
+    b"<color=0xffffffff><b>"
+    b"<font size=11><color=\"orange\"><b>Proteus</b></color></font> "
+    b"<font size=9><color=\"yellow\">Nate Marston</color></font> "
+    b"<font size=8><color=\"0xFF00FFFF\">[NVACA] </color></font>"
+    b"<font size=8><color=\"0xFF00FFFF\">&lt;NV&gt; </color></font>"
+    b"</b> "
+    b"<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    b"<font size=11><color=\"orange\"><b>Leshak</b></color></font> "
+    b"<font size=9><color=\"yellow\">Tom-w</color></font> "
+    b"<font size=8><color=\"0xFF00FFFF\">[OMGGF] </color></font>"
+    b"<font size=8><color=\"0xFF00FFFF\">&lt;LUPUS&gt; </color></font>\n"
+)
+
+
 @pytest.mark.asyncio
+async def test_ingest_cleans_source_and_target_names(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Bug (B): source_name/target_name must be SDE-cleaned (char name only, no ship/corp).
+
+    Raw source: "Proteus Nate Marston [NVACA] <NV>" → should become "Nate Marston"
+    Raw target: "Leshak Tom-w [OMGGF] <LUPUS>"    → should become "Tom-w"
+
+    Before the fix, ingest.py did NOT apply split_entity to source_name/target_name,
+    so raw entity strings with ship type prefixes were stored verbatim.
+    """
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+
+    raw = _EWAR_SOURCE_TARGET_RAW_LOG
+    async with db_session_maker() as session:
+        # Register Proteus and Leshak as known ship types so split_entity can split them
+        session.add(InventoryType(type_id=2, name="Proteus", category_id=6))
+        session.add(InventoryType(type_id=3, name="Leshak", category_id=6))
+        await session.flush()
+        await ingest_log(
+            session,
+            get_settings(),
+            "Ra'zok",
+            "20260614_205721_2112615087.txt",
+            raw,
+            _make_roster_lookup({"testchar alpha": 2112615087}),
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        row = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "disrupt")
+        )).scalar_one()
+
+    assert row.source_name == "Nate Marston", (
+        f"Expected source_name='Nate Marston' but got {row.source_name!r}. "
+        "Fix: apply split_entity to source_name in ingest.py"
+    )
+    assert row.target_name == "Tom-w", (
+        f"Expected target_name='Tom-w' but got {row.target_name!r}. "
+        "Fix: apply split_entity to target_name in ingest.py"
+    )
+
+
 async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     from sqlalchemy import select
 
