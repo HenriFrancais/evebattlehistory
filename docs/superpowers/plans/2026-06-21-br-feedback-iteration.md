@@ -1278,7 +1278,9 @@ git -C /home/matron/dev/nv-wh-fight-history commit -m "$(printf '%s\n\n%s' 'feat
 
 - Backend: `uv run pytest -q` ; `uv run ruff check app tests` ; `uv run mypy app`.
 - Frontend: `cd frontend && npm test`.
-- Backfill existing prod DB (one-time): `ALTER TABLE log_event ADD COLUMN source_name VARCHAR(128); … target_name VARCHAR(128); … authoritative BOOLEAN DEFAULT 0; … dedupe_suppressed BOOLEAN DEFAULT 0;` and `ALTER TABLE killmail ADD COLUMN damage_taken INTEGER;` then `python -m app.logs.reparse`.
+- Backfill existing prod DB (one-time):
+  1. Run the ALTER TABLE statements: `ALTER TABLE log_event ADD COLUMN source_name VARCHAR(128); ALTER TABLE log_event ADD COLUMN target_name VARCHAR(128); ALTER TABLE log_event ADD COLUMN authoritative BOOLEAN DEFAULT 0; ALTER TABLE log_event ADD COLUMN dedupe_suppressed BOOLEAN DEFAULT 0; ALTER TABLE killmail ADD COLUMN damage_taken INTEGER;`
+  2. Run `python -m app.logs.reparse` — this replays gamelogs and backfills the **LogEvent** columns (`source_name`, `target_name`, `authoritative`, `dedupe_suppressed`). It does **NOT** backfill `Killmail.damage_taken`; that column is only populated on killmail re-ingest (e.g. re-running the ESI/zKB ingest pipeline for those killmails).
 
 ## Self-review notes (for the executor)
 

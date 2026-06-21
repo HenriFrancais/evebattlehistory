@@ -112,6 +112,9 @@ class Killmail(Base):
     points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # prod: ALTER TABLE killmail ADD COLUMN damage_taken INTEGER;
+    # NOTE: damage_taken backfills only on killmail re-ingest (ESI/zKB pipeline re-run).
+    # Running `python -m app.logs.reparse` does NOT backfill this column — reparse only
+    # replays gamelogs and updates LogEvent columns (source_name, target_name, etc.).
     damage_taken: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
