@@ -23,6 +23,7 @@ from app.sde.load import entity_name_set
 async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
     """Re-parse every GamelogFile with a readable stored file. Returns count re-parsed."""
     entity_names = await entity_name_set(session)
+    _TACKLE: frozenset[str] = frozenset({"scram", "disrupt"})
     files = list((await session.execute(select(GamelogFile))).scalars())
     done = 0
     for gf in files:
@@ -77,7 +78,6 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                     target_name = char  # None when ship-only/NPC
                 # Fix (B2): resolve "you" to owner for authoritative EWAR events.
                 # Runs AFTER C1 so the authoritative-None is correctly resolved.
-                _TACKLE = frozenset({"scram", "disrupt"})
                 if e.effect_type in _TACKLE and e.authoritative:
                     if source_name is None and gf.character_name is not None:
                         source_name = gf.character_name
