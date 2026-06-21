@@ -69,21 +69,42 @@ describe('FleetsPanel', () => {
     expect(screen.getAllByText(/reship/i).length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders weapon role chips for a pilot in per-character view', async () => {
+  it('shows expand toggle in per-character view and nested module rows on expand', async () => {
     vi.mocked(api.composition).mockResolvedValue({
       by_user_available: false,
       sides: [{ side_kind: 'friendly', pilot_count: 1,
         ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1 }],
         pilots: [{ character_id: 1, character_name: 'A', ship_type_id: 22428, ship_name: 'Absolution',
                    lost: false, reship: false, killmail_id: null, user_name: null,
-                   weapons: [{ type_id: 3074, name: 'Electron Blaster Cannon I', role: 'turret' }] }] }],
+                   weapons: [
+                     { type_id: 3074, name: 'Electron Blaster Cannon I', role: 'turret' },
+                     { type_id: 2185, name: 'Hammerhead II', role: 'drone' },
+                   ] }] }],
     })
     const user = userEvent.setup()
     render(<FleetsPanel brId="br1" />)
     await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: /Per-character/i }))
-    expect(screen.getByText(/turret/i)).toBeInTheDocument()
-    expect(screen.getByText(/Electron Blaster Cannon I/i)).toBeInTheDocument()
+
+    // Toggle button is visible; modules collapsed by default
+    const toggleBtn = screen.getByTestId('toggle-modules-btn')
+    expect(toggleBtn).toBeInTheDocument()
+    expect(screen.queryByTestId('pilot-modules')).not.toBeInTheDocument()
+
+    // Expand modules
+    await user.click(toggleBtn)
+    const moduleRows = screen.getAllByTestId('module-row')
+    expect(moduleRows).toHaveLength(2)
+
+    // Each row has an icon img (alt="" → role=presentation) and the item name
+    const itemIcons = document.querySelectorAll('img.comp-item-icon')
+    expect(itemIcons.length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('Electron Blaster Cannon I')).toBeInTheDocument()
+    expect(screen.getByText('Hammerhead II')).toBeInTheDocument()
+
+    // Collapse again
+    await user.click(toggleBtn)
+    expect(screen.queryByTestId('pilot-modules')).not.toBeInTheDocument()
   })
 
   it('links a lost pilot ship to zKillboard', async () => {
