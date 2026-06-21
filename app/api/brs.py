@@ -29,8 +29,11 @@ from app.api.schemas import (
     BrSummary,
     FightOut,
     FightSideOut,
+    ItemLossBreakdownOut,
+    ItemLossRowOut,
     LeaderboardRowOut,
     LossDamageAttributionOut,
+    SlotLossOut,
 )
 from app.config import get_app_config, get_settings
 from app.db.models import (
@@ -599,6 +602,58 @@ async def get_loss_damage_attribution(
                 final_blow=a.final_blow,
             )
             for a in result.attackers
+        ],
+    )
+
+
+@router.get("/api/brs/{br_id}/losses/{killmail_id}/items")
+async def get_loss_item_breakdown(
+    br_id: str,
+    killmail_id: int,
+    session: SessionDep,
+) -> ItemLossBreakdownOut:
+    """Return per-slot item loss breakdown for one killmail in a battle report.
+
+    Groups KillmailItem rows by slot category with destroyed/dropped quantity
+    sums and individual item rows (names resolved from InventoryType).
+    value is always None — no per-item ISK price source is available.
+
+    404 if the killmail is not linked to the given BR via the BR→fight→FightKill chain.
+    """
+    from app.analytics.item_losses import item_loss_breakdown
+
+    # Guard: verify killmail belongs to this BR via BrFight → FightKill join.
+    km_in_br = (
+        await session.execute(
+            select(FightKill.killmail_id)
+            .join(BrFight, BrFight.fight_id == FightKill.fight_id)
+            .where(BrFight.br_id == br_id, FightKill.killmail_id == killmail_id)
+        )
+    ).scalar_one_or_none()
+    if km_in_br is None:
+        raise HTTPException(status_code=404, detail="Killmail not found in this battle report")
+
+    result = await item_loss_breakdown(session, killmail_id)
+    return ItemLossBreakdownOut(
+        killmail_id=result.killmail_id,
+        slots=[
+            SlotLossOut(
+                location=sl.location,
+                destroyed_qty=sl.destroyed_qty,
+                dropped_qty=sl.dropped_qty,
+                value=sl.value,
+                items=[
+                    ItemLossRowOut(
+                        type_id=item.type_id,
+                        name=item.name,
+                        location=item.location,
+                        qty_destroyed=item.qty_destroyed,
+                        qty_dropped=item.qty_dropped,
+                    )
+                    for item in sl.items
+                ],
+            )
+            for sl in result.slots
         ],
     )
 

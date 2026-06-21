@@ -486,3 +486,29 @@ class BrDamageLeaderboardOut(BaseModel):
     rows: list[LeaderboardRowOut]  # sorted by damage_done desc
     total_attributed: int
     logs_present: bool
+
+
+# ---------------------------------------------------------------------------
+# Item loss breakdown schemas (Task 19)
+# ---------------------------------------------------------------------------
+
+
+class ItemLossRowOut(BaseModel):
+    type_id: int
+    name: str
+    location: str
+    qty_destroyed: int
+    qty_dropped: int
+
+
+class SlotLossOut(BaseModel):
+    location: str
+    destroyed_qty: int
+    dropped_qty: int
+    value: float | None  # always None — no per-item price source
+    items: list[ItemLossRowOut]
+
+
+class ItemLossBreakdownOut(BaseModel):
+    killmail_id: int
+    slots: list[SlotLossOut]  # ordered: high,med,low,rig,subsystem,drone_bay,cargo,implant,other
