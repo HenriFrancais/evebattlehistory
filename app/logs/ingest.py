@@ -183,6 +183,9 @@ async def ingest_log(
                 other_alliance_ticker=e.other_alliance_ticker,
                 other_ship_name=e.other_ship_name,
                 module_name=e.module_name,
+                source_name=e.source_name,
+                target_name=e.target_name,
+                authoritative=e.authoritative,
                 fight_id=None,
             )
             for e in parsed.events

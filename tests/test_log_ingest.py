@@ -501,6 +501,50 @@ def test_post_logs_oversize_rejected_per_file(  # type: ignore[no-untyped-def]
     assert "message" in results[0]
 
 
+_THIRD_PARTY_SCRAM_LOG_BYTES = GAMELOG_HEADER + (
+    b"[ 2026.01.01 12:06:44 ] (combat) "
+    b"<color=0xffffffff><b>Warp scramble attempt</b> "
+    b"<color=0x77ffffff><font size=10>from</font> "
+    b"<color=0xffffffff><b>"
+    b"<font size=12><color=0xFFFFFFFF><b>AllyChar Kyte</b> </color></font>"
+    b"<font size=12><color=0xFFFFB300>[NV]</color></font>"
+    b"<font size=12>[NVACA]</font> "
+    b"<font size=12><color=0xFFFFFFFF><b>Muninn</b></color></font></b> "
+    b"<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+    b"<font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font>"
+    b"<font size=12><color=0xFFFFB300>[10MN]</color></font>"
+    b"<font size=12>[.EFG]</font> "
+    b"<font size=12><color=0xFFFFFFFF><b>Omen Navy Issue</b></color></font>\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_third_party_scram_attributes_real_tackler(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import LogEvent
+    from app.logs.ingest import ingest_log
+
+    raw = _THIRD_PARTY_SCRAM_LOG_BYTES
+    async with db_session_maker() as session:
+        await ingest_log(
+            session, get_settings(), "Ra'zok", "20260101_120000_2112615087.txt", raw,
+            _make_roster_lookup({"testchar alpha": 2112615087}),
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        row = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "scram")
+        )).scalar_one()
+    assert row.authoritative is False
+    assert row.source_name == "AllyChar Kyte"
+    assert row.target_name == "FakeEnemy Delta"
+    assert row.other_name == "AllyChar Kyte"   # real tackler
+    assert row.character_id == 2112615087       # owner column still the file owner
+
+
 @pytest.mark.asyncio
 async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     from sqlalchemy import select

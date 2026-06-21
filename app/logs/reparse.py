@@ -69,7 +69,10 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                     quality=e.quality, other_name=other_name,
                     other_corp_ticker=e.other_corp_ticker,
                     other_alliance_ticker=e.other_alliance_ticker, other_ship_name=other_ship,
-                    module_name=e.module_name, fight_id=None,
+                    module_name=e.module_name,
+                    source_name=e.source_name, target_name=e.target_name,
+                    authoritative=e.authoritative,
+                    fight_id=None,
                 ))
             if rows:
                 session.add_all(rows)
