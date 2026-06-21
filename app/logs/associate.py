@@ -131,6 +131,71 @@ async def _rebuild_buckets_for_pairs(
     await session.flush()
 
 
+_EWAR_DEDUPE_TYPES = ("scram", "disrupt")
+
+
+async def _dedupe_ewar_relationships(session: AsyncSession, fight_ids: set[int]) -> None:
+    """Collapse duplicate tackle observations seen across multiple logs.
+
+    One physical tackle can be logged by the tackler (authoritative), the target,
+    and any number of third-party observers. Group EWAR events by
+    (fight_id, floor(ts)->bucket, source_name, target_name, effect_type); keep one
+    canonical row per group preferring authoritative=True, and set
+    ``dedupe_suppressed=True`` on the rest so the aggregator counts each tackle once.
+    Reversible (no deletes) → idempotent under re-association/reparse.
+    """
+    if not fight_ids:
+        return
+
+    # Reset suppression for these fights so the pass is fully recomputable.
+    await session.execute(
+        update(LogEvent)
+        .where(
+            LogEvent.fight_id.in_(list(fight_ids)),
+            LogEvent.effect_type.in_(list(_EWAR_DEDUPE_TYPES)),
+        )
+        .values(dedupe_suppressed=False)
+    )
+
+    rows = (
+        await session.execute(
+            select(
+                LogEvent.event_id,
+                LogEvent.fight_id,
+                LogEvent.ts,
+                LogEvent.source_name,
+                LogEvent.target_name,
+                LogEvent.effect_type,
+                LogEvent.authoritative,
+            ).where(
+                LogEvent.fight_id.in_(list(fight_ids)),
+                LogEvent.effect_type.in_(list(_EWAR_DEDUPE_TYPES)),
+            )
+        )
+    ).all()
+
+    groups: dict[
+        tuple[int, dt.datetime, str | None, str | None, str], list[tuple[int, bool]]
+    ] = defaultdict(list)
+    for event_id, fid, ts, src, tgt, etype, auth in rows:
+        groups[(fid, _floor_to_bucket(ts), src, tgt, etype)].append((event_id, bool(auth)))
+
+    suppress_ids: list[int] = []
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda m: (not m[1], m[0]))  # authoritative first, then lowest event_id
+        suppress_ids.extend(eid for eid, _ in members[1:])
+
+    if suppress_ids:
+        await session.execute(
+            update(LogEvent)
+            .where(LogEvent.event_id.in_(suppress_ids))
+            .values(dedupe_suppressed=True)
+        )
+    await session.flush()
+
+
 async def associate_file(
     session: AsyncSession,
     file_id: int,
@@ -243,6 +308,9 @@ async def associate_file(
     all_pairs = {(fid, character_id) for fid in old_fight_ids} | new_pairs
     await _rebuild_buckets_for_pairs(session, all_pairs)
 
+    # 6. Dedupe tackle relationships for all fights touched by this file
+    await _dedupe_ewar_relationships(session, {fid for fid, _ in all_pairs})
+
     log.info(
         "associate_file.done",
         file_id=file_id,
@@ -319,6 +387,11 @@ async def associate_logs_for_br(session: AsyncSession, br_id: str) -> None:
                 file_id=file_id,
                 error=str(exc),
             )
+
+    # Dedupe tackle relationships across all files for this BR's fights.
+    # associate_file already dedupes per-file, but now all files are processed
+    # so we do a final pass over all fights to collapse cross-file duplicates.
+    await _dedupe_ewar_relationships(session, {f.fight_id for f in fights})
 
 
 async def associate_file_to_all(session: AsyncSession, file_id: int) -> None:

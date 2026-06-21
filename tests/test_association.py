@@ -1279,3 +1279,72 @@ def test_floor_to_bucket_treats_naive_as_utc_under_nonutc_tz(monkeypatch) -> Non
     finally:
         monkeypatch.delenv("TZ", raising=False)
         _time.tzset()
+
+
+# ---------------------------------------------------------------------------
+# 14. Dedupe: one physical tackle logged by two characters collapses to one row
+# ---------------------------------------------------------------------------
+
+
+async def test_ewar_dedupe_one_relationship_across_two_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Owner (authoritative) + bystander (non-authoritative) logs of the SAME scram in the
+    SAME bucket collapse to ONE surviving row; bystander attribution dropped."""
+    from sqlalchemy import select
+
+    from app.db.models import LogEvent
+    from app.logs.associate import _dedupe_ewar_relationships
+
+    async with db_session_maker() as session:
+        fight_id = await _insert_fight(
+            session,
+            victim_char_id=CHAR_A,
+            attacker_char_id=CHAR_B,
+            started_at=FIGHT_START,
+            ended_at=FIGHT_END,
+        )
+        # Both timestamps fall in the same 5-second bucket (20:00:00-20:00:05)
+        ts = FIGHT_START + dt.timedelta(seconds=3)
+        f1 = await _insert_gamelog_file(session, character_id=CHAR_A)
+        session.add(
+            LogEvent(
+                file_id=f1,
+                character_id=CHAR_A,
+                ts=ts,
+                direction="out",
+                effect_type="scram",
+                source_name="OwnerChar",
+                target_name="FakeEnemy Delta",
+                authoritative=True,
+                fight_id=fight_id,
+            )
+        )
+        f2 = await _insert_gamelog_file(session, character_id=CHAR_B)
+        session.add(
+            LogEvent(
+                file_id=f2,
+                character_id=CHAR_B,
+                ts=ts + dt.timedelta(seconds=1),
+                direction="in",
+                effect_type="scram",
+                source_name="OwnerChar",
+                target_name="FakeEnemy Delta",
+                authoritative=False,
+                fight_id=fight_id,
+            )
+        )
+        await session.flush()
+
+        await _dedupe_ewar_relationships(session, {fight_id})
+
+        surviving = (
+            await session.execute(
+                select(LogEvent).where(
+                    LogEvent.fight_id == fight_id,
+                    LogEvent.effect_type == "scram",
+                    LogEvent.dedupe_suppressed.is_(False),
+                )
+            )
+        ).scalars().all()
+
+    assert len(surviving) == 1
+    assert surviving[0].authoritative is True
