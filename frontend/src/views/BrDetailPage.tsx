@@ -8,7 +8,7 @@ import { SnapshotPanel } from '../components/SnapshotPanel'
 import { FleetsPanel } from '../components/FleetsPanel'
 import { SidesEditor } from '../components/SidesEditor'
 import { IngestProgress } from '../components/IngestProgress'
-import { fmtIsk } from '../format'
+import { fmtIsk, fmtDateTime } from '../format'
 
 function MyCoverageSection({ id }: { id: string }) {
   const [myCoverage, setMyCoverage] = useState<UserCoverage | null>(null)
@@ -569,6 +569,12 @@ export function BrDetailPage() {
 
       <div className="panel" data-testid="summary-section">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
+          <div>
+            <div className="stat-label">Battle (UTC)</div>
+            <div className="stat-value" style={{ fontSize: '1rem' }}>
+              {fmtDateTime(br.battle_at ?? br.created_at)}
+            </div>
+          </div>
           <div>
             <div className="stat-label">System</div>
             <div className="stat-value" style={{ fontSize: '1rem' }}>

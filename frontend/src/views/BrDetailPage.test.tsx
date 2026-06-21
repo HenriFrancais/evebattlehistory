@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -544,5 +544,16 @@ describe('BrDetailPage', () => {
       expect(screen.queryByText('overview-home')).not.toBeInTheDocument()
       confirmSpy.mockRestore()
     })
+  })
+
+  it('shows the Battle (UTC) datetime in the summary header', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockRejectedValue(new ApiError(404, 'none'))
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+    renderBrDetailPage()
+    const summary = await screen.findByTestId('summary-section')
+    expect(within(summary).getByText('Battle (UTC)')).toBeInTheDocument()
+    expect(within(summary).getByText('2026-06-10 18:00')).toBeInTheDocument()
   })
 })
