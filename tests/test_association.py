@@ -1348,3 +1348,109 @@ async def test_ewar_dedupe_one_relationship_across_two_logs(db_session_maker) ->
 
     assert len(surviving) == 1
     assert surviving[0].authoritative is True
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: bucket-boundary straddle dedupe (tolerance window, not absolute bucket)
+# ---------------------------------------------------------------------------
+
+
+async def test_ewar_dedupe_straddle_collapses_to_one(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Two observations of the same (source,target,effect) 4s and 6s apart (straddling a
+    5s bucket boundary) must collapse to ONE surviving row, authoritative preferred."""
+    from app.db.models import LogEvent
+    from app.logs.associate import _dedupe_ewar_relationships
+
+    async with db_session_maker() as session:
+        fight_id = await _insert_fight(
+            session,
+            victim_char_id=CHAR_A,
+            attacker_char_id=CHAR_B,
+            started_at=FIGHT_START,
+            ended_at=FIGHT_END,
+        )
+        # ts1 = 20:00:04, ts2 = 20:00:06 — straddle the 20:00:05 bucket boundary
+        ts_base = FIGHT_START  # 20:00:00
+        ts1 = ts_base + dt.timedelta(seconds=4)
+        ts2 = ts_base + dt.timedelta(seconds=6)
+
+        f1 = await _insert_gamelog_file(session, character_id=CHAR_A)
+        session.add(LogEvent(
+            file_id=f1, character_id=CHAR_A, ts=ts1, direction="out", effect_type="scram",
+            source_name="Tackler", target_name="Target", authoritative=True,
+            fight_id=fight_id,
+        ))
+        f2 = await _insert_gamelog_file(session, character_id=CHAR_B)
+        session.add(LogEvent(
+            file_id=f2, character_id=CHAR_B, ts=ts2, direction="in", effect_type="scram",
+            source_name="Tackler", target_name="Target", authoritative=False,
+            fight_id=fight_id,
+        ))
+        await session.flush()
+
+        await _dedupe_ewar_relationships(session, {fight_id})
+
+        surviving = (
+            await session.execute(
+                select(LogEvent).where(
+                    LogEvent.fight_id == fight_id,
+                    LogEvent.effect_type == "scram",
+                    LogEvent.dedupe_suppressed.is_(False),
+                )
+            )
+        ).scalars().all()
+
+    # Both timestamps are within BUCKET_SECONDS (5s) of each other → one cluster → one survivor
+    assert len(surviving) == 1, (
+        f"Expected 1 surviving (straddled bucket), got {len(surviving)}"
+    )
+    assert surviving[0].authoritative is True  # authoritative wins
+
+
+async def test_ewar_dedupe_distant_observations_both_survive(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Two observations of the same (source,target,effect) 30s apart must BOTH survive
+    as distinct re-tackles, not collapsed."""
+    from app.db.models import LogEvent
+    from app.logs.associate import _dedupe_ewar_relationships
+
+    async with db_session_maker() as session:
+        fight_id = await _insert_fight(
+            session,
+            victim_char_id=CHAR_A,
+            attacker_char_id=CHAR_B,
+            started_at=FIGHT_START,
+            ended_at=FIGHT_END,
+        )
+        ts1 = FIGHT_START + dt.timedelta(seconds=10)
+        ts2 = FIGHT_START + dt.timedelta(seconds=40)  # 30s apart → distinct re-tackle
+
+        f1 = await _insert_gamelog_file(session, character_id=CHAR_A)
+        session.add(LogEvent(
+            file_id=f1, character_id=CHAR_A, ts=ts1, direction="out", effect_type="scram",
+            source_name="Tackler", target_name="Target", authoritative=True,
+            fight_id=fight_id,
+        ))
+        f2 = await _insert_gamelog_file(session, character_id=CHAR_B)
+        session.add(LogEvent(
+            file_id=f2, character_id=CHAR_B, ts=ts2, direction="in", effect_type="scram",
+            source_name="Tackler", target_name="Target", authoritative=True,
+            fight_id=fight_id,
+        ))
+        await session.flush()
+
+        await _dedupe_ewar_relationships(session, {fight_id})
+
+        surviving = (
+            await session.execute(
+                select(LogEvent).where(
+                    LogEvent.fight_id == fight_id,
+                    LogEvent.effect_type == "scram",
+                    LogEvent.dedupe_suppressed.is_(False),
+                )
+            )
+        ).scalars().all()
+
+    # 30s apart > BUCKET_SECONDS (5s) → two distinct clusters → both survive
+    assert len(surviving) == 2, (
+        f"Expected 2 distinct re-tackles (30s apart), got {len(surviving)}"
+    )

@@ -138,10 +138,17 @@ async def _dedupe_ewar_relationships(session: AsyncSession, fight_ids: set[int])
     """Collapse duplicate tackle observations seen across multiple logs.
 
     One physical tackle can be logged by the tackler (authoritative), the target,
-    and any number of third-party observers. Group EWAR events by
-    (fight_id, floor(ts)->bucket, source_name, target_name, effect_type); keep one
-    canonical row per group preferring authoritative=True, and set
-    ``dedupe_suppressed=True`` on the rest so the aggregator counts each tackle once.
+    and any number of third-party observers. For each
+    (fight_id, source_name, target_name, effect_type) group, sort observations by ts
+    and greedily cluster: an observation joins the current cluster if its ts is within
+    BUCKET_SECONDS of the cluster's anchor; start a new cluster otherwise.  Within each
+    cluster keep ONE representative (prefer authoritative=True, then lowest event_id) and
+    set dedupe_suppressed=True on the rest.
+
+    This collapses straddling duplicates (e.g. 4s and 6s apart) that bucket-boundary
+    alignment would miss, while keeping genuinely distinct re-tackles (e.g. 30s apart)
+    as separate events.
+
     Reversible (no deletes) → idempotent under re-association/reparse.
     """
     if not fight_ids:
@@ -174,18 +181,49 @@ async def _dedupe_ewar_relationships(session: AsyncSession, fight_ids: set[int])
         )
     ).all()
 
-    groups: dict[
-        tuple[int, dt.datetime, str | None, str | None, str], list[tuple[int, bool]]
+    # Group by (fight_id, source_name, target_name, effect_type) — no bucket floor.
+    groups_by_key: dict[
+        tuple[int, str | None, str | None, str], list[tuple[int, float, bool]]
     ] = defaultdict(list)
     for event_id, fid, ts, src, tgt, etype, auth in rows:
-        groups[(fid, _floor_to_bucket(ts), src, tgt, etype)].append((event_id, bool(auth)))
+        # Normalise ts to a float epoch for comparison.
+        ts_epoch: float
+        if ts.tzinfo is None:
+            ts_epoch = ts.replace(tzinfo=dt.UTC).timestamp()
+        else:
+            ts_epoch = ts.timestamp()
+        groups_by_key[(fid, src, tgt, etype)].append((event_id, ts_epoch, bool(auth)))
 
     suppress_ids: list[int] = []
-    for members in groups.values():
+    window = float(BUCKET_SECONDS)
+
+    for members in groups_by_key.values():
         if len(members) < 2:
             continue
-        members.sort(key=lambda m: (not m[1], m[0]))  # authoritative first, then lowest event_id
-        suppress_ids.extend(eid for eid, _ in members[1:])
+        # Sort by timestamp so the greedy clustering is deterministic.
+        members.sort(key=lambda m: m[1])
+
+        # Greedy clustering: each cluster has one anchor timestamp.
+        # An observation joins if its ts is within BUCKET_SECONDS of the anchor.
+        clusters: list[list[tuple[int, float, bool]]] = []
+        for event_id, ts_epoch, auth in members:
+            placed = False
+            for cluster in clusters:
+                anchor_ts = cluster[0][1]
+                if ts_epoch - anchor_ts <= window:
+                    cluster.append((event_id, ts_epoch, auth))
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([(event_id, ts_epoch, auth)])
+
+        # Within each cluster keep the best representative; suppress the rest.
+        for cluster in clusters:
+            if len(cluster) < 2:
+                continue
+            # Sort: authoritative first (True > False when negated), then lowest event_id.
+            cluster.sort(key=lambda m: (not m[2], m[0]))
+            suppress_ids.extend(eid for eid, _, _ in cluster[1:])
 
     if suppress_ids:
         await session.execute(
