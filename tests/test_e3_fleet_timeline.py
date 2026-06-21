@@ -763,10 +763,12 @@ async def test_leaders_per_bucket_picks_max_character(db_session_maker) -> None:
 
     idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
     ld = tl.leaders[idx]
-    assert ld.top_dmg_taken.name == "Bob" and ld.top_dmg_taken.amount == pytest.approx(300.0)
-    assert ld.top_dmg_dealt.name == "Alice" and ld.top_dmg_dealt.amount == pytest.approx(500.0)
-    assert ld.top_rep_recv.name == "Alice" and ld.top_rep_recv.amount == pytest.approx(200.0)
-    assert ld.top_rep_done.name == "Bob" and ld.top_rep_done.amount == pytest.approx(150.0)
+    # No killmail alliance data → both chars are unknown-side (treated as hostile).
+    assert ld.top_friendly_dmg_taken is None
+    assert ld.top_hostile_dmg_taken is not None
+    assert ld.top_hostile_dmg_taken.name == "Bob"
+    assert ld.top_hostile_dmg_taken.amount == pytest.approx(300.0)
+    assert ld.top_friendly_rep_recv is None
 
 
 async def test_leaders_aligned_to_x_and_null_when_absent(db_session_maker) -> None:  # type: ignore[no-untyped-def]
@@ -783,8 +785,10 @@ async def test_leaders_aligned_to_x_and_null_when_absent(db_session_maker) -> No
 
     assert len(tl.leaders) == len(tl.x)
     ld = tl.leaders[tl.x.index(int(BUCKET_TS_1.timestamp()))]
-    assert ld.top_dmg_dealt is not None
-    assert ld.top_dmg_taken is None and ld.top_rep_recv is None and ld.top_rep_done is None
+    # damage:out bucket only — all 3 incoming-damage/rep fields are None
+    assert ld.top_friendly_dmg_taken is None
+    assert ld.top_hostile_dmg_taken is None
+    assert ld.top_friendly_rep_recv is None
 
 
 async def test_leaders_empty_for_no_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
@@ -802,14 +806,195 @@ async def test_leaders_empty_for_no_logs(db_session_maker) -> None:  # type: ign
 
 
 # ---------------------------------------------------------------------------
+# Task 1 (side-aware): per-bucket leaders split by target's side
+# ---------------------------------------------------------------------------
+
+# Alliance IDs used in side-aware tests:
+_FRIENDLY_ALLI = 99006113   # NV baseline — always friendly
+_HOSTILE_ALLI  = 88888888   # not in baseline → hostile
+
+
+async def test_side_aware_leaders_friendly_dmg_taken(db_session_maker) -> None:
+    """top_friendly_dmg_taken = FRIENDLY char with max incoming damage.
+    top_hostile_dmg_taken = HOSTILE char with max incoming damage.
+    top_friendly_rep_recv = FRIENDLY char with max incoming reps.
+    Unknown-side chars are treated as HOSTILE."""
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+    from app.db.models import Character, Killmail, KillmailAttacker
+
+    # Four characters:
+    #   CHAR_F1 (friendly, alliance_id=99006113) — more dmg taken than CHAR_F2
+    #   CHAR_F2 (friendly, alliance_id=99006113) — less dmg taken; more reps recv than CHAR_F1
+    #   CHAR_H1 (hostile,  alliance_id=88888888) — highest hostile dmg taken
+    #   CHAR_H2 (hostile,  alliance_id=88888888) — less dmg taken
+    CHAR_F1 = 3100000001
+    CHAR_F2 = 3100000002
+    CHAR_H1 = 3200000001
+    CHAR_H2 = 3200000002
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+
+        # Create Alliance rows for FK constraints
+        from app.db.models import Alliance
+        session.add(Alliance(alliance_id=_FRIENDLY_ALLI, name="Friendly Alliance",
+                             last_seen_at=dt.datetime.now(dt.UTC)))
+        session.add(Alliance(alliance_id=_HOSTILE_ALLI, name="Hostile Alliance",
+                             last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+
+        # Create Character rows so names resolve
+        for cid, name in (
+            (CHAR_F1, "FriendlyOne"), (CHAR_F2, "FriendlyTwo"),
+            (CHAR_H1, "HostileOne"), (CHAR_H2, "HostileTwo"),
+        ):
+            await session.merge(
+                Character(character_id=cid, name=name,
+                          last_seen_at=dt.datetime.now(dt.UTC))
+            )
+        await session.flush()
+
+        # Killmail to establish alliance membership via KillmailAttacker rows.
+        # Use unique killmail_id values that won't collide with fight's own KMs.
+        km_base = 9_000_000
+        for i, (cid, alli) in enumerate(
+            [(CHAR_F1, _FRIENDLY_ALLI), (CHAR_F2, _FRIENDLY_ALLI),
+             (CHAR_H1, _HOSTILE_ALLI), (CHAR_H2, _HOSTILE_ALLI)]
+        ):
+            km_id = km_base + i
+            # Minimal Killmail row needed for FightKill FK
+            session.add(Killmail(
+                killmail_id=km_id,
+                killmail_time=FIGHT_START,
+                solar_system_id=31002222,
+                victim_character_id=None,
+                victim_ship_type_id=_SHIP_TYPE_ID,
+                total_value=0.0,
+                npc_kill=False,
+                solo_kill=False,
+            ))
+            await session.flush()
+            from app.db.models import FightKill
+            session.add(FightKill(fight_id=fight_id, killmail_id=km_id, side_idx=0))
+            await session.flush()
+            # Attacker row that carries alliance_id → side classification
+            session.add(KillmailAttacker(
+                killmail_id=km_id,
+                attacker_idx=0,
+                character_id=cid,
+                corporation_id=None,
+                alliance_id=alli,
+                ship_type_id=_SHIP_TYPE_ID,
+                weapon_type_id=None,
+                damage_done=0,
+                final_blow=False,
+                security_status=0.0,
+            ))
+        await session.flush()
+
+        # Log buckets: incoming damage for both sides; incoming reps for friendly
+        await _insert_bucket(session, fight_id, CHAR_F1, BUCKET_TS_1, "damage", "in", 500.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_F2, BUCKET_TS_1, "damage", "in", 200.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_H1, BUCKET_TS_1, "damage", "in", 800.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_H2, BUCKET_TS_1, "damage", "in", 100.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_F2, BUCKET_TS_1, "rep_armor", "in", 300.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_F1, BUCKET_TS_1, "rep_armor", "in", 100.0, 1)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(
+            session, br_id,
+            our_alliance_ids=[_FRIENDLY_ALLI],
+            settings=get_settings(),
+        )
+
+    idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
+    ld = tl.leaders[idx]
+
+    # Friendly char with most incoming damage
+    assert ld.top_friendly_dmg_taken is not None
+    assert ld.top_friendly_dmg_taken.name == "FriendlyOne"
+    assert ld.top_friendly_dmg_taken.amount == pytest.approx(500.0)
+
+    # Hostile char with most incoming damage
+    assert ld.top_hostile_dmg_taken is not None
+    assert ld.top_hostile_dmg_taken.name == "HostileOne"
+    assert ld.top_hostile_dmg_taken.amount == pytest.approx(800.0)
+
+    # Friendly char with most incoming reps
+    assert ld.top_friendly_rep_recv is not None
+    assert ld.top_friendly_rep_recv.name == "FriendlyTwo"
+    assert ld.top_friendly_rep_recv.amount == pytest.approx(300.0)
+
+
+async def test_side_aware_leaders_null_when_no_friendly(db_session_maker) -> None:
+    """When only hostile chars have log data, top_friendly_* fields are None."""
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+    from app.db.models import Character, FightKill, Killmail, KillmailAttacker
+
+    CHAR_H1 = 3300000001
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # Create Alliance rows for FK constraints
+        from app.db.models import Alliance
+        session.add(Alliance(alliance_id=_FRIENDLY_ALLI, name="Friendly Alliance",
+                             last_seen_at=dt.datetime.now(dt.UTC)))
+        session.add(Alliance(alliance_id=_HOSTILE_ALLI, name="Hostile Alliance",
+                             last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+        await session.merge(
+            Character(character_id=CHAR_H1, name="HostileOnly",
+                      last_seen_at=dt.datetime.now(dt.UTC))
+        )
+        await session.flush()
+
+        km_id = 9_100_000
+        session.add(Killmail(
+            killmail_id=km_id, killmail_time=FIGHT_START,
+            solar_system_id=31002222, victim_character_id=None,
+            victim_ship_type_id=_SHIP_TYPE_ID, total_value=0.0,
+            npc_kill=False, solo_kill=False,
+        ))
+        await session.flush()
+        session.add(FightKill(fight_id=fight_id, killmail_id=km_id, side_idx=0))
+        await session.flush()
+        session.add(KillmailAttacker(
+            killmail_id=km_id, attacker_idx=0, character_id=CHAR_H1, corporation_id=None,
+            alliance_id=_HOSTILE_ALLI, ship_type_id=_SHIP_TYPE_ID,
+            weapon_type_id=None, damage_done=0, final_blow=False, security_status=0.0,
+        ))
+        await session.flush()
+
+        await _insert_bucket(session, fight_id, CHAR_H1, BUCKET_TS_1, "damage", "in", 400.0, 1)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(
+            session, br_id,
+            our_alliance_ids=[_FRIENDLY_ALLI],
+            settings=get_settings(),
+        )
+
+    idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
+    ld = tl.leaders[idx]
+    assert ld.top_friendly_dmg_taken is None
+    assert ld.top_hostile_dmg_taken is not None
+    assert ld.top_hostile_dmg_taken.name == "HostileOnly"
+    assert ld.top_friendly_rep_recv is None
+
+
+# ---------------------------------------------------------------------------
 # Task 12: API endpoint exposes leaders[]
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """GET /api/brs/{br_id}/fleet-timeline response has leaders[] aligned to x[],
-    with top_dmg_taken populated and top_rep_recv null for a damage/in-only bucket."""
+    """GET /api/brs/{br_id}/fleet-timeline has leaders[] aligned to x[],
+    with top_hostile_dmg_taken populated (CHAR_A unknown-side → hostile)."""
     from app.config import get_app_config, get_settings
     from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
     from app.db.models import Character
@@ -852,10 +1037,11 @@ async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> Non
     bucket_idx = data["x"].index(int(BUCKET_TS_1.timestamp()))
     ld = data["leaders"][bucket_idx]
 
-    assert ld["top_dmg_taken"] is not None
-    assert ld["top_dmg_taken"]["name"] == "Alice"
-    assert ld["top_dmg_taken"]["amount"] == pytest.approx(400.0)
-    assert ld["top_rep_recv"] is None
+    assert ld["top_friendly_dmg_taken"] is None
+    assert ld["top_hostile_dmg_taken"] is not None
+    assert ld["top_hostile_dmg_taken"]["name"] == "Alice"
+    assert ld["top_hostile_dmg_taken"]["amount"] == pytest.approx(400.0)
+    assert ld["top_friendly_rep_recv"] is None
 
     reset_engine_for_tests()
     get_settings.cache_clear()

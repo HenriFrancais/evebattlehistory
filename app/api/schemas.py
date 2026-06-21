@@ -387,12 +387,11 @@ class LeaderEntryOut(BaseModel):
 
 
 class LeadersOut(BaseModel):
-    """Per-bucket leaders across the four tracked metrics."""
+    """Per-bucket leaders split by the target's side (3 fields)."""
 
-    top_dmg_taken: LeaderEntryOut | None
-    top_rep_recv: LeaderEntryOut | None
-    top_dmg_dealt: LeaderEntryOut | None
-    top_rep_done: LeaderEntryOut | None
+    top_friendly_dmg_taken: LeaderEntryOut | None
+    top_hostile_dmg_taken: LeaderEntryOut | None
+    top_friendly_rep_recv: LeaderEntryOut | None
 
 
 class FleetTimelineOut(BaseModel):

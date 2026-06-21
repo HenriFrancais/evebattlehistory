@@ -107,10 +107,9 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
         t_end=tl.t_end,
         leaders=[
             LeadersOut(
-                top_dmg_taken=_leader_out(ld.top_dmg_taken),
-                top_rep_recv=_leader_out(ld.top_rep_recv),
-                top_dmg_dealt=_leader_out(ld.top_dmg_dealt),
-                top_rep_done=_leader_out(ld.top_rep_done),
+                top_friendly_dmg_taken=_leader_out(ld.top_friendly_dmg_taken),
+                top_hostile_dmg_taken=_leader_out(ld.top_hostile_dmg_taken),
+                top_friendly_rep_recv=_leader_out(ld.top_friendly_rep_recv),
             )
             for ld in tl.leaders
         ],

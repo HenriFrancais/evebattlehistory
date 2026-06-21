@@ -345,12 +345,19 @@ class LeaderEntry:
 
 @dataclass
 class Leaders:
-    """Per-bucket leaders across the four tracked metrics."""
+    """Per-bucket leaders, split by the TARGET's side.
 
-    top_dmg_taken: LeaderEntry | None
-    top_rep_recv: LeaderEntry | None
-    top_dmg_dealt: LeaderEntry | None
-    top_rep_done: LeaderEntry | None
+    'friendly' = target's alliance_id ∈ friendly_alliances (or corp_id ∈ friendly_corps).
+    Characters whose side cannot be determined are treated as HOSTILE to avoid
+    mislabelling non-NV pilots as friendly.
+    """
+
+    top_friendly_dmg_taken: LeaderEntry | None
+    """Friendly character receiving the most incoming damage this bucket."""
+    top_hostile_dmg_taken: LeaderEntry | None
+    """Hostile (or unknown-side) character receiving the most incoming damage this bucket."""
+    top_friendly_rep_recv: LeaderEntry | None
+    """Friendly character receiving the most incoming reps this bucket."""
 
 
 @dataclass
@@ -458,29 +465,106 @@ async def _resolve_char_ships(
     return {cid: inv_names[sid] for cid, sid in char_ship.items() if sid in inv_names}
 
 
+async def _build_char_side_map(
+    session: AsyncSession,
+    fight_ids: list[int],
+    friendly_alliances: set[int],
+    friendly_corps: set[int],
+) -> dict[int, str]:
+    """Return character_id → 'friendly' | 'hostile' from killmail participants.
+
+    Victims are checked first (authoritative hull source mirrors _resolve_char_ships).
+    Attacker rows supplement missing entries.  Characters with no alliance/corp info,
+    or whose alliance/corp is not in the friendly sets, are classified 'hostile' —
+    this avoids ever mislabelling a non-NV pilot as friendly.
+    """
+    km_ids: list[int] = list(
+        (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id.in_(fight_ids))
+            )
+        ).scalars()
+    )
+    if not km_ids:
+        return {}
+
+    char_side: dict[int, str] = {}
+
+    # Victims
+    for char_id, alli_id, corp_id in (
+        await session.execute(
+            select(
+                Killmail.victim_character_id,
+                Killmail.victim_alliance_id,
+                Killmail.victim_corporation_id,
+            ).where(Killmail.killmail_id.in_(km_ids))
+        )
+    ).all():
+        if char_id is None:
+            continue
+        side = (
+            "friendly"
+            if (alli_id is not None and alli_id in friendly_alliances)
+            or (corp_id is not None and corp_id in friendly_corps)
+            else "hostile"
+        )
+        char_side[char_id] = side
+
+    # Attackers (fill gaps — victim entry takes precedence via setdefault)
+    for char_id, alli_id, corp_id in (
+        await session.execute(
+            select(
+                KillmailAttacker.character_id,
+                KillmailAttacker.alliance_id,
+                KillmailAttacker.corporation_id,
+            ).where(KillmailAttacker.killmail_id.in_(km_ids))
+        )
+    ).all():
+        if char_id is None:
+            continue
+        side = (
+            "friendly"
+            if (alli_id is not None and alli_id in friendly_alliances)
+            or (corp_id is not None and corp_id in friendly_corps)
+            else "hostile"
+        )
+        char_side.setdefault(char_id, side)
+
+    return char_side
+
+
 async def _compute_leaders(
     session: AsyncSession,
     fight_ids: list[int],
     x: list[int],
     x_index: dict[int, int],
     settings: Settings,
+    friendly_alliances: set[int] | None = None,
+    friendly_corps: set[int] | None = None,
 ) -> list[Leaders]:
     """Return per-bucket Leaders aligned index-for-index to *x*.
 
-    Returns [] (not a list of Leaders) when no log buckets exist — the
-    fleet_timeline empty-early-return case also returns [].
+    Returns [] (not a list of Leaders) when no log buckets exist.
 
-    Metric classification:
-      damage / in  → top_dmg_taken
-      damage / out → top_dmg_dealt
-      rep* / in    → top_rep_recv
-      rep* / out   → top_rep_done
+    Metric classification (by TARGET side):
+      FRIENDLY target, damage / in  → top_friendly_dmg_taken
+      HOSTILE  target, damage / in  → top_hostile_dmg_taken
+      FRIENDLY target, rep* / in    → top_friendly_rep_recv
+
+    Characters not found in the killmail side map are treated as HOSTILE.
     """
     if not x:
         return []
 
+    eff_friendly_alliances: set[int] = friendly_alliances or set()
+    eff_friendly_corps: set[int] = friendly_corps or set()
+
+    # Build character → side map from killmail participants.
+    char_side_map = await _build_char_side_map(
+        session, fight_ids, eff_friendly_alliances, eff_friendly_corps
+    )
+
     # Fetch per-(bucket_ts, character_id, effect_type, direction) aggregates.
-    # EWAR count effects are deliberately excluded — only amount effects matter.
     rows = (
         await session.execute(
             select(
@@ -507,14 +591,12 @@ async def _compute_leaders(
     if not rows:
         return []
 
-    # Collect all character ids we need to resolve.
     char_ids: set[int] = {char_id for _, char_id, _, _, _ in rows}
     char_names = await _resolve_char_names(session, settings, char_ids)
     char_ships = await _resolve_char_ships(session, fight_ids)
 
-    # Four metric accumulators per bucket index:
-    # dict[bucket_idx] → dict[metric_key] → dict[char_id] → float
-    # metric_key: "dmg_taken" | "dmg_dealt" | "rep_recv" | "rep_done"
+    # Three side-aware accumulators per bucket index:
+    #   "friendly_dmg_taken" | "hostile_dmg_taken" | "friendly_rep_recv"
     BucketAcc = dict[str, dict[int, float]]
     bucket_acc: dict[int, BucketAcc] = {}
 
@@ -523,16 +605,23 @@ async def _compute_leaders(
         if idx is None:
             continue
         amount = float(total or 0.0)
-        if effect_type == "damage" and direction == "in":
-            metric = "dmg_taken"
-        elif effect_type == "damage" and direction == "out":
-            metric = "dmg_dealt"
-        elif effect_type.startswith("rep") and direction == "in":
-            metric = "rep_recv"
-        elif effect_type.startswith("rep") and direction == "out":
-            metric = "rep_done"
+
+        # Only incoming effects matter; outgoing is dropped (we track receivers).
+        if direction != "in":
+            continue
+
+        # Determine target's side; unknown → hostile (safe default).
+        side = char_side_map.get(char_id, "hostile")
+
+        if effect_type == "damage":
+            metric = "friendly_dmg_taken" if side == "friendly" else "hostile_dmg_taken"
+        elif effect_type.startswith("rep"):
+            if side != "friendly":
+                continue  # no hostile rep recv entry
+            metric = "friendly_rep_recv"
         else:
             continue
+
         acc = bucket_acc.setdefault(idx, {})
         per_char = acc.setdefault(metric, {})
         per_char[char_id] = per_char.get(char_id, 0.0) + amount
@@ -549,10 +638,9 @@ async def _compute_leaders(
         acc = bucket_acc.get(i, {})
         leaders.append(
             Leaders(
-                top_dmg_taken=_best(acc.get("dmg_taken")),
-                top_rep_recv=_best(acc.get("rep_recv")),
-                top_dmg_dealt=_best(acc.get("dmg_dealt")),
-                top_rep_done=_best(acc.get("rep_done")),
+                top_friendly_dmg_taken=_best(acc.get("friendly_dmg_taken")),
+                top_hostile_dmg_taken=_best(acc.get("hostile_dmg_taken")),
+                top_friendly_rep_recv=_best(acc.get("friendly_rep_recv")),
             )
         )
     return leaders
@@ -755,7 +843,9 @@ async def fleet_timeline(
         kills.sort(key=lambda k: k.ts)
 
     leaders = await _compute_leaders(
-        session, fight_ids, x, x_index, settings or get_settings()
+        session, fight_ids, x, x_index, settings or get_settings(),
+        friendly_alliances=friendly_alliances,
+        friendly_corps=friendly_corps,
     )
 
     return FleetTimeline(
