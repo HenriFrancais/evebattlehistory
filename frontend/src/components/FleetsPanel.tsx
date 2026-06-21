@@ -39,16 +39,28 @@ function CompositionView({ side }: { side: CompositionSide }) {
   )
 }
 
-function PilotRow({ p }: { p: CompositionPilot }) {
+function PilotRow({ p, onSelectKill }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void }) {
   return (
     <div className="comp-row">
       {shipIcon(p.ship_type_id, 18)}
       <span className="comp-name" title={p.character_name}>
         {p.character_name}
         {p.lost && p.killmail_id != null ? (
-          <a className="comp-lost" href={`https://zkillboard.com/kill/${p.killmail_id}/`}
-             target="_blank" rel="noopener noreferrer" title="lost ship — open on zKillboard"
-             aria-label="lost ship"> ✗</a>
+          <>
+            <a className="comp-lost" href={`https://zkillboard.com/kill/${p.killmail_id}/`}
+               target="_blank" rel="noopener noreferrer" title="lost ship — open on zKillboard"
+               aria-label="lost ship"> ✗</a>
+            {onSelectKill && (
+              <button
+                className="btn-mini"
+                style={{ marginLeft: '0.3rem', fontSize: '0.72rem', padding: '0.05rem 0.3rem' }}
+                title="View loss detail"
+                onClick={() => onSelectKill(p.killmail_id!)}
+              >
+                detail
+              </button>
+            )}
+          </>
         ) : p.lost ? (
           <span className="comp-lost" title="lost ship"> ✗</span>
         ) : null}
@@ -65,16 +77,16 @@ function PilotRow({ p }: { p: CompositionPilot }) {
   )
 }
 
-function CharacterView({ side }: { side: CompositionSide }) {
+function CharacterView({ side, onSelectKill }: { side: CompositionSide; onSelectKill?: (kmId: number) => void }) {
   return (
     <div>
       <SideHeader side={side} />
-      {side.pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} />)}
+      {side.pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} onSelectKill={onSelectKill} />)}
     </div>
   )
 }
 
-function UserView({ side }: { side: CompositionSide }) {
+function UserView({ side, onSelectKill }: { side: CompositionSide; onSelectKill?: (kmId: number) => void }) {
   const groups = useMemo(() => {
     const m = new Map<string, CompositionPilot[]>()
     for (const p of side.pilots) {
@@ -90,14 +102,14 @@ function UserView({ side }: { side: CompositionSide }) {
       {groups.map(([user, pilots]) => (
         <div key={user} className="comp-user-group">
           <div className="comp-user-head">▸ {user}</div>
-          {pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} />)}
+          {pilots.map((p) => <PilotRow key={`${p.character_id}-${p.ship_type_id}`} p={p} onSelectKill={onSelectKill} />)}
         </div>
       ))}
     </div>
   )
 }
 
-export function FleetsPanel({ brId, reloadKey }: { brId: string; reloadKey?: number }) {
+export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; reloadKey?: number; onSelectKill?: (kmId: number) => void }) {
   const [data, setData] = useState<CompositionResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('composition')
@@ -140,8 +152,8 @@ export function FleetsPanel({ brId, reloadKey }: { brId: string; reloadKey?: num
         {data.sides.map((side) => (
           <div key={side.side_kind}>
             {mode === 'composition' && <CompositionView side={side} />}
-            {mode === 'character' && <CharacterView side={side} />}
-            {mode === 'user' && <UserView side={side} />}
+            {mode === 'character' && <CharacterView side={side} onSelectKill={onSelectKill} />}
+            {mode === 'user' && <UserView side={side} onSelectKill={onSelectKill} />}
           </div>
         ))}
       </div>

@@ -425,6 +425,68 @@ export interface CompositionResponse {
   sides: CompositionSide[]
 }
 
+// ---------------------------------------------------------------------------
+// Damage attribution types (Task 15)
+// ---------------------------------------------------------------------------
+
+export interface AttackerDamageRow {
+  character_id: number | null
+  character_name: string | null
+  damage_done: number
+  share: number
+  final_blow: boolean
+}
+
+export interface LossDamageAttribution {
+  killmail_id: number
+  damage_taken: number | null
+  total_attributed: number
+  attackers: AttackerDamageRow[]
+}
+
+// ---------------------------------------------------------------------------
+// Damage leaderboard types (Task 16)
+// ---------------------------------------------------------------------------
+
+export interface LeaderboardRow {
+  character_id: number | null
+  character_name: string | null
+  damage_done: number
+  share: number
+  log_damage_out: number | null
+}
+
+export interface BrDamageLeaderboard {
+  rows: LeaderboardRow[]
+  total_attributed: number
+  logs_present: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Item loss breakdown types (Task 19)
+// ---------------------------------------------------------------------------
+
+export interface ItemLossRow {
+  type_id: number
+  name: string
+  location: string
+  qty_destroyed: number
+  qty_dropped: number
+}
+
+export interface SlotLoss {
+  location: string
+  destroyed_qty: number
+  dropped_qty: number
+  value: number | null
+  items: ItemLossRow[]
+}
+
+export interface ItemLossBreakdown {
+  killmail_id: number
+  slots: SlotLoss[]
+}
+
 export type SideKind = 'friendly' | 'hostile' | 'unassigned'
 
 export interface SideEntity {
@@ -635,4 +697,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  lossDamage: (brId: string, kmId: number) =>
+    jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/kills/${kmId}/damage`),
+  damageLeaderboard: (brId: string) =>
+    jsonFetch<BrDamageLeaderboard>(`${API}/brs/${brId}/damage-leaderboard`),
+  lossItems: (brId: string, kmId: number) =>
+    jsonFetch<ItemLossBreakdown>(`${API}/brs/${brId}/kills/${kmId}/items`),
 }

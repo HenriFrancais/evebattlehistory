@@ -3,9 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
+import { DamageLeaderboard } from '../components/DamageLeaderboard'
 import { FleetGraph } from '../components/FleetGraph'
-import { SnapshotPanel } from '../components/SnapshotPanel'
 import { FleetsPanel } from '../components/FleetsPanel'
+import { LossDetailPanel } from '../components/LossDetailPanel'
+import { SnapshotPanel } from '../components/SnapshotPanel'
 import { SidesEditor } from '../components/SidesEditor'
 import { IngestProgress } from '../components/IngestProgress'
 import { fmtIsk, fmtDateTime } from '../format'
@@ -440,6 +442,7 @@ export function BrDetailPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [sidesVersion, setSidesVersion] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
+  const [selectedKillmailId, setSelectedKillmailId] = useState<number | null>(null)
 
   const load = useCallback(() => {
     if (!id) return
@@ -644,7 +647,7 @@ export function BrDetailPage() {
       <div className="br-detail-grid" data-testid="br-detail-grid">
         <div className="br-col-main" data-testid="br-col-main">
           <section className="panel">
-            {id && <FleetsPanel brId={id} reloadKey={sidesVersion} />}
+            {id && <FleetsPanel brId={id} reloadKey={sidesVersion} onSelectKill={setSelectedKillmailId} />}
           </section>
           <section data-testid="fleet-graph-section" className="panel">
             <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
@@ -654,6 +657,26 @@ export function BrDetailPage() {
           </section>
         </div>
         <div className="br-col-side" data-testid="br-col-side">
+          <section className="panel">
+            <h3 style={{ margin: '0 0 0.5rem' }}>Damage Leaderboard</h3>
+            {id && <DamageLeaderboard brId={id} />}
+          </section>
+          {selectedKillmailId != null && id && (
+            <section className="panel">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <h3 style={{ margin: 0 }}>Loss Detail</h3>
+                <button
+                  type="button"
+                  className="btn-mini"
+                  aria-label="Close loss detail"
+                  onClick={() => setSelectedKillmailId(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <LossDetailPanel brId={id} killmailId={selectedKillmailId} />
+            </section>
+          )}
           <section className="panel">
             <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
             {id && <SnapshotPanel brId={id} range={range} onClearRange={() => setRange(null)} />}
