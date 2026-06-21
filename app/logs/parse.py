@@ -142,27 +142,35 @@ _EWAR_RE = re.compile(
 
 
 def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
-    """Match warp disruption/scramble lines."""
+    """Match warp disruption/scramble lines.
+
+    Extracts BOTH parties for every line, plus an ``authoritative`` flag that is
+    True iff one party is the log owner ("you"). Case 3 (third-party observation,
+    neither party is "you") keeps the real source->target instead of folding the
+    initiator into the log owner.
+    """
     m = _EWAR_RE.match(rest_stripped)
     if not m:
         return None
     ewar_type = "disrupt" if m.group(1) == "disruption" else "scram"
     src_raw = m.group(2).strip()
     tgt_raw = m.group(3).strip()
+    src_is_you = src_raw == "you"
+    tgt_is_you = tgt_raw.rstrip("!") == "you"
 
-    # Determine direction and which party to record
-    if src_raw == "you":
+    source_name: str | None = None if src_is_you else _parse_new_encoding(src_raw)[0]
+    target_name: str | None = None if tgt_is_you else _parse_new_encoding(tgt_raw)[0]
+    authoritative = src_is_you or tgt_is_you
+
+    if src_is_you:
         direction: Literal["in", "out"] = "out"
-        # target is the other party — use new encoding on stripped tgt
         name, corp, alli, ship = _parse_new_encoding(tgt_raw)
-    elif tgt_raw.rstrip("!") == "you":
+    elif tgt_is_you:
         direction = "in"
-        # source is the other party
         name, corp, alli, ship = _parse_new_encoding(src_raw)
     else:
-        # Third-party: src -> tgt, neither is "you"
-        # Record the src (the one doing the EWAR)
-        direction = "in"  # conservative: treat as threat
+        # Third-party: record the REAL initiator (source), never the log owner.
+        direction = "in"
         name, corp, alli, ship = _parse_new_encoding(src_raw)
 
     return {
@@ -175,6 +183,9 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
         "other_ship_name": ship,
         "module_name": None,
         "quality": None,
+        "source_name": source_name,
+        "target_name": target_name,
+        "authoritative": authoritative,
     }
 
 
@@ -396,6 +407,9 @@ class ParsedLogEvent:
     other_ship_name: str | None
     module_name: str | None
     raw: str
+    source_name: str | None = None
+    target_name: str | None = None
+    authoritative: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -412,6 +426,9 @@ _EMPTY_EFFECT: dict[str, Any] = {
     "other_ship_name": None,
     "module_name": None,
     "quality": None,
+    "source_name": None,
+    "target_name": None,
+    "authoritative": False,
 }
 
 
@@ -476,6 +493,9 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         other_ship_name=effect.get("other_ship_name"),
         module_name=effect.get("module_name"),
         raw=line,
+        source_name=effect.get("source_name"),
+        target_name=effect.get("target_name"),
+        authoritative=bool(effect.get("authoritative")),
     )
 
 

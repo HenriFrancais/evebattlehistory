@@ -224,9 +224,77 @@ def test_scram_fields() -> None:
     assert evt is not None
     assert evt.effect_type == "scram"
     # Third-party scram (src=AllyChar Kyte, tgt=FakeEnemy Delta, neither is "you").
-    # Parser conservatively records the src (the initiator) and direction="in" (threat).
     assert evt.other_name == "AllyChar Kyte"
     assert evt.direction == "in"
+    assert evt.source_name == "AllyChar Kyte"
+    assert evt.target_name == "FakeEnemy Delta"
+    assert evt.authoritative is False
+
+
+def test_scram_third_party_records_real_tackler_and_target() -> None:
+    """Case 3: neither party is 'you' — record real source AND target, authoritative=False."""
+    raw = (
+        "[ 2026.01.01 12:06:44 ] (combat) "
+        "<color=0xffffffff><b>Warp scramble attempt</b> "
+        "<color=0x77ffffff><font size=10>from</font> "
+        "<color=0xffffffff><b>"
+        "<font size=12><color=0xFFFFFFFF><b>AllyChar Kyte</b> </color></font>"
+        "<font size=12><color=0xFFFFB300>[NV]</color></font>"
+        "<font size=12>[NVACA]</font> "
+        "<font size=12><color=0xFFFFFFFF><b>Muninn</b></color></font></b> "
+        "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+        "<font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font>"
+        "<font size=12><color=0xFFFFB300>[10MN]</color></font>"
+        "<font size=12>[.EFG]</font> "
+        "<font size=12><color=0xFFFFFFFF><b>Omen Navy Issue</b></color></font>"
+    )
+    evt = parse_line(raw)
+    assert evt is not None
+    assert evt.effect_type == "scram"
+    assert evt.authoritative is False
+    assert evt.source_name == "AllyChar Kyte"
+    assert evt.target_name == "FakeEnemy Delta"
+    assert evt.other_name == "AllyChar Kyte"   # never the log owner
+
+
+def test_disrupt_out_from_you_sets_authoritative_and_target() -> None:
+    """Case 1: src=='you' → authoritative=True, source_name=None, target_name set."""
+    raw = (
+        "[ 2026.01.01 12:00:05 ] (combat) "
+        "<color=0xffffffff><b>Warp disruption attempt</b> "
+        "<color=0x77ffffff><font size=10>from</font> "
+        "<color=0xffffffff><b>you</b> "
+        "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>"
+        "<font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font>"
+        "<font size=12><color=0xFFFFB300>[10MN]</color></font>"
+        "<font size=12>[.EFG]</font> "
+        "<font size=12><color=0xFFFFFFFF><b>Retribution</b></color></font>"
+    )
+    evt = parse_line(raw)
+    assert evt is not None
+    assert evt.authoritative is True
+    assert evt.source_name is None
+    assert evt.target_name == "FakeEnemy Delta"
+
+
+def test_disrupt_in_to_you_sets_authoritative_and_source() -> None:
+    """Case 2: tgt=='you' → authoritative=True, source_name set, target_name=None."""
+    raw = (
+        "[ 2026.01.01 12:00:06 ] (combat) "
+        "<color=0xffffffff><b>Warp disruption attempt</b> "
+        "<color=0x77ffffff><font size=10>from</font> "
+        "<color=0xffffffff><b>"
+        "<font size=12><color=0xFFFFFFFF><b>FakeEnemy Delta</b> </color></font>"
+        "<font size=12><color=0xFFFFB300>[10MN]</color></font>"
+        "<font size=12>[.EFG]</font> "
+        "<font size=12><color=0xFFFFFFFF><b>Retribution</b></color></font></b> "
+        "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font>you!"
+    )
+    evt = parse_line(raw)
+    assert evt is not None
+    assert evt.authoritative is True
+    assert evt.source_name == "FakeEnemy Delta"
+    assert evt.target_name is None
 
 
 # ---------------------------------------------------------------------------
