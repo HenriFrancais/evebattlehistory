@@ -76,6 +76,31 @@ const mockEwar: FightEwar = {
   logi: [],
 }
 
+const mockEwarWithTackle: FightEwar = {
+  ewar: [
+    {
+      character_id: 0,
+      effect_type: 'scram',
+      direction: 'out',
+      event_count: 3,
+      first_ts: '2026-06-10T18:01:00Z',
+      last_ts: '2026-06-10T18:04:00Z',
+      source_name: 'TacklerPilot',
+      target_name: 'VictimPilot',
+    },
+    {
+      character_id: 10,
+      effect_type: 'webifier',
+      direction: 'outgoing',
+      event_count: 5,
+      first_ts: '2026-06-10T18:00:00Z',
+      last_ts: '2026-06-10T18:05:00Z',
+    },
+  ],
+  cap: [],
+  logi: [],
+}
+
 const emptyEwar: FightEwar = { ewar: [], cap: [], logi: [] }
 
 function renderFightDetailPage() {
@@ -154,5 +179,22 @@ describe('FightDetailPage', () => {
 
     await waitFor(() => expect(screen.getByTestId('ewar-panel')).toBeInTheDocument())
     expect(screen.getByText('No EWAR data')).toBeInTheDocument()
+  })
+
+  it('EwarPanel renders tackle rows as "source → target" and non-tackle rows unchanged', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.fightReconcile).mockResolvedValue({ rows: [], dps_series: [] })
+    vi.mocked(api.fightEwar).mockResolvedValue(mockEwarWithTackle)
+
+    renderFightDetailPage()
+
+    await waitFor(() => expect(screen.getByTestId('ewar-panel')).toBeInTheDocument())
+
+    // Tackle row: shows "source → target", never "0"
+    expect(screen.getByText('TacklerPilot → VictimPilot')).toBeInTheDocument()
+    expect(screen.queryByText('0')).not.toBeInTheDocument()
+
+    // Non-tackle row: still renders the character_id as-is
+    expect(screen.getByText('10')).toBeInTheDocument()
   })
 })

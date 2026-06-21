@@ -129,7 +129,11 @@ function EwarPanel({ brId, fightId }: { brId: string; fightId: string }) {
           <tbody>
             {data.ewar.map((row, i) => (
               <tr key={i}>
-                <td style={{ padding: '0.25rem 0.5rem' }}>{row.character_id}</td>
+                <td style={{ padding: '0.25rem 0.5rem' }}>
+                  {row.source_name != null
+                    ? `${row.source_name} → ${row.target_name ?? '?'}`
+                    : row.character_id}
+                </td>
                 <td style={{ padding: '0.25rem 0.5rem' }}>{row.effect_type}</td>
                 <td style={{ padding: '0.25rem 0.5rem' }}>{row.direction}</td>
                 <td style={{ textAlign: 'right', padding: '0.25rem 0.5rem' }}>{row.event_count}</td>

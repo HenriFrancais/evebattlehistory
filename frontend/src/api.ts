@@ -293,6 +293,8 @@ export interface EwarRow {
   event_count: number
   first_ts: string
   last_ts: string
+  source_name?: string | null
+  target_name?: string | null
 }
 
 export interface CapRow {
