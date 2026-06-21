@@ -33,6 +33,10 @@ function killColor(side: string | null): string {
   return KILL_NEUTRAL
 }
 
+function epochToLocalInput(epoch: number): string {
+  return new Date(epoch * 1000).toISOString().slice(0, 19)
+}
+
 function hexToRgba(hex: string, a: number): string {
   const h = hex.replace('#', '')
   const r = parseInt(h.slice(0, 2), 16)
@@ -602,6 +606,8 @@ export function FleetGraphCore({
   const [smoothScale, setSmoothScale] = useState(1)
   const [showKills, setShowKills] = useState(true)
   const initialised = useRef(false)
+  const winMin = fleet.t_start
+  const winMax = fleet.t_end
   // Shared x-zoom across the panels, preserved across rebuilds (toggles,
   // smoothing) but reset when the underlying data reloads.
   const zoomRef = useRef<[number, number] | null>(null)
@@ -635,6 +641,21 @@ export function FleetGraphCore({
     positionersRef.current.forEach((fn) => fn())
     onSelectRange(r)
   }, [onSelectRange])
+
+  const handleTimeInput = useCallback(
+    (which: 'from' | 'to', value: string) => {
+      if (!value) return
+      const epoch = isoToEpoch(value)
+      if (!Number.isFinite(epoch)) return
+      const cur = selectedRange ?? { from: winMin ?? epoch, to: winMax ?? epoch }
+      const next = which === 'from' ? { from: epoch, to: cur.to } : { from: cur.from, to: epoch }
+      if (next.from >= next.to) return
+      if (winMin != null && (next.from < winMin || next.to < winMin)) return
+      if (winMax != null && (next.from > winMax || next.to > winMax)) return
+      onSelectRange(next)
+    },
+    [selectedRange, winMin, winMax, onSelectRange],
+  )
 
   // Mirror the parent-owned selection into the ref + reposition every panel's
   // band/handles, so external clears/changes are reflected on the canvas.
@@ -683,6 +704,24 @@ export function FleetGraphCore({
 
   return (
     <div data-testid="fleet-chart-area">
+      <div className="fleet-time-inputs" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <label className="dim" style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.75rem' }}>
+          Snapshot from (UTC)
+          <input type="datetime-local" data-testid="snap-from-input" step={1}
+            min={winMin != null ? epochToLocalInput(winMin) : undefined}
+            max={winMax != null ? epochToLocalInput(winMax) : undefined}
+            value={selectedRange ? epochToLocalInput(selectedRange.from) : ''}
+            onChange={(e) => handleTimeInput('from', e.target.value)} />
+        </label>
+        <label className="dim" style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.75rem' }}>
+          to (UTC)
+          <input type="datetime-local" data-testid="snap-to-input" step={1}
+            min={winMin != null ? epochToLocalInput(winMin) : undefined}
+            max={winMax != null ? epochToLocalInput(winMax) : undefined}
+            value={selectedRange ? epochToLocalInput(selectedRange.to) : ''}
+            onChange={(e) => handleTimeInput('to', e.target.value)} />
+        </label>
+      </div>
       <div className="fleet-controls">
         <button
           role="button"

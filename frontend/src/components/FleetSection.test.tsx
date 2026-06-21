@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetTimeline } from '../api'
@@ -25,7 +25,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
     ...actual,
-    api: { ...actual.api, fleetTimeline: vi.fn() },
+    api: { ...actual.api, fleetTimeline: vi.fn(), snapshot: vi.fn() },
   }
 })
 
@@ -69,6 +69,7 @@ const fleetWithData: FleetTimeline = {
 describe('FleetSection', () => {
   beforeEach(() => {
     vi.mocked(api.fleetTimeline).mockReset()
+    vi.mocked(api.snapshot).mockReset()
     uPlotConstructorCalls.length = 0
     setScaleCalls.length = 0
   })
@@ -193,5 +194,36 @@ describe('FleetSection', () => {
       expect(typeof c.range.min).toBe('number')
       expect(typeof c.range.max).toBe('number')
     }
+  })
+
+  it('shows UTC datetime-local inputs bounded to the battle window', async () => {
+    vi.mocked(api.fleetTimeline).mockResolvedValue(fleetWithData)
+    render(<FleetSection brId="br1" />)
+    await waitFor(() => expect(screen.getByTestId('fleet-chart-area')).toBeInTheDocument())
+    const from = screen.getByTestId('snap-from-input') as HTMLInputElement
+    const to = screen.getByTestId('snap-to-input') as HTMLInputElement
+    expect(from.min).toBe('1970-01-01T00:16:40')
+    expect(from.max).toBe('1970-01-01T00:16:50')
+    expect(to.min).toBe('1970-01-01T00:16:40')
+    expect(to.max).toBe('1970-01-01T00:16:50')
+  })
+
+  it('editing a typed time input updates the snapshot range', async () => {
+    vi.mocked(api.fleetTimeline).mockResolvedValue(fleetWithData)
+    vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 1002, to_ts: 1008, rows: [] })
+    render(<FleetSection brId="br1" />)
+    await waitFor(() => expect(screen.getByTestId('fleet-chart-area')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('snap-from-input'), { target: { value: '1970-01-01T00:16:42' } })
+    fireEvent.change(screen.getByTestId('snap-to-input'), { target: { value: '1970-01-01T00:16:48' } })
+    await waitFor(() => expect(api.snapshot).toHaveBeenCalled())
+  })
+
+  it('ignores an invalid (from >= to) typed range', async () => {
+    vi.mocked(api.fleetTimeline).mockResolvedValue(fleetWithData)
+    render(<FleetSection brId="br1" />)
+    await waitFor(() => expect(screen.getByTestId('fleet-chart-area')).toBeInTheDocument())
+    fireEvent.change(screen.getByTestId('snap-to-input'), { target: { value: '1970-01-01T00:16:45' } })
+    fireEvent.change(screen.getByTestId('snap-from-input'), { target: { value: '1970-01-01T00:16:48' } })
+    expect(api.snapshot).not.toHaveBeenCalled()
   })
 })
