@@ -40,7 +40,8 @@ def _leader_out(e: object) -> LeaderEntryOut | None:
 
     if e is None:
         return None
-    assert isinstance(e, LeaderEntry)
+    if not isinstance(e, LeaderEntry):
+        raise TypeError(f"Expected LeaderEntry, got {type(e)!r}")
     return LeaderEntryOut(name=e.name, ship=e.ship, amount=e.amount)
 
 
