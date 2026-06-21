@@ -1,8 +1,27 @@
 from app.logs.entity import split_entity
 
 SHIPS = frozenset(
-    {"Guardian", "Scorpion", "Tempest Fleet Issue", "Bhaalgorn", "Arithmos Tyrannos"}
+    {"Guardian", "Scorpion", "Tempest Fleet Issue", "Bhaalgorn", "Arithmos Tyrannos",
+     "Legion", "Devoter"}
 )
+
+
+def test_pilot_in_angle_brackets():
+    # "ShipType [TICKER] <PilotName>" overview layout — the pilot sits inside the
+    # angle brackets that _clean would otherwise discard. Recover it.
+    assert split_entity("Legion [NV] <Ra'zok Zateki>", SHIPS) == ("Ra'zok Zateki", "Legion")
+
+
+def test_pilot_in_angle_brackets_html_encoded():
+    assert split_entity("Tempest Fleet Issue [URSA] &lt;Triffnixxx&gt;", SHIPS) == (
+        "Triffnixxx", "Tempest Fleet Issue",
+    )
+
+
+def test_angle_alliance_ticker_not_taken_as_pilot():
+    # Ship-only line whose only angle group is a short alliance ticker (<=5 chars,
+    # no space) must NOT be mistaken for a pilot name.
+    assert split_entity("Devoter [URSA] <NV>", SHIPS) == (None, "Devoter")
 
 
 def test_player_ship_prefix():
