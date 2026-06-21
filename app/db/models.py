@@ -407,6 +407,13 @@ class GamelogFile(Base):
     )
 
 
+# Schema is created via Base.metadata.create_all (no Alembic).
+# An existing populated DB needs:
+#   ALTER TABLE log_event ADD COLUMN source_name VARCHAR(128);
+#   ALTER TABLE log_event ADD COLUMN target_name VARCHAR(128);
+#   ALTER TABLE log_event ADD COLUMN authoritative BOOLEAN DEFAULT 0;
+#   ALTER TABLE log_event ADD COLUMN dedupe_suppressed BOOLEAN DEFAULT 0;
+# Then reparse: python -m app.logs.reparse
 class LogEvent(Base):
     __tablename__ = "log_event"
 
@@ -426,12 +433,17 @@ class LogEvent(Base):
     other_alliance_ticker: Mapped[str | None] = mapped_column(String(16), nullable=True)
     other_ship_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     module_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    target_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    authoritative: Mapped[bool] = mapped_column(Boolean, default=False)
+    dedupe_suppressed: Mapped[bool] = mapped_column(Boolean, default=False)
     fight_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # filled by Task 2.3
 
     __table_args__ = (
         Index("ix_log_event_character_id_ts", "character_id", "ts"),
         Index("ix_log_event_file_id", "file_id"),
         Index("ix_log_event_fight_id", "fight_id"),
+        Index("ix_log_event_ewar_dedupe", "fight_id", "effect_type", "source_name", "target_name"),
     )
 
 

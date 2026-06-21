@@ -55,6 +55,21 @@ async def test_gamelog_file_table_exists(db_session_maker):  # type: ignore[no-u
     assert "log_event" in tables
 
 
+async def test_log_event_has_ewar_attribution_columns(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """LogEvent must expose source_name, target_name, authoritative, dedupe_suppressed."""
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.config import get_settings
+    from app.db.engine import get_engine
+
+    engine = get_engine(get_settings())
+    async with engine.connect() as conn:
+        cols = await conn.run_sync(
+            lambda sc: {c["name"] for c in sa_inspect(sc).get_columns("log_event")}
+        )
+    assert {"source_name", "target_name", "authoritative", "dedupe_suppressed"} <= cols
+
+
 # ---------------------------------------------------------------------------
 # Task 2: Storage validation
 # ---------------------------------------------------------------------------
