@@ -90,6 +90,10 @@ async def _add_event(  # type: ignore[no-untyped-def]
     amount: float = 0.0,
     ts: dt.datetime | None = None,
     other_name: str | None = None,
+    source_name: str | None = None,
+    target_name: str | None = None,
+    authoritative: bool = False,
+    dedupe_suppressed: bool = False,
 ) -> None:
     file_id = await _insert_gamelog_file(session, character_id=character_id)
     ts = ts or (FIGHT_START + dt.timedelta(seconds=10))
@@ -103,6 +107,10 @@ async def _add_event(  # type: ignore[no-untyped-def]
             amount=amount if amount else None,
             fight_id=fight_id,
             other_name=other_name,
+            source_name=source_name,
+            target_name=target_name,
+            authoritative=authoritative,
+            dedupe_suppressed=dedupe_suppressed,
         )
     )
     await session.flush()
@@ -120,7 +128,9 @@ async def test_ewar_scram_out_appears_in_ewar_list(db_session_maker) -> None:  #
     ts1 = FIGHT_START + dt.timedelta(seconds=5)
     async with db_session_maker() as session:
         _br_id, fight_id = await _make_br_with_fight(session)
-        await _add_event(session, fight_id, CHAR_A, "out", "scram", ts=ts1, other_name="Victim")
+        # scram/disrupt rows are now keyed by source_name/target_name, not character_id
+        await _add_event(session, fight_id, CHAR_A, "out", "scram", ts=ts1, other_name="Victim",
+                         source_name="Attacker Alpha", target_name="Victim Bravo")
         await session.commit()
 
     async with db_session_maker() as session:
@@ -129,7 +139,8 @@ async def test_ewar_scram_out_appears_in_ewar_list(db_session_maker) -> None:  #
     scram_rows = [e for e in result.ewar if e.effect_type == "scram" and e.direction == "out"]
     assert len(scram_rows) == 1
     row = scram_rows[0]
-    assert row.character_id == CHAR_A
+    assert row.source_name == "Attacker Alpha"
+    assert row.target_name == "Victim Bravo"
     assert row.event_count >= 1
     assert row.first_ts is not None
     assert row.last_ts is not None
@@ -224,15 +235,18 @@ async def test_ewar_first_and_last_ts(db_session_maker) -> None:  # type: ignore
     ts2 = FIGHT_START + dt.timedelta(seconds=60)
     async with db_session_maker() as session:
         _br_id, fight_id = await _make_br_with_fight(session)
-        await _add_event(session, fight_id, CHAR_A, "out", "disrupt", ts=ts1)
-        await _add_event(session, fight_id, CHAR_A, "out", "disrupt", ts=ts2)
+        # disrupt is now keyed by source_name/target_name; two events for same pair aggregate
+        await _add_event(session, fight_id, CHAR_A, "out", "disrupt", ts=ts1,
+                         source_name="Disruptor One", target_name="Target Two")
+        await _add_event(session, fight_id, CHAR_A, "out", "disrupt", ts=ts2,
+                         source_name="Disruptor One", target_name="Target Two")
         await session.commit()
 
     async with db_session_maker() as session:
         result = await fight_ewar(session, fight_id)
 
     disrupt_row = next(
-        (e for e in result.ewar if e.effect_type == "disrupt" and e.character_id == CHAR_A),
+        (e for e in result.ewar if e.effect_type == "disrupt" and e.source_name == "Disruptor One"),
         None,
     )
     assert disrupt_row is not None
@@ -414,3 +428,30 @@ async def test_api_ewar_404_unknown_br(tmp_path, monkeypatch) -> None:  # type: 
     reset_engine_for_tests()
     get_settings.cache_clear()
     get_app_config.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# 12: friendly-on-friendly attribution (Task 5)
+# ---------------------------------------------------------------------------
+
+
+async def test_ewar_no_friendly_on_friendly_attribution(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A suppressed third-party friendly-on-friendly observation must not appear; the
+    authoritative row names the real source/target."""
+    from app.analytics.ewar import fight_ewar
+
+    async with db_session_maker() as session:
+        _br_id, fight_id = await _make_br_with_fight(session)
+        await _add_event(session, fight_id, CHAR_C, "in", "scram",
+                         source_name="AllyChar Kyte", target_name="AllyChar Boop",
+                         authoritative=False, dedupe_suppressed=True)
+        await _add_event(session, fight_id, CHAR_A, "out", "scram",
+                         source_name="AllyChar Kyte", target_name="FakeEnemy Delta",
+                         authoritative=True, dedupe_suppressed=False)
+        await session.commit()
+        result = await fight_ewar(session, fight_id)
+    sources = {r.source_name for r in result.ewar}
+    targets = {r.target_name for r in result.ewar}
+    assert "AllyChar Boop" not in targets       # suppressed friendly-on-friendly gone
+    assert "AllyChar Kyte" in sources            # real tackler counted once
+    assert "FakeEnemy Delta" in targets

@@ -227,7 +227,12 @@ class FightReconcileOut(BaseModel):
 
 
 class EwarRowOut(BaseModel):
-    """One (character, effect_type, direction) summary for tackle/EWAR effects."""
+    """One summary row for tackle/EWAR effects.
+
+    For scram/disrupt rows: source_name/target_name identify the real tackler and
+    target from the deduped set.  character_id is 0 (not meaningful).
+    For jam rows: character_id identifies the log owner; source_name/target_name are None.
+    """
 
     character_id: int
     effect_type: str
@@ -235,6 +240,8 @@ class EwarRowOut(BaseModel):
     event_count: int
     first_ts: dt.datetime
     last_ts: dt.datetime
+    source_name: str | None = None
+    target_name: str | None = None
 
 
 class CapRowOut(BaseModel):

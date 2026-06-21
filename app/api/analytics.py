@@ -107,6 +107,8 @@ async def get_fight_ewar(
                 event_count=row.event_count,
                 first_ts=row.first_ts,
                 last_ts=row.last_ts,
+                source_name=row.source_name,
+                target_name=row.target_name,
             )
             for row in result.ewar
         ],
