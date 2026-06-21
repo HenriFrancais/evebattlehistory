@@ -2,8 +2,27 @@ from app.logs.entity import split_entity
 
 SHIPS = frozenset(
     {"Guardian", "Scorpion", "Tempest Fleet Issue", "Bhaalgorn", "Arithmos Tyrannos",
-     "Legion", "Devoter"}
+     "Legion", "Devoter", "Nestor", "Sabre", "Bhaalgorn"}
 )
+
+
+def test_pilot_in_trailing_square_bracket():
+    # "ShipType [ALLI] [CORP] [PilotName]" overview layout (seen on remote-rep
+    # targets) — the pilot is the last square-bracket group; tickers are the
+    # earlier <=5-char all-caps ones.
+    assert split_entity("Sabre [NV] [NVACA] [Francis the Mute]", SHIPS) == (
+        "Francis the Mute", "Sabre",
+    )
+    assert split_entity("Bhaalgorn [ECHO.] [INOU] [Outalized]", SHIPS) == (
+        "Outalized", "Bhaalgorn",
+    )
+
+
+def test_short_lowercase_pilot_in_angle():
+    # A 5-char pilot name with lowercase letters (e.g. "Ch1pz", "Tom-w") must be
+    # recovered, not mistaken for an all-caps <=5 char alliance ticker.
+    assert split_entity("Nestor [ECHO.] <Ch1pz>", SHIPS) == ("Ch1pz", "Nestor")
+    assert split_entity("Legion [LUPUS] &lt;Tom-w&gt;", SHIPS) == ("Tom-w", "Legion")
 
 
 def test_pilot_in_angle_brackets():

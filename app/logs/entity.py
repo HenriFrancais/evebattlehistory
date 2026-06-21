@@ -15,8 +15,9 @@ import re
 
 # Strip corp [TICKER], alliance <TICKER> / &lt;TICKER&gt;, and any [bracket] groups.
 _TICKER_RE = re.compile(r"&lt;[^&]*&gt;|<[^>]*>|\[[^\]]*\]")
-# Capture the contents of angle groups so a pilot rendered as <Name> can be recovered.
-_ANGLE_RE = re.compile(r"&lt;([^&]*)&gt;|<([^>]*)>")
+# Capture the contents of angle <…> AND square [...] groups, in order, so a pilot
+# rendered inside a bracket (rather than as a bare word) can be recovered.
+_BRACKET_RE = re.compile(r"&lt;([^&]*)&gt;|<([^>]*)>|\[([^\]]*)\]")
 
 
 def _clean(text: str) -> str:
@@ -24,17 +25,22 @@ def _clean(text: str) -> str:
     return re.sub(r"\s{2,}", " ", s).strip()
 
 
-def _char_from_angle(raw: str, entity_names: frozenset[str]) -> str | None:
-    """Recover a pilot name rendered inside <…> brackets (the "ShipType [CORP]
-    <CharacterName>" overview layout, where ``_clean`` discards it as a ticker).
+def _char_from_brackets(raw: str, entity_names: frozenset[str]) -> str | None:
+    """Recover a pilot name rendered inside a bracket group (e.g. the "ShipType
+    [CORP] <Pilot>" or "ShipType [ALLI] [CORP] [Pilot]" overview layouts, where
+    ``_clean`` discards the brackets as tickers).
 
-    Corp/alliance tickers are at most 5 characters and never contain spaces, so an
-    angle group that has a space or is longer than 5 characters — and is not itself
-    a known ship/entity name — is the character, not a ticker.
+    Corp/alliance tickers are at most 5 characters, all upper-case, and never
+    contain spaces. So a bracket group that has a space, is longer than 5
+    characters, or contains a lower-case letter — and is not itself a known
+    ship/entity name — is the character, not a ticker. Returns the first such
+    group in left-to-right order.
     """
-    for lt, plain in _ANGLE_RE.findall(raw):
-        content: str = (lt or plain).strip()
-        if content and content not in entity_names and (" " in content or len(content) > 5):
+    for angle_lt, angle_plain, square in _BRACKET_RE.findall(raw):
+        content: str = (angle_lt or angle_plain or square).strip()
+        if not content or content in entity_names:
+            continue
+        if " " in content or len(content) > 5 or any(ch.islower() for ch in content):
             return content
     return None
 
@@ -77,6 +83,6 @@ def split_entity(text: str, entity_names: frozenset[str]) -> tuple[str | None, s
     # "ShipType CharacterName [CORP] <ALLI>" layout (where <ALLI> is a ticker) is
     # never overridden.
     if char is None:
-        char = _char_from_angle(raw, entity_names)
+        char = _char_from_brackets(raw, entity_names)
 
     return (char, ship)
