@@ -503,6 +503,93 @@ async def test_leaderboard_endpoint_shape(tmp_path, monkeypatch) -> None:  # typ
         assert abs(by_char[41]["share"] - 1000 / 5100) < 1e-6
 
 
+# ---------------------------------------------------------------------------
+# Task 21: Augmentation seam — log overlay tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_seam_no_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """BR with NO log events → every row log_damage_out is None, logs_present is False."""
+    from app.analytics.damage_attribution import br_damage_leaderboard
+
+    async with db_session_maker() as s:
+        await _ensure_character(s, 50, "Pilot_NoLog")
+        br_id, fight_id = await _make_br_with_fight(s)
+        # Seed killmail damage only — no LogEvent rows
+        await _seed_loss_multi(s, fight_id, km_id=3001, char_dmg=[(50, 2500)])
+        await s.commit()
+
+    async with db_session_maker() as s:
+        lb = await br_damage_leaderboard(s, br_id)
+
+    assert lb.logs_present is False
+    for row in lb.rows:
+        assert row.log_damage_out is None, (
+            f"expected None for char {row.character_id}, got {row.log_damage_out}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_seam_with_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """BR WITH log rows → matching character gets non-null log_damage_out, logs_present True."""
+    import datetime as _dt
+
+    from app.analytics.damage_attribution import br_damage_leaderboard
+    from app.db.models import GamelogFile, LogEvent
+
+    CHAR_WITH_LOG = 60
+    CHAR_NO_LOG = 61
+
+    async with db_session_maker() as s:
+        await _ensure_character(s, CHAR_WITH_LOG, "Pilot_WithLog")
+        await _ensure_character(s, CHAR_NO_LOG, "Pilot_NoLog2")
+        br_id, fight_id = await _make_br_with_fight(s)
+        # Killmail damage for both characters
+        await _seed_loss_multi(
+            s, fight_id, km_id=3002,
+            char_dmg=[(CHAR_WITH_LOG, 2000), (CHAR_NO_LOG, 500)],
+        )
+        # Seed a GamelogFile + LogEvent (damage:out) for CHAR_WITH_LOG only
+        gf = GamelogFile(
+            uploaded_by_user="u",
+            claimed_character_id=CHAR_WITH_LOG,
+            resolved_via="filename",
+            stored_path="/test/log.txt",
+            sha256="sha256seam60",
+            mime="text/plain",
+            size=1,
+            parse_status="parsed",
+            event_count=1,
+            uploaded_at=_dt.datetime.now(_dt.UTC),
+        )
+        s.add(gf)
+        await s.flush()
+        s.add(LogEvent(
+            file_id=gf.file_id,
+            character_id=CHAR_WITH_LOG,
+            ts=_dt.datetime(2026, 6, 10, 20, 5, 0, tzinfo=_dt.UTC),
+            effect_type="damage",
+            direction="out",
+            amount=3500.0,
+            fight_id=fight_id,
+        ))
+        await s.commit()
+
+    async with db_session_maker() as s:
+        lb = await br_damage_leaderboard(s, br_id)
+
+    assert lb.logs_present is True
+    by_char = {r.character_id: r for r in lb.rows}
+    # Character with logs: log_damage_out should be set (3500.0)
+    assert by_char[CHAR_WITH_LOG].log_damage_out is not None
+    assert by_char[CHAR_WITH_LOG].log_damage_out == pytest.approx(3500.0)
+    # Character without logs: log_damage_out stays None
+    assert by_char[CHAR_NO_LOG].log_damage_out is None
+    # Killmail ordering is preserved: CHAR_WITH_LOG (2000) first
+    assert lb.rows[0].character_id == CHAR_WITH_LOG
+
+
 @pytest.mark.asyncio
 async def test_leaderboard_endpoint_404_unknown_br(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """GET /api/brs/{br_id}/damage-leaderboard → 404 when BR does not exist."""

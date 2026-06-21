@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.reconcile import fight_damage_reconcile
 from app.db.models import BrFight, Character, FightKill, Killmail, KillmailAttacker
 
 
@@ -134,8 +135,18 @@ async def br_damage_leaderboard(
     BrFight JOIN FightKill join (same as composition.py / Task 15 guard),
     then sums KillmailAttacker.damage_done grouped by character_id.
 
-    log_damage_out is None and logs_present is False (Task 21 wires the overlay).
+    Where combat logs exist for a fight, log_damage_out is overlaid per
+    character via fight_damage_reconcile (Task 21). Killmail damage_done
+    remains the sort key. logs_present is True iff any fight had log rows.
     """
+    # Collect all fight_ids for this BR
+    fight_id_rows = (
+        await session.execute(
+            select(BrFight.fight_id).where(BrFight.br_id == br_id)
+        )
+    ).all()
+    fight_ids = [r[0] for r in fight_id_rows]
+
     # Collect all killmail_ids for this BR via BrFight → FightKill join
     km_id_rows = (
         await session.execute(
@@ -178,17 +189,36 @@ async def br_damage_leaderboard(
         ).all():
             char_names[char[0]] = char[1]
 
+    # --- Task 21: Log overlay via fight_damage_reconcile ---
+    # Accumulate log_damage_out per character_id across all fights, and detect
+    # whether any fight had actual log rows (direction="out", effect_type="damage").
+    log_out_totals: dict[int, float] = {}
+    logs_present = False
+    for fid in fight_ids:
+        reconcile = await fight_damage_reconcile(session, fid)
+        for rec_row in reconcile.rows:
+            # A fight "has logs" if any character has non-zero log_damage_out or
+            # log_damage_in — these are only non-zero when actual LogEvent rows exist.
+            if rec_row.log_damage_out != 0.0 or rec_row.log_damage_in != 0.0:
+                logs_present = True
+            if rec_row.log_damage_out != 0.0:
+                cid = rec_row.character_id
+                log_out_totals[cid] = log_out_totals.get(cid, 0.0) + rec_row.log_damage_out
+
     rows: list[LeaderboardRow] = []
     for char_id, total_damage in agg_rows:
         damage_done = int(total_damage)
         share = damage_done / grand_total if grand_total > 0 else 0.0
+        log_damage_out: float | None = None
+        if logs_present and char_id is not None and char_id in log_out_totals:
+            log_damage_out = log_out_totals[char_id]
         rows.append(
             LeaderboardRow(
                 character_id=char_id,
                 character_name=char_names.get(char_id) if char_id is not None else None,
                 damage_done=damage_done,
                 share=share,
-                log_damage_out=None,
+                log_damage_out=log_damage_out,
             )
         )
 
@@ -197,5 +227,5 @@ async def br_damage_leaderboard(
     return BrDamageLeaderboard(
         rows=rows,
         total_attributed=grand_total,
-        logs_present=False,
+        logs_present=logs_present,
     )
