@@ -397,6 +397,23 @@ a:hover { color: var(--link-hover); }
 .kill-tip-pilot { color: var(--accent); font-size: 0.8rem; }
 .kill-tip-meta { color: var(--text-dim); font-size: 0.75rem; }
 
+.hover-tip {
+  position: fixed; z-index: 1001; display: block;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
+  padding: 0.4rem 0.6rem; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  font-size: 0.78rem; max-width: 18rem;
+}
+.hover-tip-totals { display: flex; gap: 0.6rem; flex-wrap: wrap; color: var(--text-dim); margin-bottom: 0.3rem; font-size: 0.75rem; }
+.hover-tip-total-item strong { color: var(--text); }
+.hover-tip-top { font-weight: 600; color: var(--text); margin-bottom: 0.15rem; }
+.hover-tip-top .hover-tip-label { color: var(--accent); font-weight: 400; }
+.hover-tip-top .hover-tip-ship { color: var(--text-dim); font-weight: 400; font-size: 0.75rem; }
+.hover-tip-top .hover-tip-amount { color: var(--bad); font-variant-numeric: tabular-nums; }
+.hover-tip-secondary { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 0.1rem; }
+.hover-tip-secondary .hover-tip-label { color: var(--text-dim); }
+.hover-tip-secondary .hover-tip-ship { font-size: 0.72rem; }
+.hover-tip-no-data { color: var(--text-dim); font-style: italic; font-size: 0.75rem; }
+
 .fleet-kill-flag {
   position: absolute; top: 0; left: 50%; transform: translateX(-50%);
   width: 0; height: 0;

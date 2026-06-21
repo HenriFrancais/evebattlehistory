@@ -323,6 +323,20 @@ export interface FightEwar {
   logi: LogiRow[]
 }
 
+// Fleet timeline leaders types (T11-13)
+export interface LeaderEntry {
+  name: string
+  ship: string | null
+  amount: number
+}
+
+export interface Leaders {
+  top_dmg_taken: LeaderEntry | null
+  top_rep_recv: LeaderEntry | null
+  top_dmg_dealt: LeaderEntry | null
+  top_rep_done: LeaderEntry | null
+}
+
 // Fleet timeline types (E3)
 export interface FleetSeriesItem {
   key: string // "{effect_type}:{direction}"
@@ -351,6 +365,7 @@ export interface FleetTimeline {
   bucket_seconds: number
   t_start: number | null
   t_end: number | null
+  leaders: Leaders[]
 }
 
 export interface Contribution {

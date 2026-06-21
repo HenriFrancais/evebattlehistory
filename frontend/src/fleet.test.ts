@@ -10,6 +10,7 @@ const emptyFleet: FleetTimeline = {
   bucket_seconds: 5,
   t_start: null,
   t_end: null,
+  leaders: [],
 }
 
 function mk(effect_type: string, direction: string, values: (number | null)[]) {
@@ -40,6 +41,7 @@ const fleetWithData: FleetTimeline = {
   bucket_seconds: 5,
   t_start: 1000,
   t_end: 1010,
+  leaders: [],
 }
 
 describe('smoothSeries', () => {

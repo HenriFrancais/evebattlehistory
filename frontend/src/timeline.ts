@@ -34,5 +34,6 @@ export function toFleetTimeline(ct: CharacterTimeline): FleetTimeline {
     bucket_seconds: deriveBucketSeconds(ct.x),
     t_start: ct.t_start,
     t_end: ct.t_end,
+    leaders: [],
   }
 }

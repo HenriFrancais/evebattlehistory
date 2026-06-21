@@ -10,11 +10,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import type { FleetTimeline, KillEvent, TimelineFightInfo } from '../api'
+import type { FleetTimeline, KillEvent, Leaders, TimelineFightInfo } from '../api'
 import { api } from '../api'
 import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
 import type { FleetPanel, FleetView, PanelSeries } from '../fleet'
 import { toFleetView } from '../fleet'
+import { renderHoverSummary } from '../hoverSummary'
 
 const AXIS = '#8893a7'
 const GRID = 'rgba(138,147,167,0.15)'
@@ -223,6 +224,47 @@ function fightEdgesPlugin(fights: TimelineFightInfo[]): uPlot.Plugin {
   }
 }
 
+// DOM-overlay hover-summary tooltip: side totals + top-receiver leaders at the
+// hovered bucket. Modelled on killMarkersPlugin (body-appended fixed tip).
+function hoverSummaryPlugin(view: FleetView, leaders: Leaders[]): uPlot.Plugin {
+  let tip: HTMLDivElement | null = null
+
+  return {
+    hooks: {
+      ready: (u) => {
+        tip = document.createElement('div')
+        tip.className = 'hover-tip'
+        tip.style.display = 'none'
+        document.body.appendChild(tip)
+
+        u.over.addEventListener('mouseleave', () => {
+          if (tip) tip.style.display = 'none'
+        })
+      },
+      setCursor: (u) => {
+        if (!tip) return
+        const idx = u.cursor.idx
+        if (idx == null) {
+          tip.style.display = 'none'
+          return
+        }
+        tip.innerHTML = renderHoverSummary(view, leaders, idx)
+        tip.style.display = 'block'
+        // Position near the cursor using uPlot's cursor left/top
+        const left = u.cursor.left ?? 0
+        const top = u.cursor.top ?? 0
+        const rect = u.over.getBoundingClientRect()
+        tip.style.left = `${rect.left + left + 14}px`
+        tip.style.top = `${rect.top + top + 14}px`
+      },
+      destroy: () => {
+        tip?.remove()
+        tip = null
+      },
+    },
+  }
+}
+
 // Persistent draggable range band. Two handles (from/to) + a shaded span in u.over.
 // A registered reposition fn keeps all panels' bands in sync. Dragging a handle edits
 // the shared range; the band/handles never trigger native drag-zoom (stopPropagation).
@@ -319,6 +361,9 @@ interface PanelChartProps {
   onRangeDrag: (r: { from: number; to: number }) => void
   registerPositioner: (fn: () => void) => () => void
   registerReset: (fn: () => void) => () => void
+  /** FleetView (all panels) and leaders for the hover-summary plugin. */
+  view: FleetView
+  leaders: Leaders[]
 }
 
 function PanelChart({
@@ -333,6 +378,8 @@ function PanelChart({
   onRangeDrag,
   registerPositioner,
   registerReset,
+  view,
+  leaders,
 }: PanelChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -459,6 +506,7 @@ function PanelChart({
         zeroBaselinePlugin(),
         killMarkersPlugin(kills),
         rangePlugin(() => rangeRef.current, onRangeDrag, registerPositioner),
+        hoverSummaryPlugin(view, leaders),
       ],
     }
 
@@ -509,7 +557,7 @@ function PanelChart({
       unregisterReset()
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax])
+  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax, view, leaders])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -784,6 +832,8 @@ export function FleetGraphCore({
             onRangeDrag={handleRangeDrag}
             registerPositioner={registerPositioner}
             registerReset={registerReset}
+            view={view}
+            leaders={fleet.leaders ?? []}
           />
         </div>
       ))}

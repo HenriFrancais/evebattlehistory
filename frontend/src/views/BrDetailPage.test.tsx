@@ -151,7 +151,7 @@ function renderBrDetailPage() {
 }
 
 describe('BrDetailPage', () => {
-  const emptyFleet = { x: [], series: [], kills: [], fights: [], bucket_seconds: 5, t_start: null, t_end: null }
+  const emptyFleet = { x: [], series: [], kills: [], fights: [], bucket_seconds: 5, t_start: null, t_end: null, leaders: [] }
 
   beforeEach(() => {
     vi.mocked(api.getBr).mockReset()

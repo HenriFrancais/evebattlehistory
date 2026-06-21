@@ -39,6 +39,7 @@ const emptyFleet: FleetTimeline = {
   bucket_seconds: 5,
   t_start: null,
   t_end: null,
+  leaders: [],
 }
 
 function mk(effect_type: string, direction: string, values: (number | null)[]) {
@@ -64,6 +65,7 @@ const fleetWithData: FleetTimeline = {
   bucket_seconds: 5,
   t_start: 1000,
   t_end: 1010,
+  leaders: [],
 }
 
 describe('FleetSection', () => {
@@ -178,7 +180,7 @@ describe('FleetSection', () => {
     expect(uPlotConstructorCalls.length).toBeGreaterThanOrEqual(3)
     const plugins = (uPlotConstructorCalls.at(-1)!.opts as { plugins?: unknown[] }).plugins
     expect(Array.isArray(plugins)).toBe(true)
-    expect(plugins!.length).toBe(4) // fightEdges + zeroBaseline + killMarkers + range
+    expect(plugins!.length).toBe(5) // fightEdges + zeroBaseline + killMarkers + range + hoverSummary
   })
 
   it('has a Reset zoom button that restores full x-extent on every panel', async () => {
