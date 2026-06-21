@@ -6,10 +6,18 @@ import { FleetSection } from './FleetSection'
 
 // Mock uPlot to avoid canvas/matchMedia requirements in jsdom.
 const uPlotConstructorCalls: { opts: object }[] = []
+const setScaleCalls: { key: string; range: { min?: number; max?: number } }[] = []
 vi.mock('uplot', () => ({
   default: vi.fn().mockImplementation((opts: object) => {
     uPlotConstructorCalls.push({ opts })
-    return { destroy: vi.fn(), setSize: vi.fn(), setSeries: vi.fn() }
+    return {
+      destroy: vi.fn(),
+      setSize: vi.fn(),
+      setSeries: vi.fn(),
+      setScale: vi.fn((key: string, range: { min?: number; max?: number }) => {
+        setScaleCalls.push({ key, range })
+      }),
+    }
   }),
 }))
 
@@ -62,6 +70,7 @@ describe('FleetSection', () => {
   beforeEach(() => {
     vi.mocked(api.fleetTimeline).mockReset()
     uPlotConstructorCalls.length = 0
+    setScaleCalls.length = 0
   })
 
   it('shows loading state initially', () => {
@@ -169,5 +178,20 @@ describe('FleetSection', () => {
     const plugins = (uPlotConstructorCalls.at(-1)!.opts as { plugins?: unknown[] }).plugins
     expect(Array.isArray(plugins)).toBe(true)
     expect(plugins!.length).toBe(4) // fightEdges + zeroBaseline + killMarkers + range
+  })
+
+  it('has a Reset zoom button that restores full x-extent on every panel', async () => {
+    vi.mocked(api.fleetTimeline).mockResolvedValue(fleetWithData)
+    const user = userEvent.setup()
+    render(<FleetSection brId="br1" />)
+    await waitFor(() => expect(screen.getByTestId('fleet-chart-area')).toBeInTheDocument())
+    setScaleCalls.length = 0
+    await user.click(screen.getByRole('button', { name: /reset zoom/i }))
+    const xResets = setScaleCalls.filter((c) => c.key === 'x')
+    expect(xResets.length).toBeGreaterThanOrEqual(3)
+    for (const c of xResets) {
+      expect(typeof c.range.min).toBe('number')
+      expect(typeof c.range.max).toBe('number')
+    }
   })
 })

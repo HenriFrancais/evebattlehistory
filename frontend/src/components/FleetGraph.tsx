@@ -314,6 +314,7 @@ interface PanelChartProps {
   /** Range drag: replaces the whole range. Used by Shift-drag on the plot and the handle drags. */
   onRangeDrag: (r: { from: number; to: number }) => void
   registerPositioner: (fn: () => void) => () => void
+  registerReset: (fn: () => void) => () => void
 }
 
 function PanelChart({
@@ -327,8 +328,27 @@ function PanelChart({
   rangeRef,
   onRangeDrag,
   registerPositioner,
+  registerReset,
 }: PanelChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Hoist full-extent computation so both the build effect and the reset closure
+  // read the same memoised values without duplicating the logic.
+  const { fullMin, fullMax } = useMemo(() => {
+    const lossTimes: number[] = []
+    for (const k of kills) lossTimes.push(k.ts)
+    for (const f of fights) {
+      if (f.started_at) lossTimes.push(isoToEpoch(f.started_at))
+      if (f.ended_at) lossTimes.push(isoToEpoch(f.ended_at))
+    }
+    if (lossTimes.length) {
+      const lo0 = Math.min(...lossTimes)
+      const hi0 = Math.max(...lossTimes)
+      const buf = Math.min(Math.max((hi0 - lo0) * 0.05, 15), 120)
+      return { fullMin: lo0 - buf, fullMax: hi0 + buf }
+    }
+    return { fullMin: x.length ? x[0] : 0, fullMax: x.length ? x[x.length - 1] : 1 }
+  }, [kills, fights, x])
 
   useEffect(() => {
     const el = containerRef.current
@@ -350,15 +370,9 @@ function PanelChart({
     }
     let xs = x.slice()
     let cols = visible.map((s) => s.values.slice())
-    let fullMin: number
-    let fullMax: number
+    const lo = fullMin
+    const hi = fullMax
     if (lossTimes.length) {
-      const lo0 = Math.min(...lossTimes)
-      const hi0 = Math.max(...lossTimes)
-      // Buffer: ~5% of the window, clamped to [15s, 120s] each side.
-      const buf = Math.min(Math.max((hi0 - lo0) * 0.05, 15), 120)
-      const lo = lo0 - buf
-      const hi = hi0 + buf
       // Clip log buckets outside the window.
       const keep: number[] = []
       for (let i = 0; i < xs.length; i++) if (xs[i] >= lo && xs[i] <= hi) keep.push(i)
@@ -373,11 +387,6 @@ function PanelChart({
         xs = [...xs, hi]
         cols = cols.map((c) => [...c, null])
       }
-      fullMin = lo
-      fullMax = hi
-    } else {
-      fullMin = xs.length ? xs[0] : 0
-      fullMax = xs.length ? xs[xs.length - 1] : 1
     }
     const data: (number | null)[][] = [xs, ...cols]
 
@@ -455,6 +464,11 @@ function PanelChart({
     const u = new uPlot(opts, data as uPlot.AlignedData, el)
     if (savedZoom) u.setScale?.('x', { min: savedZoom[0], max: savedZoom[1] })
 
+    // Register the per-panel reset callback (after chart creation + saved-zoom restore).
+    const unregisterReset = registerReset(() => {
+      u.setScale?.('x', { min: fullMin, max: fullMax })
+    })
+
     // Shift-drag paints the snapshot range; plain drag = zoom, double-click = zoom-out (native).
     // Capture phase + stopImmediatePropagation blocks uPlot's drag-zoom only while Shift is held;
     // without Shift this no-ops and uPlot's native gestures run untouched.
@@ -488,9 +502,10 @@ function PanelChart({
     return () => {
       window.removeEventListener('resize', onResize)
       clearDrag()
+      unregisterReset()
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner])
+  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -594,12 +609,25 @@ export function FleetGraphCore({
   // every panel's band/handles together on drag without rebuilding charts.
   const rangeRef = useRef<{ from: number; to: number } | null>(null)
   const positionersRef = useRef<Set<() => void>>(new Set())
+  const resettersRef = useRef<Set<() => void>>(new Set())
 
   const registerPositioner = useCallback((fn: () => void) => {
     positionersRef.current.add(fn)
     return () => {
       positionersRef.current.delete(fn)
     }
+  }, [])
+
+  const registerReset = useCallback((fn: () => void) => {
+    resettersRef.current.add(fn)
+    return () => {
+      resettersRef.current.delete(fn)
+    }
+  }, [])
+
+  const handleResetZoom = useCallback(() => {
+    resettersRef.current.forEach((fn) => fn())
+    zoomRef.current = null
   }, [])
 
   const handleRangeDrag = useCallback((r: { from: number; to: number }) => {
@@ -691,6 +719,15 @@ export function FleetGraphCore({
             {showKills ? 'Kill markers: on' : 'Kill markers: off'}
           </button>
         )}
+        <button
+          type="button"
+          className="fleet-legend-btn"
+          data-testid="reset-zoom-btn"
+          onClick={handleResetZoom}
+          style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+        >
+          Reset zoom
+        </button>
       </div>
 
       {view.panels.map((panel) => (
@@ -707,6 +744,7 @@ export function FleetGraphCore({
             rangeRef={rangeRef}
             onRangeDrag={handleRangeDrag}
             registerPositioner={registerPositioner}
+            registerReset={registerReset}
           />
         </div>
       ))}
