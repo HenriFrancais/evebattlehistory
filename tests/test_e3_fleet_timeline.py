@@ -727,3 +727,75 @@ async def test_kill_unknown_victim_name_is_none(db_session_maker) -> None:  # ty
 
     k = next(k for k in tl.kills if k.victim_character_id == 777000777)
     assert k.victim_character_name is None
+
+
+# ---------------------------------------------------------------------------
+# Task 11: per-bucket leaders
+# ---------------------------------------------------------------------------
+
+
+async def test_leaders_per_bucket_picks_max_character(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+    from app.db.models import Character
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # _make_br_with_fight creates Character rows for CHAR_A/CHAR_B via _insert_fight;
+        # merge (upsert) so we can rename them for the assertion.
+        await session.merge(
+            Character(character_id=CHAR_A, name="Alice", last_seen_at=dt.datetime.now(dt.UTC))
+        )
+        await session.merge(
+            Character(character_id=CHAR_B, name="Bob", last_seen_at=dt.datetime.now(dt.UTC))
+        )
+        await session.flush()
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "in", 100.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_B, BUCKET_TS_1, "damage", "in", 300.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "out", 500.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_B, BUCKET_TS_1, "damage", "out", 50.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "rep_armor", "in", 200.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_B, BUCKET_TS_1, "rep_shield", "out", 150.0, 1)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id, settings=get_settings())
+
+    idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
+    ld = tl.leaders[idx]
+    assert ld.top_dmg_taken.name == "Bob" and ld.top_dmg_taken.amount == pytest.approx(300.0)
+    assert ld.top_dmg_dealt.name == "Alice" and ld.top_dmg_dealt.amount == pytest.approx(500.0)
+    assert ld.top_rep_recv.name == "Alice" and ld.top_rep_recv.amount == pytest.approx(200.0)
+    assert ld.top_rep_done.name == "Bob" and ld.top_rep_done.amount == pytest.approx(150.0)
+
+
+async def test_leaders_aligned_to_x_and_null_when_absent(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "out", 100.0, 1)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id, settings=get_settings())
+
+    assert len(tl.leaders) == len(tl.x)
+    ld = tl.leaders[tl.x.index(int(BUCKET_TS_1.timestamp()))]
+    assert ld.top_dmg_dealt is not None
+    assert ld.top_dmg_taken is None and ld.top_rep_recv is None and ld.top_rep_done is None
+
+
+async def test_leaders_empty_for_no_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, _ = await _make_br_with_fight(session)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id, settings=get_settings())
+
+    assert tl.leaders == []

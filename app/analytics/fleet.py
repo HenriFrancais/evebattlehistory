@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import classify_entity
 from app.analytics.weapons import classify_weapon
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.db.models import (
     BUCKET_SECONDS,
     BrFight,
@@ -43,6 +43,7 @@ from app.db.models import (
     FightKill,
     InventoryType,
     Killmail,
+    KillmailAttacker,
     LogEvent,
     LogEventBucket,
 )
@@ -334,6 +335,25 @@ class FleetSeriesOut:
 
 
 @dataclass
+class LeaderEntry:
+    """Top character for one metric in a single time bucket."""
+
+    name: str
+    ship: str | None
+    amount: float
+
+
+@dataclass
+class Leaders:
+    """Per-bucket leaders across the four tracked metrics."""
+
+    top_dmg_taken: LeaderEntry | None
+    top_rep_recv: LeaderEntry | None
+    top_dmg_dealt: LeaderEntry | None
+    top_rep_done: LeaderEntry | None
+
+
+@dataclass
 class KillEvent:
     """One kill event for the fleet timeline overlay."""
 
@@ -358,6 +378,9 @@ class FleetTimeline:
     """Sorted, unique epoch-second timestamps of every contributing bucket."""
     series: list[FleetSeriesOut]
     """One entry per (effect_type, direction) with data, in presentation order."""
+    leaders: list[Leaders]
+    """Per-bucket top characters for 4 metrics, aligned index-for-index to x.
+    Empty list when no log buckets exist (i.e. x is also empty)."""
     kills: list[KillEvent]
     """Kill events sorted by ts ascending."""
     fights: list[FleetFightInfo]
@@ -371,6 +394,171 @@ class FleetTimeline:
 
 
 # ---------------------------------------------------------------------------
+# Leaders helpers
+# ---------------------------------------------------------------------------
+
+CAPSULE_TYPE_ID = 670
+
+
+async def _resolve_char_ships(
+    session: AsyncSession, fight_ids: list[int]
+) -> dict[int, str]:
+    """Return character_id → hull name from killmail data (capsules excluded).
+
+    Mirrors composition.py: victim hull first, then attacker hull; capsules
+    (type_id 670) are skipped. Only the first non-capsule hull per character
+    is retained (sufficient for the tooltip label).
+    """
+    km_ids: list[int] = list(
+        (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id.in_(fight_ids))
+            )
+        ).scalars()
+    )
+    if not km_ids:
+        return {}
+
+    char_ship: dict[int, int] = {}  # character_id → ship_type_id
+
+    # Victims (authoritative hull — same as composition.py)
+    for char_id, ship_id in (
+        await session.execute(
+            select(Killmail.victim_character_id, Killmail.victim_ship_type_id).where(
+                Killmail.killmail_id.in_(km_ids)
+            )
+        )
+    ).all():
+        if char_id is None or ship_id is None or ship_id == CAPSULE_TYPE_ID:
+            continue
+        char_ship[char_id] = ship_id
+
+    # Attackers (hull if not already seen from victim side)
+    for char_id, ship_id in (
+        await session.execute(
+            select(KillmailAttacker.character_id, KillmailAttacker.ship_type_id).where(
+                KillmailAttacker.killmail_id.in_(km_ids)
+            )
+        )
+    ).all():
+        if char_id is None or ship_id is None or ship_id == CAPSULE_TYPE_ID:
+            continue
+        char_ship.setdefault(char_id, ship_id)
+
+    if not char_ship:
+        return {}
+
+    type_ids = set(char_ship.values())
+    inv_names: dict[int, str] = {}
+    for inv in (
+        await session.execute(select(InventoryType).where(InventoryType.type_id.in_(type_ids)))
+    ).scalars():
+        inv_names[inv.type_id] = inv.name
+
+    return {cid: inv_names[sid] for cid, sid in char_ship.items() if sid in inv_names}
+
+
+async def _compute_leaders(
+    session: AsyncSession,
+    fight_ids: list[int],
+    x: list[int],
+    x_index: dict[int, int],
+    settings: Settings,
+) -> list[Leaders]:
+    """Return per-bucket Leaders aligned index-for-index to *x*.
+
+    Returns [] (not a list of Leaders) when no log buckets exist — the
+    fleet_timeline empty-early-return case also returns [].
+
+    Metric classification:
+      damage / in  → top_dmg_taken
+      damage / out → top_dmg_dealt
+      rep* / in    → top_rep_recv
+      rep* / out   → top_rep_done
+    """
+    if not x:
+        return []
+
+    # Fetch per-(bucket_ts, character_id, effect_type, direction) aggregates.
+    # EWAR count effects are deliberately excluded — only amount effects matter.
+    rows = (
+        await session.execute(
+            select(
+                LogEventBucket.bucket_ts,
+                LogEventBucket.character_id,
+                LogEventBucket.effect_type,
+                LogEventBucket.direction,
+                func.sum(func.abs(LogEventBucket.sum_amount)).label("total"),
+            )
+            .where(
+                LogEventBucket.fight_id.in_(fight_ids),
+                LogEventBucket.effect_type.in_(_AMOUNT_EFFECTS),
+                LogEventBucket.direction.in_(_DIRECTION_ORDER),
+            )
+            .group_by(
+                LogEventBucket.bucket_ts,
+                LogEventBucket.character_id,
+                LogEventBucket.effect_type,
+                LogEventBucket.direction,
+            )
+        )
+    ).all()
+
+    if not rows:
+        return []
+
+    # Collect all character ids we need to resolve.
+    char_ids: set[int] = {char_id for _, char_id, _, _, _ in rows}
+    char_names = await _resolve_char_names(session, settings, char_ids)
+    char_ships = await _resolve_char_ships(session, fight_ids)
+
+    # Four metric accumulators per bucket index:
+    # dict[bucket_idx] → dict[metric_key] → dict[char_id] → float
+    # metric_key: "dmg_taken" | "dmg_dealt" | "rep_recv" | "rep_done"
+    BucketAcc = dict[str, dict[int, float]]
+    bucket_acc: dict[int, BucketAcc] = {}
+
+    for bucket_ts, char_id, effect_type, direction, total in rows:
+        idx = x_index.get(_epoch(bucket_ts))
+        if idx is None:
+            continue
+        amount = float(total or 0.0)
+        if effect_type == "damage" and direction == "in":
+            metric = "dmg_taken"
+        elif effect_type == "damage" and direction == "out":
+            metric = "dmg_dealt"
+        elif effect_type.startswith("rep") and direction == "in":
+            metric = "rep_recv"
+        elif effect_type.startswith("rep") and direction == "out":
+            metric = "rep_done"
+        else:
+            continue
+        acc = bucket_acc.setdefault(idx, {})
+        per_char = acc.setdefault(metric, {})
+        per_char[char_id] = per_char.get(char_id, 0.0) + amount
+
+    def _best(per_char: dict[int, float] | None) -> LeaderEntry | None:
+        if not per_char:
+            return None
+        best_id, best_amt = max(per_char.items(), key=lambda kv: kv[1])
+        name = char_names.get(best_id) or f"Char {best_id}"
+        return LeaderEntry(name=name, ship=char_ships.get(best_id), amount=best_amt)
+
+    leaders: list[Leaders] = []
+    for i in range(len(x)):
+        acc = bucket_acc.get(i, {})
+        leaders.append(
+            Leaders(
+                top_dmg_taken=_best(acc.get("dmg_taken")),
+                top_rep_recv=_best(acc.get("rep_recv")),
+                top_dmg_dealt=_best(acc.get("dmg_dealt")),
+                top_rep_done=_best(acc.get("rep_done")),
+            )
+        )
+    return leaders
+
+
+# ---------------------------------------------------------------------------
 # Main analytics function
 # ---------------------------------------------------------------------------
 
@@ -381,6 +569,8 @@ async def fleet_timeline(
     our_alliance_ids: tuple[int, ...] | list[int] = (),
     our_corp_ids: tuple[int, ...] | list[int] = (),
     overrides: dict[tuple[str, int], str] | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> FleetTimeline:
     """Assemble a fleet-level timeline for *br_id*.
 
@@ -420,6 +610,7 @@ async def fleet_timeline(
         return FleetTimeline(
             x=[],
             series=[],
+            leaders=[],
             kills=[],
             fights=fights,
             bucket_seconds=BUCKET_SECONDS,
@@ -563,9 +754,14 @@ async def fleet_timeline(
             )
         kills.sort(key=lambda k: k.ts)
 
+    leaders = await _compute_leaders(
+        session, fight_ids, x, x_index, settings or get_settings()
+    )
+
     return FleetTimeline(
         x=x,
         series=series,
+        leaders=leaders,
         kills=kills,
         fights=fights,
         bucket_seconds=BUCKET_SECONDS,
