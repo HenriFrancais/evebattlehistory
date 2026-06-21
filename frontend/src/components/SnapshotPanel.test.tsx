@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ContributionsResponse } from '../api'
 import { SnapshotPanel } from './SnapshotPanel'
@@ -63,6 +64,20 @@ describe('SnapshotPanel', () => {
 
     // Incoming rep flipped: Toni is the source under Sera.
     expect(screen.getByText('Toni')).toBeInTheDocument()
+  })
+
+  it('renders a Clear button when a range is set and calls onClearRange', async () => {
+    vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 1000, to_ts: 1010, rows: [] })
+    const onClearRange = vi.fn()
+    const user = userEvent.setup()
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} onClearRange={onClearRange} />)
+    await user.click(await screen.findByTestId('snap-clear-btn'))
+    expect(onClearRange).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows no Clear button when range is null', () => {
+    render(<SnapshotPanel brId="br1" range={null} onClearRange={vi.fn()} />)
+    expect(screen.queryByTestId('snap-clear-btn')).not.toBeInTheDocument()
   })
 
   it('uses the character-scoped endpoint when charId is given', async () => {

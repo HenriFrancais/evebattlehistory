@@ -656,7 +656,7 @@ export function BrDetailPage() {
         <div className="br-col-side" data-testid="br-col-side">
           <section className="panel">
             <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
-            {id && <SnapshotPanel brId={id} range={range} />}
+            {id && <SnapshotPanel brId={id} range={range} onClearRange={() => setRange(null)} />}
           </section>
         </div>
       </div>

@@ -153,9 +153,11 @@ interface Props {
   range: { from: number; to: number } | null
   /** When set, scope the snapshot to this character (per-pilot view). */
   charId?: string
+  /** When provided, a "Clear" button is shown in the header to clear the selected range. */
+  onClearRange?: () => void
 }
 
-export function SnapshotPanel({ brId, range, charId }: Props) {
+export function SnapshotPanel({ brId, range, charId, onClearRange }: Props) {
   const [data, setData] = useState<ContributionsResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -195,6 +197,11 @@ export function SnapshotPanel({ brId, range, charId }: Props) {
     <div className="contrib-panel" data-testid="fleet-contrib">
       <div className="contrib-head">
         <strong>{fmtTime(range.from, true)} → {fmtTime(range.to, true)} UTC</strong>
+        {onClearRange && (
+          <button type="button" className="btn-mini" data-testid="snap-clear-btn" onClick={onClearRange}>
+            Clear
+          </button>
+        )}
       </div>
       {loading && rows.length === 0 && <p className="dim">Loading…</p>}
       {error && <p className="error-text">{error}</p>}
