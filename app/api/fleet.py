@@ -22,6 +22,8 @@ from app.api.schemas import (
     FleetSeriesOut,
     FleetTimelineOut,
     KillEventOut,
+    LeaderEntryOut,
+    LeadersOut,
     TimelineFightInfo,
 )
 from app.config import get_app_config, get_settings
@@ -30,6 +32,15 @@ from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
 router = APIRouter()
+
+
+def _leader_out(e: object) -> LeaderEntryOut | None:
+    from app.analytics.fleet import LeaderEntry
+
+    if e is None:
+        return None
+    assert isinstance(e, LeaderEntry)
+    return LeaderEntryOut(name=e.name, ship=e.ship, amount=e.amount)
 
 
 async def _require_br(br_id: str, session: AsyncSession) -> None:
@@ -92,6 +103,15 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
         bucket_seconds=tl.bucket_seconds,
         t_start=tl.t_start,
         t_end=tl.t_end,
+        leaders=[
+            LeadersOut(
+                top_dmg_taken=_leader_out(ld.top_dmg_taken),
+                top_rep_recv=_leader_out(ld.top_rep_recv),
+                top_dmg_dealt=_leader_out(ld.top_dmg_dealt),
+                top_rep_done=_leader_out(ld.top_rep_done),
+            )
+            for ld in tl.leaders
+        ],
     )
 
 

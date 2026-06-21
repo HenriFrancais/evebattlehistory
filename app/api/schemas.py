@@ -378,6 +378,23 @@ class ContributionsOut(BaseModel):
     rows: list[ContributionOut]
 
 
+class LeaderEntryOut(BaseModel):
+    """Top character for one metric in a single time bucket."""
+
+    name: str
+    ship: str | None
+    amount: float
+
+
+class LeadersOut(BaseModel):
+    """Per-bucket leaders across the four tracked metrics."""
+
+    top_dmg_taken: LeaderEntryOut | None
+    top_rep_recv: LeaderEntryOut | None
+    top_dmg_dealt: LeaderEntryOut | None
+    top_rep_done: LeaderEntryOut | None
+
+
 class FleetTimelineOut(BaseModel):
     """Aggregated fleet-level timeline for one battle report."""
 
@@ -388,6 +405,7 @@ class FleetTimelineOut(BaseModel):
     bucket_seconds: int
     t_start: int | None
     t_end: int | None
+    leaders: list[LeadersOut]
 
 
 # ---------------------------------------------------------------------------

@@ -799,3 +799,64 @@ async def test_leaders_empty_for_no_logs(db_session_maker) -> None:  # type: ign
         tl = await fleet_timeline(session, br_id, settings=get_settings())
 
     assert tl.leaders == []
+
+
+# ---------------------------------------------------------------------------
+# Task 12: API endpoint exposes leaders[]
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """GET /api/brs/{br_id}/fleet-timeline response has leaders[] aligned to x[],
+    with top_dmg_taken populated and top_rep_recv null for a damage/in-only bucket."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+    from app.db.models import Character
+    from app.main import create_app
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+    session_maker = get_sessionmaker(settings)
+
+    async with session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # Name the character so we can assert on name in the response.
+        await session.merge(
+            Character(character_id=CHAR_A, name="Alice", last_seen_at=dt.datetime.now(dt.UTC))
+        )
+        await session.flush()
+        # Only damage:in bucket — top_dmg_taken should be Alice; top_rep_recv should be null.
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "in", 400.0, 4)
+        await session.commit()
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.get(f"/api/brs/{br_id}/fleet-timeline", headers=CREATOR_HEADERS)
+
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert "leaders" in data, "response missing 'leaders' key"
+    assert len(data["leaders"]) == len(data["x"]), (
+        f"leaders length {len(data['leaders'])} != x length {len(data['x'])}"
+    )
+
+    bucket_idx = data["x"].index(int(BUCKET_TS_1.timestamp()))
+    ld = data["leaders"][bucket_idx]
+
+    assert ld["top_dmg_taken"] is not None
+    assert ld["top_dmg_taken"]["name"] == "Alice"
+    assert ld["top_dmg_taken"]["amount"] == pytest.approx(400.0)
+    assert ld["top_rep_recv"] is None
+
+    reset_engine_for_tests()
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
