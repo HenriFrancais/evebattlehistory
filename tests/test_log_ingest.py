@@ -636,3 +636,45 @@ async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: i
     assert ev is not None
     assert ev.other_ship_name == "Guardian"
     assert ev.other_name == "Jennifer Hibra"
+
+
+# ---------------------------------------------------------------------------
+# Fix B: "you" as source resolves to owner character_name
+# ---------------------------------------------------------------------------
+
+_YOU_AS_SOURCE_LOG_BYTES = GAMELOG_HEADER + (
+    b"[ 2026.01.01 12:06:44 ] (combat) "
+    b"Warp scramble attempt from you to "
+    b"FakeEnemy Delta [10MN][.EFG] Omen Navy Issue\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_you_as_source_resolves_to_owner(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Fix B: when the log owner is the tackle source ('you'), source_name should
+    be set to the owner's character_name ('TestChar Alpha') rather than None."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import LogEvent
+    from app.logs.ingest import ingest_log
+
+    raw = _YOU_AS_SOURCE_LOG_BYTES
+    async with db_session_maker() as session:
+        await ingest_log(
+            session, get_settings(), "Ra'zok", "20260101_120000_2112615087.txt", raw,
+            _make_roster_lookup({"testchar alpha": 2112615087}),
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        row = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "scram")
+        )).scalar_one()
+
+    assert row.authoritative is True
+    assert row.source_name == "TestChar Alpha", (
+        f"Expected source_name='TestChar Alpha' but got {row.source_name!r}. "
+        "Fix B: authoritative 'you' source should resolve to character_name."
+    )
+    assert row.target_name == "FakeEnemy Delta"

@@ -324,7 +324,9 @@ async def test_api_ewar_returns_expected_shape(tmp_path, monkeypatch) -> None:  
 
     async with session_maker() as session:
         br_id, fight_id = await _make_br_with_fight(session)
-        await _add_event(session, fight_id, CHAR_A, "out", "scram")
+        # scram/disrupt require non-NULL source_name/target_name to appear in ewar (Fix C2)
+        await _add_event(session, fight_id, CHAR_A, "out", "scram",
+                         source_name="TestTackler", target_name="TestVictim")
         await _add_event(session, fight_id, CHAR_B, "out", "rep_armor", amount=500.0)
         await _add_event(session, fight_id, CHAR_A, "out", "neut", amount=200.0)
         await session.commit()
@@ -455,3 +457,39 @@ async def test_ewar_no_friendly_on_friendly_attribution(db_session_maker) -> Non
     assert "AllyChar Boop" not in targets       # suppressed friendly-on-friendly gone
     assert "AllyChar Kyte" in sources            # real tackler counted once
     assert "FakeEnemy Delta" in targets
+
+
+# ---------------------------------------------------------------------------
+# Fix C2: NULL source/target excluded from tackle EWAR
+# ---------------------------------------------------------------------------
+
+
+async def test_ewar_null_source_excluded_from_tackle(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A scram row with source_name=None (ship-only party) must not appear in ewar."""
+    from app.analytics.ewar import fight_ewar
+    async with db_session_maker() as session:
+        _br_id, fight_id = await _make_br_with_fight(session)
+        # Ship-only (unresolvable) source
+        await _add_event(session, fight_id, CHAR_A, "out", "scram",
+                         source_name=None, target_name="Real Target")
+        await session.commit()
+    async with db_session_maker() as session:
+        result = await fight_ewar(session, fight_id)
+    tackle = [r for r in result.ewar if r.effect_type == "scram"]
+    assert all(r.source_name is not None for r in tackle)
+    assert all(r.target_name is not None for r in tackle)
+
+
+async def test_ewar_null_target_excluded_from_tackle(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A scram row with target_name=None must not appear in ewar."""
+    from app.analytics.ewar import fight_ewar
+    async with db_session_maker() as session:
+        _br_id, fight_id = await _make_br_with_fight(session)
+        await _add_event(session, fight_id, CHAR_A, "out", "scram",
+                         source_name="Real Tackler", target_name=None)
+        await session.commit()
+    async with db_session_maker() as session:
+        result = await fight_ewar(session, fight_id)
+    tackle = [r for r in result.ewar if r.effect_type == "scram"]
+    assert all(r.source_name is not None for r in tackle)
+    assert all(r.target_name is not None for r in tackle)

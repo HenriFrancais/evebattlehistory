@@ -169,13 +169,25 @@ async def ingest_log(
             char, ship = split_entity(e.other_name, entity_names)
             object.__setattr__(e, "other_name", char if char is not None else e.other_name)
             object.__setattr__(e, "other_ship_name", ship)
-        # Fix (B): clean source_name/target_name for EWAR lines
+        # Fix (B) + C1: clean source_name/target_name for EWAR lines.
+        # C1: ship-only or NPC parties → None (not raw ship name).
         if e.source_name:
             char, _ = split_entity(e.source_name, entity_names)
-            object.__setattr__(e, "source_name", char if char is not None else e.source_name)
+            object.__setattr__(e, "source_name", char)  # None when ship-only/NPC
         if e.target_name:
             char, _ = split_entity(e.target_name, entity_names)
-            object.__setattr__(e, "target_name", char if char is not None else e.target_name)
+            object.__setattr__(e, "target_name", char)  # None when ship-only/NPC
+
+    # Fix (B2): resolve "you" to owner for authoritative EWAR events.
+    # Must run AFTER C1 so that ship-only None values from above don't mask the
+    # authoritative-None case (they share the same None signal but different meaning).
+    _TACKLE = frozenset({"scram", "disrupt"})
+    for e in parsed.events:
+        if e.effect_type in _TACKLE and e.authoritative:
+            if e.source_name is None and character_name is not None:
+                object.__setattr__(e, "source_name", character_name)
+            if e.target_name is None and character_name is not None:
+                object.__setattr__(e, "target_name", character_name)
 
     # 8. Bulk-insert LogEvent rows
     if parsed.events:

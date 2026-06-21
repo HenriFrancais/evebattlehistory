@@ -2,7 +2,7 @@ from app.logs.entity import split_entity
 
 SHIPS = frozenset(
     {"Guardian", "Scorpion", "Tempest Fleet Issue", "Bhaalgorn", "Arithmos Tyrannos",
-     "Legion", "Devoter", "Nestor", "Sabre", "Bhaalgorn"}
+     "Legion", "Devoter", "Nestor", "Sabre", "Proteus", "Leshak"}
 )
 
 
@@ -79,3 +79,12 @@ def test_unknown_no_ship():
 
 def test_empty():
     assert split_entity("", SHIPS) == (None, None)
+
+
+def test_trailing_dash_recovers_pilot_from_bracket():
+    assert split_entity("Proteus [NV] [NVACA] [Nate Marston] -", SHIPS) == (
+        "Nate Marston", "Proteus"
+    )
+    assert split_entity("Leshak [LUPUS] [OMGGF] [Tom-w] -", SHIPS) == (
+        "Tom-w", "Leshak"
+    )

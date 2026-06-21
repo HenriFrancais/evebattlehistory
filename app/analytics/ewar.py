@@ -159,6 +159,8 @@ async def fight_ewar(session: AsyncSession, fight_id: int) -> FightEwar:
             LogEvent.effect_type.in_(list(_TACKLE_TYPES)),
             LogEvent.direction.in_(["out", "in"]),
             LogEvent.dedupe_suppressed.is_(False),
+            LogEvent.source_name.is_not(None),
+            LogEvent.target_name.is_not(None),
         )
         .group_by(
             LogEvent.effect_type,

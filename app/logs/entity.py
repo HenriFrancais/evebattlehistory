@@ -78,6 +78,13 @@ def split_entity(text: str, entity_names: frozenset[str]) -> tuple[str | None, s
             if not matched:
                 char = cleaned  # unknown: character only
 
+    # Reject bare-word "char" candidates that contain no alphanumeric characters
+    # (e.g. a trailing "-" after brackets are stripped). Such tokens can't be a
+    # pilot name — discard them so bracket-pilot recovery (_char_from_brackets)
+    # runs instead.
+    if char is not None and not any(ch.isalnum() for ch in char):
+        char = None
+
     # "ShipType [CORP] <Pilot>" layout: the pilot is in the angle brackets that
     # _clean removed. Only recover it when no bare-word character was found, so the
     # "ShipType CharacterName [CORP] <ALLI>" layout (where <ALLI> is a ticker) is
