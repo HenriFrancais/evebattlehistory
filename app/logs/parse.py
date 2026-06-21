@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 # --------------------------------------------------------------------------- #
@@ -43,10 +43,15 @@ _ENVELOPE_RE = re.compile(
 
 
 def _parse_ts(m: re.Match[str]) -> datetime:
+    """Return a naive UTC datetime (no tzinfo). The system uses naive-UTC throughout.
+
+    Fix (A): previously emitted tz-aware datetimes which caused TypeError when
+    SQLAlchemy's synchronize_session='evaluate' compared LogEvent.ts (aware) against
+    fight window bounds derived from Fight.started_at (naive after SQLite read-back).
+    """
     return datetime(
         int(m.group(1)), int(m.group(2)), int(m.group(3)),
         int(m.group(4)), int(m.group(5)), int(m.group(6)),
-        tzinfo=UTC,
     )
 
 

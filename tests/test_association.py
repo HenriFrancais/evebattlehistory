@@ -1407,6 +1407,64 @@ async def test_ewar_dedupe_straddle_collapses_to_one(db_session_maker) -> None: 
     assert surviving[0].authoritative is True  # authoritative wins
 
 
+# ---------------------------------------------------------------------------
+# Bug (A) regression: associate_file must NOT raise when LogEvent.ts is
+# tz-aware (as freshly-parsed events are before fix #1 lands), because
+# synchronize_session="evaluate" compares ts in Python against the naive
+# window_start derived from Fight.started_at (which SQLite returns naive).
+# ---------------------------------------------------------------------------
+
+
+async def test_associate_file_does_not_raise_with_aware_ts(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """associate_file must not raise TypeError when LogEvent.ts is tz-aware.
+
+    Regression for Bug (A): SQLAlchemy's default synchronize_session='evaluate'
+    compares the WHERE clause against in-session objects in Python.  If LogEvent.ts
+    is tz-aware (as _parse_ts used to emit) and window_start is naive (as
+    Fight.started_at returns from SQLite), the comparison raises TypeError.
+
+    The crash only fires when there are UNFLUSHED LogEvent objects with aware ts
+    in the same session as the UPDATE call — because evaluate mode walks the
+    identity map before the UPDATE hits the DB.
+
+    Fix: pass synchronize_session=False to the bulk UPDATE statements in associate_file.
+    """
+    from app.logs.associate import associate_file
+
+    aware_ts = dt.datetime(2026, 6, 10, 20, 15, 0, tzinfo=dt.UTC)
+
+    async with db_session_maker() as session:
+        await _insert_fight(session)
+        file_id = await _insert_gamelog_file(session, character_id=CHAR_A)
+        await session.commit()
+
+    # Now in a single session: add LogEvent with AWARE ts then immediately call
+    # associate_file (without flushing first) so the in-memory object is still
+    # in the identity map when the bulk UPDATE runs.
+    async with db_session_maker() as session:
+        ev = LogEvent(
+            file_id=file_id,
+            character_id=CHAR_A,
+            ts=aware_ts,  # tz-AWARE — triggers TypeError in evaluate mode before fix #2
+            direction="in",
+            effect_type="damage",
+            amount=100.0,
+            fight_id=None,
+        )
+        session.add(ev)
+        # Do NOT flush here — keep the aware-ts object in the identity map
+        # so synchronize_session='evaluate' has to compare it against window_start
+        try:
+            count = await associate_file(session, file_id)
+        except TypeError as exc:
+            raise AssertionError(
+                f"associate_file raised TypeError (tz-naive vs aware comparison): {exc}"
+            ) from exc
+        await session.commit()
+
+    assert count >= 1, "Expected at least one event stamped with fight_id"
+
+
 async def test_ewar_dedupe_distant_observations_both_survive(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     """Two observations of the same (source,target,effect) 30s apart must BOTH survive
     as distinct re-tackles, not collapsed."""

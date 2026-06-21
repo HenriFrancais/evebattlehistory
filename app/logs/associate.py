@@ -289,9 +289,14 @@ async def associate_file(
     )
     old_fight_ids: set[int] = {fid for fid in old_fight_ids_result.scalars() if fid is not None}
 
-    # Clear fight_id on all this file's events
+    # Clear fight_id on all this file's events.
+    # synchronize_session=False: skip in-Python identity-map evaluation so we
+    # avoid TypeError when freshly-added LogEvent objects have tz-aware ts but
+    # the fight window bounds are tz-naive (as SQLite returns them). Defense-in-
+    # depth alongside fix #1 (naive ts from _parse_ts).
     await session.execute(
-        update(LogEvent).where(LogEvent.file_id == file_id).values(fight_id=None)
+        update(LogEvent).where(LogEvent.file_id == file_id).values(fight_id=None),
+        execution_options={"synchronize_session": False},
     )
 
     # 3. Find candidate fights where this character participated and windows overlap.
@@ -328,7 +333,8 @@ async def associate_file(
             .where(LogEvent.ts >= window_start)
             .where(LogEvent.ts <= window_end)
             .where(LogEvent.fight_id.is_(None))  # don't overwrite if already stamped
-            .values(fight_id=fight.fight_id)
+            .values(fight_id=fight.fight_id),
+            execution_options={"synchronize_session": False},
         )
 
         # Count how many were stamped in this fight

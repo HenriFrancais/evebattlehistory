@@ -100,7 +100,9 @@ def test_damage_in_fields() -> None:
     assert evt.other_corp_ticker == ".TST"
     assert evt.other_ship_name == "Brutix Navy Issue"
     assert evt.module_name == "250mm Railgun II"
-    assert evt.ts == datetime(2026, 1, 1, 12, 1, 7, tzinfo=UTC)
+    # ts is naive UTC (tzinfo=None) — _parse_ts emits naive datetimes, see Bug (A) fix
+    assert evt.ts == datetime(2026, 1, 1, 12, 1, 7)
+    assert evt.ts.tzinfo is None
 
 
 # ---------------------------------------------------------------------------
@@ -709,3 +711,30 @@ def test_resolve_character_unresolved() -> None:
     result = resolve_character(filename_meta, header, lambda name: None)
     assert result["character_id"] is None
     assert result["resolved_via"] == "unresolved"
+
+
+# ---------------------------------------------------------------------------
+# Bug (A) regression: parsed ts must be tz-NAIVE (naive UTC throughout system)
+# ---------------------------------------------------------------------------
+
+
+def test_parsed_ts_is_naive_utc() -> None:
+    """_parse_ts must emit a naive datetime so the system stays naive-UTC throughout.
+
+    Bug (A): previously _parse_ts added tzinfo=UTC, causing TypeError when
+    SQLAlchemy's synchronize_session='evaluate' compared aware LogEvent.ts
+    against naive fight window datetimes from Fight.started_at.
+    """
+    raw = (
+        "[ 2026.06.14 20:57:21 ] (combat) "
+        "<color=0xffffffff><b>432</b> "
+        "<color=0x77ffffff><font size=10>from</font> "
+        "<b><color=0xffffffff>FakeEnemy Bravo[.TST](Brutix Navy Issue)</b>"
+        '<font size=10><color=0x77ffffff> - 250mm Railgun II - Grazes'
+    )
+    evt = parse_line(raw)
+    assert evt is not None
+    assert evt.ts.tzinfo is None, (
+        f"Expected naive datetime but got tzinfo={evt.ts.tzinfo!r}. "
+        "Fix: remove tzinfo=UTC from _parse_ts in app/logs/parse.py"
+    )
