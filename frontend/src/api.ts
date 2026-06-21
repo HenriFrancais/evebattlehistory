@@ -698,9 +698,9 @@ export const api = {
       body: JSON.stringify(body),
     }),
   lossDamage: (brId: string, kmId: number) =>
-    jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/kills/${kmId}/damage`),
+    jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/losses/${kmId}/damage`),
   damageLeaderboard: (brId: string) =>
     jsonFetch<BrDamageLeaderboard>(`${API}/brs/${brId}/damage-leaderboard`),
   lossItems: (brId: string, kmId: number) =>
-    jsonFetch<ItemLossBreakdown>(`${API}/brs/${brId}/kills/${kmId}/items`),
+    jsonFetch<ItemLossBreakdown>(`${API}/brs/${brId}/losses/${kmId}/items`),
 }
