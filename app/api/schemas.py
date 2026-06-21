@@ -440,3 +440,23 @@ class CompositionSideOut(BaseModel):
 class CompositionOut(BaseModel):
     by_user_available: bool
     sides: list[CompositionSideOut]
+
+
+# ---------------------------------------------------------------------------
+# Damage attribution schemas (Task 15)
+# ---------------------------------------------------------------------------
+
+
+class AttackerDamageRowOut(BaseModel):
+    character_id: int | None
+    character_name: str | None
+    damage_done: int
+    share: float
+    final_blow: bool
+
+
+class LossDamageAttributionOut(BaseModel):
+    killmail_id: int
+    damage_taken: int | None
+    total_attributed: int
+    attackers: list[AttackerDamageRowOut]

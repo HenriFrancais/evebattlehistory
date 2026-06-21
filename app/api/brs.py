@@ -15,6 +15,7 @@ from app.api.access import acting_user
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import (
+    AttackerDamageRowOut,
     BrCreate,
     BrCreated,
     BrDetail,
@@ -27,6 +28,7 @@ from app.api.schemas import (
     BrSummary,
     FightOut,
     FightSideOut,
+    LossDamageAttributionOut,
 )
 from app.config import get_app_config, get_settings
 from app.db.models import (
@@ -555,6 +557,47 @@ async def get_br_status(
         status=br.status,
         progress_pct=br.progress_pct,
         error_text=br.error_text,
+    )
+
+
+@router.get("/api/brs/{br_id}/losses/{killmail_id}/damage")
+async def get_loss_damage_attribution(
+    br_id: str,
+    killmail_id: int,
+    session: SessionDep,
+) -> LossDamageAttributionOut:
+    """Return per-attacker damage attribution for one killmail in a battle report.
+
+    404 if the killmail is not linked to the given BR via the BR→fight→FightKill chain.
+    """
+    from app.analytics.damage_attribution import loss_damage_attribution
+
+    # Guard: verify killmail belongs to this BR via BrFight → FightKill join.
+    km_in_br = (
+        await session.execute(
+            select(FightKill.killmail_id)
+            .join(BrFight, BrFight.fight_id == FightKill.fight_id)
+            .where(BrFight.br_id == br_id, FightKill.killmail_id == killmail_id)
+        )
+    ).scalar_one_or_none()
+    if km_in_br is None:
+        raise HTTPException(status_code=404, detail="Killmail not found in this battle report")
+
+    result = await loss_damage_attribution(session, killmail_id)
+    return LossDamageAttributionOut(
+        killmail_id=result.killmail_id,
+        damage_taken=result.damage_taken,
+        total_attributed=result.total_attributed,
+        attackers=[
+            AttackerDamageRowOut(
+                character_id=a.character_id,
+                character_name=a.character_name,
+                damage_done=a.damage_done,
+                share=a.share,
+                final_blow=a.final_blow,
+            )
+            for a in result.attackers
+        ],
     )
 
 
