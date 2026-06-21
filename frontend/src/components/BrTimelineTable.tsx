@@ -6,7 +6,7 @@
 
 import { Link } from 'react-router-dom'
 import type { BrSummary } from '../api'
-import { fmtIsk, fmtTime } from '../format'
+import { fmtIsk, fmtDateTime } from '../format'
 
 function ResultBadge({ result }: { result: string | null }) {
   if (!result) return <span className="badge badge-pending">Pending</span>
@@ -76,7 +76,7 @@ export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
                       {br.title ?? `BR ${br.br_id}`}
                     </Link>
                     <div className="dim tl-sub">
-                      {fmtTime(br.battle_at ?? br.created_at)}
+                      {fmtDateTime(br.battle_at ?? br.created_at)}
                     </div>
                   </td>
                   <td>{br.systems && br.systems.length ? br.systems.join(', ') : '—'}</td>

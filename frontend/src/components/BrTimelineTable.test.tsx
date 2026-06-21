@@ -77,4 +77,11 @@ describe('BrTimelineTable', () => {
     renderTable([])
     expect(screen.getByText('No battle reports yet.')).toBeInTheDocument()
   })
+
+  it('shows full UTC date and time in the battle sub-line, keeping month groups', () => {
+    renderTable([makeBr()])
+    const row = screen.getByTestId('timeline-row')
+    expect(within(row).getByText('2026-06-10 18:30')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: '2026-06' })).toBeInTheDocument()
+  })
 })
