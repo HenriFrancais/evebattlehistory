@@ -220,10 +220,22 @@ describe('FleetSection', () => {
 
   it('ignores an invalid (from >= to) typed range', async () => {
     vi.mocked(api.fleetTimeline).mockResolvedValue(fleetWithData)
+    vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 1002, to_ts: 1010, rows: [] })
     render(<FleetSection brId="br1" />)
     await waitFor(() => expect(screen.getByTestId('fleet-chart-area')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('snap-to-input'), { target: { value: '1970-01-01T00:16:45' } })
-    fireEvent.change(screen.getByTestId('snap-from-input'), { target: { value: '1970-01-01T00:16:48' } })
-    expect(api.snapshot).not.toHaveBeenCalled()
+
+    // Step 1: commit a valid range — from=1002, to=1010 (window max)
+    // epochToLocalInput(1002) = '1970-01-01T00:16:42'
+    const fromInput = screen.getByTestId('snap-from-input') as HTMLInputElement
+    fireEvent.change(fromInput, { target: { value: '1970-01-01T00:16:42' } })
+    // Wait for selectedRange state to settle so the input is controlled to the valid value.
+    // jsdom may append '.000' ms suffix; strip it for comparison.
+    await waitFor(() => expect(fromInput.value.replace('.000', '')).toBe('1970-01-01T00:16:42'))
+
+    // Step 2: attempt an invalid edit — set from=1010 which equals to=1010 → from >= to
+    // The guard must reject it; onSelectRange is NOT called; selectedRange stays {from:1002, to:1010}
+    // The controlled input must revert to the prior valid value '1970-01-01T00:16:42'
+    fireEvent.change(fromInput, { target: { value: '1970-01-01T00:16:50' } })
+    expect(fromInput.value.replace('.000', '')).toBe('1970-01-01T00:16:42')
   })
 })
