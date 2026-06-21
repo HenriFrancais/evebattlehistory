@@ -159,7 +159,7 @@ async def fleet_composition(
         a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
             a.hulls.setdefault(ship_id, (False, None))
-        if weapon_id is not None:
+        if weapon_id is not None and weapon_id != CAPSULE_TYPE_ID:
             a.weapon_ids.add(weapon_id)
 
     char_names = await _resolve_char_names(session, settings, set(acc))

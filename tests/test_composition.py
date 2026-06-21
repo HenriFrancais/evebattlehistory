@@ -259,3 +259,56 @@ async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type:
     reset_engine_for_tests()
     get_settings.cache_clear()
     get_app_config.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# FIX 3: capsule weapon_type_id must not produce a weapon chip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_composition_capsule_weapon_type_id_produces_no_weapon(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """An attacker row with weapon_type_id == CAPSULE_TYPE_ID must not appear in pilot.weapons."""
+    from app.analytics.composition import CAPSULE_TYPE_ID, fleet_composition
+    from app.config import get_settings
+    from app.db.models import FightKill, InventoryType, KillmailAttacker
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        # Ensure the capsule InventoryType exists (so FK doesn't fail)
+        if not (
+            await session.execute(
+                select(InventoryType).where(InventoryType.type_id == CAPSULE_TYPE_ID)
+            )
+        ).scalar_one_or_none():
+            session.add(InventoryType(type_id=CAPSULE_TYPE_ID, name="Capsule"))
+        # Add an attacker row with weapon_type_id == CAPSULE_TYPE_ID (pod pilot)
+        session.add(
+            KillmailAttacker(
+                killmail_id=km_id,
+                attacker_idx=5,
+                character_id=ATTACKER,
+                ship_type_id=CAPSULE_TYPE_ID,
+                weapon_type_id=CAPSULE_TYPE_ID,
+                damage_done=0,
+                final_blow=False,
+            )
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilot = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    weapon_type_ids = {w.type_id for w in pilot.weapons}
+    assert CAPSULE_TYPE_ID not in weapon_type_ids, (
+        f"Capsule type_id {CAPSULE_TYPE_ID} must not appear in pilot.weapons"
+    )
