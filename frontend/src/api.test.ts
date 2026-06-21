@@ -8,7 +8,6 @@
  * Real backend route decorators (app/api/brs.py):
  *   GET /api/brs/{br_id}/losses/{killmail_id}/damage
  *   GET /api/brs/{br_id}/losses/{killmail_id}/items
- *   GET /api/brs/{br_id}/damage-leaderboard
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,11 +45,5 @@ describe('api fetcher URLs', () => {
     const url: string = fetchSpy.mock.calls[0][0]
     expect(url).toContain('/brs/br-abc/losses/42/items')
     expect(url).not.toContain('/kills/')
-  })
-
-  it('damageLeaderboard calls /api/brs/{brId}/damage-leaderboard', async () => {
-    await api.damageLeaderboard('br-abc')
-    const url: string = fetchSpy.mock.calls[0][0]
-    expect(url).toContain('/brs/br-abc/damage-leaderboard')
   })
 })

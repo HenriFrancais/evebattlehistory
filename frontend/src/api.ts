@@ -445,24 +445,6 @@ export interface LossDamageAttribution {
 }
 
 // ---------------------------------------------------------------------------
-// Damage leaderboard types (Task 16)
-// ---------------------------------------------------------------------------
-
-export interface LeaderboardRow {
-  character_id: number | null
-  character_name: string | null
-  damage_done: number
-  share: number
-  log_damage_out: number | null
-}
-
-export interface BrDamageLeaderboard {
-  rows: LeaderboardRow[]
-  total_attributed: number
-  logs_present: boolean
-}
-
-// ---------------------------------------------------------------------------
 // Item loss breakdown types (Task 19)
 // ---------------------------------------------------------------------------
 
@@ -699,8 +681,6 @@ export const api = {
     }),
   lossDamage: (brId: string, kmId: number) =>
     jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/losses/${kmId}/damage`),
-  damageLeaderboard: (brId: string) =>
-    jsonFetch<BrDamageLeaderboard>(`${API}/brs/${brId}/damage-leaderboard`),
   lossItems: (brId: string, kmId: number) =>
     jsonFetch<ItemLossBreakdown>(`${API}/brs/${brId}/losses/${kmId}/items`),
 }

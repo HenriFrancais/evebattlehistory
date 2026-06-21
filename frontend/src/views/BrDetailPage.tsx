@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
 import { CoverageMatrix } from '../components/CoverageMatrix'
-import { DamageLeaderboard } from '../components/DamageLeaderboard'
 import { FleetGraph } from '../components/FleetGraph'
 import { FleetsPanel } from '../components/FleetsPanel'
 import { LossDetailPanel } from '../components/LossDetailPanel'
@@ -657,10 +656,6 @@ export function BrDetailPage() {
           </section>
         </div>
         <div className="br-col-side" data-testid="br-col-side">
-          <section className="panel">
-            <h3 style={{ margin: '0 0 0.5rem' }}>Damage Leaderboard</h3>
-            {id && <DamageLeaderboard brId={id} />}
-          </section>
           {selectedKillmailId != null && id && (
             <section className="panel">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
