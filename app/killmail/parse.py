@@ -37,6 +37,7 @@ class ParsedVictim(BaseModel):
     corporation_id: int | None = None
     alliance_id: int | None = None
     ship_type_id: int
+    damage_taken: int = 0
 
 
 class ParsedKillmail(BaseModel):
@@ -119,6 +120,7 @@ def parse_killmail(raw: dict[str, object]) -> ParsedKillmail:
             corporation_id=int(v_corp) if v_corp is not None else None,
             alliance_id=int(v_ally) if v_ally is not None else None,
             ship_type_id=int(_d(victim_raw, "ship_type_id", 0)),
+            damage_taken=int(_d(victim_raw, "damage_taken", 0)),
         ),
         attackers=attackers,
         items=items,

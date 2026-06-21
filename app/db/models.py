@@ -111,6 +111,8 @@ class Killmail(Base):
     solo_kill: Mapped[bool] = mapped_column(Boolean, default=False)
     points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # prod: ALTER TABLE killmail ADD COLUMN damage_taken INTEGER;
+    damage_taken: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         Index("ix_killmail_solar_system_id", "solar_system_id"),

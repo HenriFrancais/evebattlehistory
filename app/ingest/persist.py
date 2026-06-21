@@ -251,6 +251,7 @@ async def persist_killmails(
             "solo_kill": km.solo_kill,
             "points": km.points,
             "hash": km.hash,
+            "damage_taken": km.victim.damage_taken,
         })
     await session.execute(sqlite_insert(Killmail).values(km_rows))
 
