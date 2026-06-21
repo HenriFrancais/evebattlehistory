@@ -8,18 +8,16 @@ function mk(effect_type: string, direction: string, values: (number | null)[]) {
   return { key: `${effect_type}:${direction}`, effect_type, direction, metric, values }
 }
 
-const leaders0: Leaders = {
-  top_dmg_taken: { name: 'Bob<evil>', ship: 'Tengu', amount: 12000 },
-  top_rep_recv: { name: 'Alice', ship: 'Loki', amount: 8500 },
-  top_dmg_dealt: { name: 'Charlie', ship: 'Muninn', amount: 3000 },
-  top_rep_done: { name: 'Eve', ship: 'Scimitar', amount: 2200 },
+const leadersPopulated: Leaders = {
+  top_friendly_dmg_taken: { name: 'Bob<evil>', ship: 'Tengu', amount: 12000 },
+  top_hostile_dmg_taken: { name: 'EnemyAce', ship: 'Loki', amount: 9000 },
+  top_friendly_rep_recv: { name: 'Alice', ship: 'Scimitar', amount: 8500 },
 }
 
-const leaders1: Leaders = {
-  top_dmg_taken: null,
-  top_rep_recv: null,
-  top_dmg_dealt: null,
-  top_rep_done: null,
+const leadersAllNull: Leaders = {
+  top_friendly_dmg_taken: null,
+  top_hostile_dmg_taken: null,
+  top_friendly_rep_recv: null,
 }
 
 const fleet: FleetTimeline = {
@@ -40,41 +38,57 @@ const fleet: FleetTimeline = {
 
 describe('renderHoverSummary', () => {
   const view = toFleetView(fleet, { smooth: false })
-  const leaders = [leaders0, leaders1]
+  const leaders = [leadersPopulated, leadersAllNull]
 
-  it('bucket 0 — prominent class for top receiver (dmg taken)', () => {
+  it('bucket 0 — friendly dmg target has prominent class and escaped name', () => {
     const html = renderHoverSummary(view, leaders, 0)
-    // Top damage receiver must appear with hover-tip-top class
     expect(html).toContain('hover-tip-top')
-    // Their name must appear (and be HTML-escaped)
     expect(html).toContain('Bob&lt;evil&gt;')
+    expect(html).toContain('Friendly taking most damage')
   })
 
-  it('bucket 0 — top receiver amount formatted', () => {
+  it('bucket 0 — hostile dmg target appears with label', () => {
     const html = renderHoverSummary(view, leaders, 0)
-    // 12000 -> "12.0k"
-    expect(html).toContain('12.0k')
+    expect(html).toContain('EnemyAce')
+    expect(html).toContain('Hostile taking most damage')
   })
 
-  it('bucket 0 — top rep receiver appears with hover-tip-top class', () => {
+  it('bucket 0 — friendly rep target appears with label', () => {
     const html = renderHoverSummary(view, leaders, 0)
     expect(html).toContain('Alice')
-    // Both primary leaders are in the top section
-    expect(html).toContain('hover-tip-top')
+    expect(html).toContain('Friendly receiving most reps')
   })
 
-  it('bucket 0 — dealer appears with hover-tip-secondary class', () => {
+  it('bucket 0 — amounts formatted with fmtCompact', () => {
     const html = renderHoverSummary(view, leaders, 0)
-    expect(html).toContain('hover-tip-secondary')
-    expect(html).toContain('Charlie')
+    expect(html).toContain('12.0k')  // 12000 → "12.0k"
+    expect(html).toContain('9.0k')   // 9000  → "9.0k"
+    expect(html).toContain('8.5k')   // 8500  → "8.5k"
   })
 
-  it('bucket 0 — repper appears with hover-tip-secondary class', () => {
+  it('bucket 0 — ship names appear in output', () => {
     const html = renderHoverSummary(view, leaders, 0)
-    expect(html).toContain('Eve')
+    expect(html).toContain('Tengu')
+    expect(html).toContain('Loki')
+    expect(html).toContain('Scimitar')
   })
 
-  it('bucket 1 (all-null leaders) — returns "no log data"', () => {
+  it('bucket 0 — does NOT contain old dealer/repper labels', () => {
+    const html = renderHoverSummary(view, leaders, 0)
+    expect(html).not.toContain('Top dmg:')
+    expect(html).not.toContain('Top rep:')
+    expect(html).not.toContain('Dmg recv:')
+    expect(html).not.toContain('Rep recv:')
+  })
+
+  it('bucket 0 — does NOT contain side-total lines', () => {
+    const html = renderHoverSummary(view, leaders, 0)
+    expect(html).not.toContain('DPS out:')
+    expect(html).not.toContain('Dmg in:')
+    expect(html).not.toContain('Rep in:')
+  })
+
+  it('bucket 1 (all-null) — returns "no log data"', () => {
     const html = renderHoverSummary(view, leaders, 1)
     expect(html).toContain('no log data')
   })
@@ -82,14 +96,5 @@ describe('renderHoverSummary', () => {
   it('out-of-range idx — returns "no log data"', () => {
     const html = renderHoverSummary(view, leaders, 99)
     expect(html).toContain('no log data')
-  })
-
-  it('bucket 0 — includes side totals (dmg_out, dmg_in, rep_in)', () => {
-    const html = renderHoverSummary(view, leaders, 0)
-    // dmg_out idx 0 = 500 -> "500"
-    expect(html).toContain('500')
-    // dmg_in idx 0 = 200 (stored as -200 in view) -> "200"
-    expect(html).toContain('200')
-    // rep_in idx 0 = 150+50=200 (stored as -200) -> "200"
   })
 })

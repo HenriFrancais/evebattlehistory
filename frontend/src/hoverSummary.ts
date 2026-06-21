@@ -1,12 +1,13 @@
 // Pure HTML builder for the cursor hover-summary tooltip.
 // No uPlot import — unit-tested in jsdom.
 //
-// Shows side totals (DPS out / damage taken / reps received) from the FleetView
-// family series at the hovered bucket index, plus the top individual leaders
-// from the per-bucket leaders array (tasks 11-12).
+// Shows three side-aware per-bucket leaders (all by TARGET/receiver):
+//   1. Friendly target receiving the most hostile damage (top_friendly_dmg_taken)
+//   2. Hostile target receiving the most friendly damage (top_hostile_dmg_taken)
+//   3. Friendly target receiving the most friendly reps  (top_friendly_rep_recv)
 //
-// Top targets-under-pressure (dmg_taken receiver + rep receiver) are given the
-// primary class `hover-tip-top`; top dealers/reppers get `hover-tip-secondary`.
+// The `view` parameter is retained for API compatibility with the FleetGraph
+// plugin wiring, but is no longer used for side-total computation.
 
 import type { Leaders } from './api'
 import type { FleetView } from './fleet'
@@ -22,100 +23,55 @@ function esc(s: string): string {
 
 function allNull(l: Leaders): boolean {
   return (
-    l.top_dmg_taken == null &&
-    l.top_rep_recv == null &&
-    l.top_dmg_dealt == null &&
-    l.top_rep_done == null
+    l.top_friendly_dmg_taken == null &&
+    l.top_hostile_dmg_taken == null &&
+    l.top_friendly_rep_recv == null
   )
 }
 
-/** Find a series value at idx by family key, across all panels. Returns 0 if absent. */
-function seriesVal(view: FleetView, key: string, idx: number): number {
-  for (const panel of view.panels) {
-    const s = panel.series.find((ps) => ps.key === key)
-    if (s) {
-      const v = s.values[idx]
-      return v == null ? 0 : v
-    }
-  }
-  return 0
+function leaderLine(label: string, e: { name: string; ship: string | null; amount: number }): string {
+  return (
+    `<div class="hover-tip-top">` +
+    `<span class="hover-tip-label">${label}:</span> ` +
+    `<strong>${esc(e.name)}</strong>` +
+    (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
+    ` <span class="hover-tip-amount">${fmtCompact(e.amount)}</span>` +
+    `</div>`
+  )
 }
 
 /**
  * Render an HTML string for the hover tooltip at `idx`.
  *
- * Side totals are read from the FleetView (family series `dmg_out`, `dmg_in`,
- * `rep_in`). Incoming series are mirrored negative — we display magnitudes.
- *
- * Leaders layout:
- *   - `hover-tip-top`: top_dmg_taken (main pressure target) + top_rep_recv
- *   - `hover-tip-secondary`: top_dmg_dealt + top_rep_done
+ * Shows only the 3 side-aware receiver leaders:
+ *   - "Friendly taking most damage: <name> (<ship>) <amount>"
+ *   - "Hostile taking most damage: <name> (<ship>) <amount>"
+ *   - "Friendly receiving most reps: <name> (<ship>) <amount>"
  *
  * Returns a "no log data" line when the bucket has no leader data.
+ * The `view` parameter is unused but kept for FleetGraph plugin compatibility.
  */
-export function renderHoverSummary(view: FleetView, leaders: Leaders[], idx: number): string {
+export function renderHoverSummary(_view: FleetView, leaders: Leaders[], idx: number): string {
   const entry = leaders[idx]
   if (!entry || allNull(entry)) {
     return '<span class="hover-tip-no-data">no log data</span>'
   }
 
-  // Side totals (magnitudes — incoming series are stored as negative)
-  const dmgOut = Math.abs(seriesVal(view, 'dmg_out', idx))
-  const dmgIn = Math.abs(seriesVal(view, 'dmg_in', idx))
-  const repIn = Math.abs(seriesVal(view, 'rep_in', idx))
-
-  const totals =
-    `<div class="hover-tip-totals">` +
-    `<span class="hover-tip-total-item">DPS out: <strong>${fmtCompact(dmgOut)}</strong></span>` +
-    `<span class="hover-tip-total-item">Dmg in: <strong>${fmtCompact(dmgIn)}</strong></span>` +
-    `<span class="hover-tip-total-item">Rep in: <strong>${fmtCompact(repIn)}</strong></span>` +
-    `</div>`
-
-  // Primary leaders: targets under pressure
-  let top = ''
-  if (entry.top_dmg_taken) {
-    const e = entry.top_dmg_taken
-    top +=
-      `<div class="hover-tip-top">` +
-      `<span class="hover-tip-label">Dmg recv:</span> ` +
-      `<strong>${esc(e.name)}</strong>` +
-      (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
-      ` <span class="hover-tip-amount">${fmtCompact(e.amount)}</span>` +
-      `</div>`
+  let html = ''
+  if (entry.top_friendly_dmg_taken) {
+    html += leaderLine('Friendly taking most damage', entry.top_friendly_dmg_taken)
   }
-  if (entry.top_rep_recv) {
-    const e = entry.top_rep_recv
-    top +=
-      `<div class="hover-tip-top">` +
-      `<span class="hover-tip-label">Rep recv:</span> ` +
-      `<strong>${esc(e.name)}</strong>` +
-      (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
-      ` <span class="hover-tip-amount">${fmtCompact(e.amount)}</span>` +
-      `</div>`
+  if (entry.top_hostile_dmg_taken) {
+    html += leaderLine('Hostile taking most damage', entry.top_hostile_dmg_taken)
+  }
+  if (entry.top_friendly_rep_recv) {
+    html += leaderLine('Friendly receiving most reps', entry.top_friendly_rep_recv)
   }
 
-  // Secondary leaders: top contributors
-  let secondary = ''
-  if (entry.top_dmg_dealt) {
-    const e = entry.top_dmg_dealt
-    secondary +=
-      `<div class="hover-tip-secondary">` +
-      `<span class="hover-tip-label">Top dmg:</span> ` +
-      `${esc(e.name)}` +
-      (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
-      ` ${fmtCompact(e.amount)}` +
-      `</div>`
-  }
-  if (entry.top_rep_done) {
-    const e = entry.top_rep_done
-    secondary +=
-      `<div class="hover-tip-secondary">` +
-      `<span class="hover-tip-label">Top rep:</span> ` +
-      `${esc(e.name)}` +
-      (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
-      ` ${fmtCompact(e.amount)}` +
-      `</div>`
+  // If all were non-null in entry but rendered nothing (defensive), show fallback.
+  if (!html) {
+    return '<span class="hover-tip-no-data">no log data</span>'
   }
 
-  return totals + top + secondary
+  return html
 }

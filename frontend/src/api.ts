@@ -331,10 +331,9 @@ export interface LeaderEntry {
 }
 
 export interface Leaders {
-  top_dmg_taken: LeaderEntry | null
-  top_rep_recv: LeaderEntry | null
-  top_dmg_dealt: LeaderEntry | null
-  top_rep_done: LeaderEntry | null
+  top_friendly_dmg_taken: LeaderEntry | null
+  top_hostile_dmg_taken: LeaderEntry | null
+  top_friendly_rep_recv: LeaderEntry | null
 }
 
 // Fleet timeline types (E3)
