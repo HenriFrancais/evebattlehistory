@@ -460,3 +460,22 @@ class LossDamageAttributionOut(BaseModel):
     damage_taken: int | None
     total_attributed: int
     attackers: list[AttackerDamageRowOut]
+
+
+# ---------------------------------------------------------------------------
+# Damage leaderboard schemas (Task 16)
+# ---------------------------------------------------------------------------
+
+
+class LeaderboardRowOut(BaseModel):
+    character_id: int | None
+    character_name: str | None
+    damage_done: int
+    share: float
+    log_damage_out: float | None  # None unless logs present (Task 21 wires overlay)
+
+
+class BrDamageLeaderboardOut(BaseModel):
+    rows: list[LeaderboardRowOut]  # sorted by damage_done desc
+    total_attributed: int
+    logs_present: bool

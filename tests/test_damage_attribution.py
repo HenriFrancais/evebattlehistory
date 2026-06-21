@@ -1,16 +1,31 @@
 """TDD tests for Task 15: per-loss damage attribution analytics + API endpoint.
+TDD tests for Task 16: battle-level damage leaderboard analytics + API endpoint.
 
-Analytics contract:
+Analytics contract (Task 15):
   loss_damage_attribution(session, killmail_id) -> LossDamageAttribution
   - attackers sorted by damage_done desc
   - share = damage_done / total_attributed (0.0 if total is 0)
   - final_blow flag passed through per attacker
   - damage_taken from Killmail.damage_taken
 
-API contract:
+API contract (Task 15):
   GET /api/brs/{br_id}/losses/{killmail_id}/damage
   - 200 with LossDamageAttributionOut shape when killmail is in the BR
   - 404 when killmail is not linked to the given BR (guard via BR↔fight↔killmail join)
+
+Analytics contract (Task 16):
+  br_damage_leaderboard(session, br_id) -> BrDamageLeaderboard
+  - rows sorted by damage_done desc
+  - damage_done sums KillmailAttacker.damage_done per character_id across all kills in the BR
+  - share = damage_done / total_attributed (sums to ~1.0)
+  - logs_present is False (Task 21 wires the overlay)
+  - log_damage_out is None for all rows
+
+API contract (Task 16):
+  GET /api/brs/{br_id}/damage-leaderboard
+  - 200 with BrDamageLeaderboardOut shape
+  - logs_present field is False
+  - 404 when BR does not exist
 """
 
 from __future__ import annotations
@@ -291,3 +306,224 @@ async def test_damage_endpoint_404_killmail_not_in_br(tmp_path, monkeypatch) -> 
             headers=MEMBER_HEADERS,
         )
         assert r2.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Task 16: Battle-level damage leaderboard tests
+# ---------------------------------------------------------------------------
+
+
+async def _seed_loss_multi(  # type: ignore[no-untyped-def]
+    session,
+    fight_id: int,
+    km_id: int,
+    char_dmg: list[tuple[int, int]],
+) -> int:
+    """Seed a Killmail with given (character_id, damage_done) pairs + FightKill link."""
+    await _ensure_prereqs(session)
+    total = sum(d for _, d in char_dmg)
+    session.add(Killmail(
+        killmail_id=km_id,
+        killmail_time=dt.datetime(2026, 6, 10, 20, 0, 0, tzinfo=dt.UTC),
+        solar_system_id=_SOLAR_SYSTEM_ID,
+        victim_character_id=None,
+        victim_ship_type_id=_SHIP_TYPE_ID,
+        total_value=1.0,
+        damage_taken=total,
+        npc_kill=False,
+        solo_kill=False,
+    ))
+    for idx, (char_id, dmg) in enumerate(char_dmg):
+        session.add(KillmailAttacker(
+            killmail_id=km_id,
+            attacker_idx=idx,
+            character_id=char_id,
+            ship_type_id=_SHIP_TYPE_ID,
+            damage_done=dmg,
+            final_blow=(idx == 0),
+        ))
+    session.add(FightKill(fight_id=fight_id, killmail_id=km_id, side_idx=0))
+    await session.flush()
+    return km_id
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_sums_across_kills_sorted_desc(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """br_damage_leaderboard sums damage per character across kills, sorted desc, share ~1."""
+    from app.analytics.damage_attribution import br_damage_leaderboard
+
+    # Note: _make_br_with_fight (via _insert_fight) pre-seeds one kill with
+    # CHAR_B=2200000001 doing 100 damage.  Our assertions account for that extra row.
+    async with db_session_maker() as s:
+        await _ensure_character(s, 20, "Pilot_X")
+        await _ensure_character(s, 21, "Pilot_Y")
+        br_id, fight_id = await _make_br_with_fight(s)
+        # kill 1: X=2000, Y=500
+        await _seed_loss_multi(s, fight_id, km_id=1001, char_dmg=[(20, 2000), (21, 500)])
+        # kill 2: X=1000, Y=1500
+        await _seed_loss_multi(s, fight_id, km_id=1002, char_dmg=[(20, 1000), (21, 1500)])
+        await s.commit()
+
+    # X total: 3000, Y total: 2000, CHAR_B (pre-seeded): 100, grand total: 5100
+    async with db_session_maker() as s:
+        lb = await br_damage_leaderboard(s, br_id)
+
+    assert lb.logs_present is False
+    assert lb.total_attributed == 5100
+    # At least 3 rows (Pilot_X, Pilot_Y, and pre-seeded CHAR_B)
+    assert len(lb.rows) >= 2
+
+    # Extract Pilot_X and Pilot_Y rows by character_id
+    by_char = {r.character_id: r for r in lb.rows}
+    row_x = by_char[20]
+    row_y = by_char[21]
+
+    assert row_x.damage_done == 3000
+    assert row_x.character_name == "Pilot_X"
+    assert row_y.damage_done == 2000
+    assert row_y.character_name == "Pilot_Y"
+
+    # sorted desc: Pilot_X (3000) is at the top
+    assert lb.rows[0].character_id == 20
+
+    # shares sum to ~1.0
+    total_share = sum(r.share for r in lb.rows)
+    assert abs(total_share - 1.0) < 1e-6
+
+    # Pilot_X share: 3000/5100
+    assert abs(row_x.share - 3000 / 5100) < 1e-6
+    # Pilot_Y share: 2000/5100
+    assert abs(row_y.share - 2000 / 5100) < 1e-6
+
+    # log_damage_out is None for all rows
+    for row in lb.rows:
+        assert row.log_damage_out is None
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_multiple_fights_in_br(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """br_damage_leaderboard aggregates across multiple fights within the BR."""
+    from app.analytics.damage_attribution import br_damage_leaderboard
+    from app.db.models import BrFight, Fight, FightSide
+
+    async with db_session_maker() as s:
+        await _ensure_character(s, 30, "Alpha")
+        await _ensure_character(s, 31, "Beta")
+        # Two fights, both in the same BR
+        br_id, fight_id_1 = await _make_br_with_fight(s)
+
+        # Create a second fight and link it
+        fight2 = Fight(
+            system_id=31002222,
+            started_at=dt.datetime(2026, 6, 10, 21, 0, 0, tzinfo=dt.UTC),
+            ended_at=dt.datetime(2026, 6, 10, 21, 30, 0, tzinfo=dt.UTC),
+            isk_destroyed_total=0.0,
+            largest_side_pilots=1,
+            capitals_involved=False,
+        )
+        s.add(fight2)
+        await s.flush()
+        fight_id_2 = fight2.fight_id
+        s.add(FightSide(fight_id=fight_id_2, side_idx=0, side_kind="friendly",
+                        pilot_count=1, isk_lost=0.0))
+        s.add(BrFight(br_id=br_id, fight_id=fight_id_2, seq=1))
+        await s.flush()
+
+        await _ensure_prereqs(s)
+        # Fight 1 kill: Alpha=3000
+        await _seed_loss_multi(s, fight_id_1, km_id=1010, char_dmg=[(30, 3000)])
+        # Fight 2 kill: Alpha=2000, Beta=1000
+        await _seed_loss_multi(s, fight_id_2, km_id=1011, char_dmg=[(30, 2000), (31, 1000)])
+        await s.commit()
+
+    # Alpha total: 5000, Beta total: 1000, CHAR_B (pre-seeded by _make_br_with_fight): 100
+    # grand_total: 6100
+    async with db_session_maker() as s:
+        lb = await br_damage_leaderboard(s, br_id)
+
+    assert lb.total_attributed == 6100
+    by_char = {r.character_id: r for r in lb.rows}
+    assert by_char[30].damage_done == 5000
+    assert by_char[31].damage_done == 1000
+    # Alpha is still first (5000 > 1000)
+    assert lb.rows[0].character_id == 30
+    total_share = sum(r.share for r in lb.rows)
+    assert abs(total_share - 1.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Task 16: API contract tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_endpoint_shape(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """GET /api/brs/{br_id}/damage-leaderboard returns correct shape with logs_present=False."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+    from app.main import create_app
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+    sm = get_sessionmaker(settings)
+
+    async with sm() as s:
+        await _ensure_character(s, 40, "Warrior_A")
+        await _ensure_character(s, 41, "Warrior_B")
+        br_id, fight_id = await _make_br_with_fight(s)
+        # _make_br_with_fight pre-seeds CHAR_B (2200000001) with 100 damage
+        await _seed_loss_multi(s, fight_id, km_id=2001, char_dmg=[(40, 4000), (41, 1000)])
+        await s.commit()
+
+    # Warrior_A: 4000, Warrior_B: 1000, CHAR_B (pre-seeded): 100 → total 5100
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get(f"/api/brs/{br_id}/damage-leaderboard", headers=MEMBER_HEADERS)
+        assert r.status_code == 200
+        body = r.json()
+        assert body["logs_present"] is False
+        assert body["total_attributed"] == 5100
+        rows = body["rows"]
+        assert len(rows) >= 2
+        # sorted desc: Warrior_A (4000) is first
+        assert rows[0]["damage_done"] == 4000
+        assert rows[0]["log_damage_out"] is None
+        # Find Warrior_A and Warrior_B by character_id
+        by_char = {row["character_id"]: row for row in rows}
+        assert by_char[40]["character_name"] == "Warrior_A"
+        assert by_char[41]["character_name"] == "Warrior_B"
+        assert abs(by_char[40]["share"] - 4000 / 5100) < 1e-6
+        assert abs(by_char[41]["share"] - 1000 / 5100) < 1e-6
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_endpoint_404_unknown_br(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """GET /api/brs/{br_id}/damage-leaderboard → 404 when BR does not exist."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import init_models, reset_engine_for_tests
+    from app.main import create_app
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get(
+            f"/api/brs/{uuid.uuid4()}/damage-leaderboard",
+            headers=MEMBER_HEADERS,
+        )
+        assert r.status_code == 404

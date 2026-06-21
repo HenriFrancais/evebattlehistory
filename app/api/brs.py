@@ -18,6 +18,7 @@ from app.api.schemas import (
     AttackerDamageRowOut,
     BrCreate,
     BrCreated,
+    BrDamageLeaderboardOut,
     BrDetail,
     BrListResponse,
     BrListSummary,
@@ -28,6 +29,7 @@ from app.api.schemas import (
     BrSummary,
     FightOut,
     FightSideOut,
+    LeaderboardRowOut,
     LossDamageAttributionOut,
 )
 from app.config import get_app_config, get_settings
@@ -598,6 +600,42 @@ async def get_loss_damage_attribution(
             )
             for a in result.attackers
         ],
+    )
+
+
+@router.get("/api/brs/{br_id}/damage-leaderboard")
+async def get_br_damage_leaderboard(
+    br_id: str,
+    session: SessionDep,
+) -> BrDamageLeaderboardOut:
+    """Return battle-level damage leaderboard for a battle report.
+
+    Sums KillmailAttacker.damage_done per character across all kills in the BR,
+    sorted descending. 404 if the BR does not exist.
+    log_damage_out is None and logs_present is False (Task 21 wires the overlay).
+    """
+    from app.analytics.damage_attribution import br_damage_leaderboard
+
+    exists = (
+        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Battle report not found")
+
+    result = await br_damage_leaderboard(session, br_id)
+    return BrDamageLeaderboardOut(
+        rows=[
+            LeaderboardRowOut(
+                character_id=r.character_id,
+                character_name=r.character_name,
+                damage_done=r.damage_done,
+                share=r.share,
+                log_damage_out=r.log_damage_out,
+            )
+            for r in result.rows
+        ],
+        total_attributed=result.total_attributed,
+        logs_present=result.logs_present,
     )
 
 
