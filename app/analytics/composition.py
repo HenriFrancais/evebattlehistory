@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.fleet import _resolve_char_names
 from app.analytics.sides_config import EntityKey, classify_entity
+from app.analytics.weapon_roles import WeaponTypeInfo, weapon_role
 from app.config import Settings
 from app.db.models import (
     BrFight,
@@ -35,6 +36,13 @@ CAPSULE_TYPE_ID = 670
 
 
 @dataclass
+class WeaponEffect:
+    type_id: int
+    name: str
+    role: str
+
+
+@dataclass
 class CompositionPilot:
     character_id: int
     character_name: str
@@ -44,6 +52,7 @@ class CompositionPilot:
     reship: bool
     user_name: str | None
     killmail_id: int | None
+    weapons: list[WeaponEffect]
 
 
 @dataclass
@@ -71,6 +80,7 @@ class _Acc:
     side: str
     hulls: dict[int, tuple[bool, int | None]]  # ship_type_id → (lost?, killmail_id)
     podded: bool            # appeared only in a capsule
+    weapon_ids: set[int]    # weapon_type_ids seen across all attacker rows
 
 
 async def fleet_composition(
@@ -107,7 +117,7 @@ async def fleet_composition(
     def _ensure(char_id: int, side: str) -> _Acc:
         a = acc.get(char_id)
         if a is None:
-            a = _Acc(side=side, hulls={}, podded=False)
+            a = _Acc(side=side, hulls={}, podded=False, weapon_ids=set())
             acc[char_id] = a
         return a
 
@@ -132,12 +142,13 @@ async def fleet_composition(
         elif ship_id == CAPSULE_TYPE_ID:
             a.podded = True
 
-    # Attackers: side if unseen, plus any non-capsule hull they flew.
-    for char_id, ship_id, alli, corp in (
+    # Attackers: side if unseen, plus any non-capsule hull they flew + weapon id.
+    for char_id, ship_id, weapon_id, alli, corp in (
         await session.execute(
             select(
                 KillmailAttacker.character_id,
                 KillmailAttacker.ship_type_id,
+                KillmailAttacker.weapon_type_id,
                 KillmailAttacker.alliance_id,
                 KillmailAttacker.corporation_id,
             ).where(KillmailAttacker.killmail_id.in_(km_ids))
@@ -148,34 +159,55 @@ async def fleet_composition(
         a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
             a.hulls.setdefault(ship_id, (False, None))
+        if weapon_id is not None:
+            a.weapon_ids.add(weapon_id)
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}
+    weapon_ids_all = {wid for a in acc.values() for wid in a.weapon_ids}
+    all_type_ids = ship_ids | weapon_ids_all
     ship_names: dict[int, str] = {}
-    if ship_ids:
+    inv_by_id: dict[int, InventoryType] = {}
+    if all_type_ids:
         for inv in (
-            await session.execute(select(InventoryType).where(InventoryType.type_id.in_(ship_ids)))
+            await session.execute(
+                select(InventoryType).where(InventoryType.type_id.in_(all_type_ids))
+            )
         ).scalars():
-            ship_names[inv.type_id] = inv.name
+            inv_by_id[inv.type_id] = inv
+            if inv.type_id in ship_ids:
+                ship_names[inv.type_id] = inv.name
 
     by_side: dict[str, list[CompositionPilot]] = {}
     for char_id, a in acc.items():
         name = char_names.get(char_id) or f"Char {char_id}"
         user = char_to_user.get(char_id) if char_to_user else None
         is_reship = len(a.hulls) > 1
+        weapons: list[WeaponEffect] = []
+        for wid in a.weapon_ids:
+            winv = inv_by_id.get(wid)
+            if winv is None:
+                continue
+            info = WeaponTypeInfo(
+                type_id=wid, name=winv.name,
+                group_name=winv.group_name, category_id=winv.category_id,
+            )
+            wr = weapon_role(info)
+            weapons.append(WeaponEffect(type_id=wid, name=winv.name, role=wr.role))
         if a.hulls:
             for sid, (lost, km_id) in a.hulls.items():
                 by_side.setdefault(a.side, []).append(
                     CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
                                      ship_name=ship_names.get(sid, "Unknown"), lost=lost,
-                                     reship=is_reship, user_name=user, killmail_id=km_id)
+                                     reship=is_reship, user_name=user, killmail_id=km_id,
+                                     weapons=weapons)
                 )
         else:
             # Capsule-only / no hull recorded.
             by_side.setdefault(a.side, []).append(
                 CompositionPilot(character_id=char_id, character_name=name, ship_type_id=None,
                                  ship_name="Unknown", lost=a.podded, reship=False,
-                                 user_name=user, killmail_id=None)
+                                 user_name=user, killmail_id=None, weapons=weapons)
             )
 
     sides: list[CompositionSide] = []

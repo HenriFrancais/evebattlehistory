@@ -55,6 +55,12 @@ function PilotRow({ p }: { p: CompositionPilot }) {
       </span>
       <span className="dim comp-ship-sub">{p.ship_name}</span>
       {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
+      {(p.weapons ?? []).map((w) => (
+        <span key={w.type_id} className="comp-weapon-chip" title={w.name}>
+          <span className="comp-weapon-role">{w.role}</span>
+          {' '}{w.name}
+        </span>
+      ))}
     </div>
   )
 }

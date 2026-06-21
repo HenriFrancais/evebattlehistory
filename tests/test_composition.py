@@ -160,6 +160,68 @@ async def test_composition_lost_hull_has_killmail_id(db_session_maker) -> None: 
     assert attacker.killmail_id is None  # not lost
 
 
+RAILGUN_ID = 3074
+RAILGUN_NAME = "Electron Blaster Cannon I"
+
+
+@pytest.mark.asyncio
+async def test_composition_pilot_weapons_from_attacker(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Pilot row carries weapons list derived from weapon_type_id on KillmailAttacker."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        # Give the attacker a weapon_type_id and seed its InventoryType (category 6 = turret)
+        session.add(InventoryType(
+            type_id=RAILGUN_ID, name=RAILGUN_NAME, group_name="Hybrid Weapon", category_id=6,
+        ))
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=RAILGUN_ID)
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilot = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert len(pilot.weapons) == 1
+    w = pilot.weapons[0]
+    assert w.type_id == RAILGUN_ID
+    assert w.name == RAILGUN_NAME
+    assert w.role == "turret"
+
+
+@pytest.mark.asyncio
+async def test_composition_pilot_weapons_none_weapon_type_id(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Pilot with no weapon_type_id has an empty weapons list (no crash)."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, _ = await _seed(session)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilot = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert pilot.weapons == []
+
+
 @pytest.mark.asyncio
 async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from fastapi.testclient import TestClient
@@ -191,6 +253,7 @@ async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type:
     assert member.status_code == 200
     assert member.json()["by_user_available"] is False
     assert all(p["user_name"] is None for s in member.json()["sides"] for p in s["pilots"])
+    assert all("weapons" in p for s in member.json()["sides"] for p in s["pilots"])
     assert creator.status_code == 200
 
     reset_engine_for_tests()

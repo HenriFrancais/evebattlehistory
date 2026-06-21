@@ -419,6 +419,12 @@ class CompositionShipOut(BaseModel):
     count: int
 
 
+class WeaponEffectOut(BaseModel):
+    type_id: int
+    name: str
+    role: str
+
+
 class CompositionPilotOut(BaseModel):
     character_id: int
     character_name: str
@@ -428,6 +434,7 @@ class CompositionPilotOut(BaseModel):
     reship: bool = False
     killmail_id: int | None = None
     user_name: str | None = None
+    weapons: list[WeaponEffectOut] = []
 
 
 class CompositionSideOut(BaseModel):

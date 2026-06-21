@@ -395,6 +395,12 @@ export interface CompositionShip {
   count: number
 }
 
+export interface WeaponEffect {
+  type_id: number
+  name: string
+  role: string
+}
+
 export interface CompositionPilot {
   character_id: number
   character_name: string
@@ -404,6 +410,7 @@ export interface CompositionPilot {
   reship: boolean
   killmail_id: number | null
   user_name: string | null
+  weapons: WeaponEffect[]
 }
 
 export interface CompositionSide {
