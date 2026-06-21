@@ -614,3 +614,66 @@ async def test_leaderboard_endpoint_404_unknown_br(tmp_path, monkeypatch) -> Non
             headers=MEMBER_HEADERS,
         )
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# FIX 1: logs_present from LogEvent existence, not damage magnitude
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_logs_present_from_ewar_only_fight(db_session_maker) -> None:
+    """BR fight with EWAR-only LogEvent (no damage) → logs_present True, log_damage_out None."""
+    import datetime as _dt
+
+    from app.analytics.damage_attribution import br_damage_leaderboard
+    from app.db.models import GamelogFile, LogEvent
+
+    CHAR_EWAR = 70
+    CHAR_NO_LOG = 71
+
+    async with db_session_maker() as s:
+        await _ensure_character(s, CHAR_EWAR, "Pilot_Ewar")
+        await _ensure_character(s, CHAR_NO_LOG, "Pilot_NoLog3")
+        br_id, fight_id = await _make_br_with_fight(s)
+        # Killmail damage for both characters
+        await _seed_loss_multi(
+            s, fight_id, km_id=4001,
+            char_dmg=[(CHAR_EWAR, 1000), (CHAR_NO_LOG, 500)],
+        )
+        # Seed a GamelogFile + EWAR-only LogEvent (effect_type='scram', no damage) for CHAR_EWAR
+        gf = GamelogFile(
+            uploaded_by_user="u",
+            claimed_character_id=CHAR_EWAR,
+            resolved_via="filename",
+            stored_path="/test/ewar_log.txt",
+            sha256="sha256ewar70",
+            mime="text/plain",
+            size=1,
+            parse_status="parsed",
+            event_count=1,
+            uploaded_at=_dt.datetime.now(_dt.UTC),
+        )
+        s.add(gf)
+        await s.flush()
+        s.add(LogEvent(
+            file_id=gf.file_id,
+            character_id=CHAR_EWAR,
+            ts=_dt.datetime(2026, 6, 10, 20, 5, 0, tzinfo=_dt.UTC),
+            effect_type="scram",
+            direction="out",
+            amount=None,  # no damage amount
+            fight_id=fight_id,
+        ))
+        await s.commit()
+
+    async with db_session_maker() as s:
+        lb = await br_damage_leaderboard(s, br_id)
+
+    # logs_present must be True — a LogEvent exists even though effect is EWAR (no damage)
+    assert lb.logs_present is True
+    # log_damage_out must be None for all rows (no damage LogEvents)
+    for row in lb.rows:
+        assert row.log_damage_out is None, (
+            f"expected None for char {row.character_id}, got {row.log_damage_out}"
+        )

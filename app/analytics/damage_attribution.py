@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.reconcile import fight_damage_reconcile
-from app.db.models import BrFight, Character, FightKill, Killmail, KillmailAttacker
+from app.db.models import BrFight, Character, FightKill, Killmail, KillmailAttacker, LogEvent
 
 
 @dataclass
@@ -190,17 +190,25 @@ async def br_damage_leaderboard(
             char_names[char[0]] = char[1]
 
     # --- Task 21: Log overlay via fight_damage_reconcile ---
-    # Accumulate log_damage_out per character_id across all fights, and detect
-    # whether any fight had actual log rows (direction="out", effect_type="damage").
+    # Detect logs_present from whether ANY LogEvent row exists for the BR's fights
+    # (independent of damage magnitude — covers EWAR-only fights where no damage rows exist).
+    logs_present: bool = False
+    if fight_ids:
+        logs_present = bool(
+            (
+                await session.execute(
+                    select(
+                        exists().where(LogEvent.fight_id.in_(fight_ids))
+                    )
+                )
+            ).scalar()
+        )
+
+    # Accumulate log_damage_out per character_id across all fights.
     log_out_totals: dict[int, float] = {}
-    logs_present = False
     for fid in fight_ids:
         reconcile = await fight_damage_reconcile(session, fid)
         for rec_row in reconcile.rows:
-            # A fight "has logs" if any character has non-zero log_damage_out or
-            # log_damage_in — these are only non-zero when actual LogEvent rows exist.
-            if rec_row.log_damage_out != 0.0 or rec_row.log_damage_in != 0.0:
-                logs_present = True
             if rec_row.log_damage_out != 0.0:
                 cid = rec_row.character_id
                 log_out_totals[cid] = log_out_totals.get(cid, 0.0) + rec_row.log_damage_out
