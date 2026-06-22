@@ -7,5 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/setupTests.ts',
+    // Run in a non-UTC zone so UTC-formatting bugs (naive timestamps parsed as
+    // local time) surface in tests instead of only on users' machines.
+    env: { TZ: 'America/New_York' },
   },
 })

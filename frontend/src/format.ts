@@ -7,11 +7,18 @@ export function fmtIsk(v: number): string {
   return `${v.toFixed(0)}`
 }
 
-/** Coerce Date | epoch-seconds | ISO string to a Date. */
+/**
+ * Coerce Date | epoch-seconds | ISO string to a Date. Backend datetimes are
+ * naive UTC (SQLite); a string with a time component but no timezone marker
+ * must be read as UTC — not the browser's local zone — so it renders in UTC
+ * regardless of where the viewer is. (Same rule as isoToEpoch.)
+ */
 function toDate(x: Date | number | string): Date {
   if (x instanceof Date) return x
   if (typeof x === 'number') return new Date(x * 1000)
-  return new Date(x)
+  const hasTz = /[zZ]$|[+-]\d\d:?\d\d$/.test(x)
+  const hasTime = x.includes('T')
+  return new Date(hasTime && !hasTz ? `${x}Z` : x)
 }
 
 /** ISO calendar date in UTC: YYYY-MM-DD. */

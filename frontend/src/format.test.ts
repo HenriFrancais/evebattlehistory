@@ -34,6 +34,15 @@ describe('date/time formatting (UTC)', () => {
   it('fmtDateTime → YYYY-MM-DD HH:MM UTC', () => {
     expect(fmtDateTime(new Date(ISO))).toBe('2026-06-16 19:21')
   })
+
+  // Backend datetimes are naive UTC (no tz marker). They must render in UTC
+  // regardless of the viewer's local zone — not be shifted by new Date()'s
+  // local-time parsing of naive strings.
+  it('reads a naive (no-tz) timestamp as UTC', () => {
+    expect(fmtDateTime('2026-06-16T19:21:14')).toBe('2026-06-16 19:21')
+    expect(fmtDate('2026-06-16T19:21:14')).toBe('2026-06-16')
+    expect(fmtTime('2026-06-16T19:21:14')).toBe('19:21')
+  })
   void EPOCH_S
 })
 
