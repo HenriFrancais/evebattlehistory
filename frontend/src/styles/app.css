@@ -457,6 +457,11 @@ a:hover { color: var(--link-hover); }
 .comp-ship-sub { font-size: 0.72rem; flex: none; }
 .comp-lost { color: var(--bad); }
 .comp-reship { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
+/* Per-pilot nested module list: items indented under the character, smaller font. */
+.comp-pilot-modules { display: flex; flex-direction: column; gap: 0.04rem; margin: 0.05rem 0 0.3rem 1.75rem; }
+.comp-module-row { display: flex; align-items: center; gap: 0.35rem; font-size: 0.7rem; line-height: 1.3; color: var(--text-dim, #9aa3ad); }
+.comp-item-icon { width: 16px; height: 16px; border-radius: 2px; background: var(--panel-2); flex: none; }
+.comp-module-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .comp-user-group { margin-bottom: 0.4rem; }
 .comp-user-head { font-size: 0.72rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.3rem 0 0.15rem; }
 @media (max-width: 40rem) { .comp-twoside { grid-template-columns: 1fr; } }
