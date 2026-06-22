@@ -134,6 +134,50 @@ the sync feature. Host egress pricing is what would have changed the answer: on 
 (~$85/TB egress) a CDN becomes competitive; on Hetzner (egress bundled) self-host wins
 decisively.
 
+## Storage layout (where each kind of data lives)
+
+Three different data kinds with three different access patterns → three different homes.
+Don't lump them together; that's what makes storage feel expensive.
+
+| Data | Access pattern | Size | Home |
+|---|---|---|---|
+| Video cache | hot, random (range reads) | small & **bounded** | local VM disk |
+| Video masters | cold-ish, large, sequential | large | Drive (sunk 2 TB) |
+| Raw uploaded logs | cold, write-once / read-rarely | tiny (likely <1 GB total) | Drive (same token) |
+| SQLite DB | hot, random, needs locking | small | local VM disk — **never** network FS |
+
+**Video cache stays local and bounded.** A read-through LRU cache with a hard cap
+(e.g. ~10 GB) never grows past the cap — old clips are evicted. It *wants* to be local
+(latency); putting a "cache" on network storage defeats its purpose. Fits the CX box's
+~40 GB disk comfortably at our volume. So the cache is a config knob, not a storage problem.
+
+**Raw logs → Drive via the existing rclone token (different folder).** The backup already
+copies uploaded logs to Drive daily (`app/backup.py`); this promotes Drive from backup copy
+to system of record. Flow: upload → local staging (temp) → parse into DB → **background**
+`rclone copyto <staging> nvbr-gdrive:nvbr/logs/<br_id>/<file>` → drop local copy once
+confirmed. Re-parse (rare) pulls from Drive on demand. Local disk holds the file only
+transiently, so VM log storage → ~0.
+- Reuse the **same rclone remote/token** as the backup — no new credential, no Drive-API
+  code (`rclone copyto` is least-effort; Drive API with the same token also works).
+- **Don't block the upload on Drive:** parse first (fast user feedback), push to Drive in
+  the background off the local staging area, so a Drive hiccup never fails an upload.
+- **Single-copy risk is low-stakes:** the *parsed* data is in the DB (which the backup
+  captures); raw logs are only needed for re-parse (schema changes). Worst case is "can't
+  re-derive old fights from scratch," not loss of the battle reports themselves.
+- Logs are tiny (text, ≤20 MB cap, usually KB–few MB; 65 BRs over 3 yr ≈ well under 1 GB),
+  so this is more about "never having to think about it" than about reclaiming real space.
+
+**Hetzner Storage Box: deferred.** A Storage Box (~€11.90 / 5 TB BX21, ~18× cheaper per TB
+than Cloud Volumes at ~€44/TB/mo) is the right tool for bulk/cold storage *if* we ever need
+it — and it could even replace Drive as the video master store (no OAuth, no Drive-API range
+plumbing, no per-file download-quota throttling, same-Hetzner-network latency). But with
+videos + logs on the sunk 2 TB Drive and growth at ~40 GB/yr, **we don't need it for years**
+(decades of runway). Revisit only if video masters approach the 2 TB Drive limit.
+- Hard rules if we ever adopt one: **SQLite never on a Storage Box** (network FS breaks
+  locking → corruption); don't serve hot video range-reads directly off a network mount
+  under load — read through the small local cache; mind parallel-connection limits.
+- Prices above are early-2026 approximate — confirm current Hetzner pricing.
+
 ## Recommendation when we return to this
 Self-host on the existing Hetzner box: **private Drive storage + backend `<video>` proxy
 (with range support) gated by `X-User-*` headers**, mp4-h264 upload standard with optional
@@ -142,9 +186,16 @@ epoch-second `FleetGraph`. Effectively €0/month, honours the privacy rule, and
 route that keeps the timeline-sync extension alive.
 
 ## Open questions for the design phase
-- Reuse the existing rclone OAuth credential or mint a dedicated, app-folder-scoped one?
 - One video per BR, per fight, or many (multiple POVs)? Affects folder layout & UI.
 - Upload path: proxy-through-backend (simple) vs resumable/direct-to-Drive (scales)? At
   ~4/month, simple is almost certainly fine.
 - Enforce mp4-h264 at upload, or accept-and-transcode? Probably accept-and-transcode with a
   nudge, given low volume.
+
+## Resolved during the spike
+- **Credential:** reuse the existing rclone OAuth token/remote (`nvbr-gdrive:`) for both
+  video masters and raw logs — no new credential. (Could narrow scope to an app folder.)
+- **Raw logs:** go to Drive via that token in their own folder, background-synced off local
+  staging (see Storage layout). VM log storage → ~0.
+- **Video cache:** bounded local LRU; not a storage-scaling concern.
+- **Storage Box:** not needed for years; deferred until video masters near the 2 TB limit.
