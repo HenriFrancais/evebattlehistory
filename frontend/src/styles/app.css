@@ -102,9 +102,17 @@ a:hover { color: var(--link-hover); }
    columns stay aligned across every month. */
 .tl-month-row th {
   text-align: left;
-  padding: 1.25rem 0.6rem 0.3rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.6rem;
+  /* Filled band (colour contrast vs the transparent BR rows on --bg) with a
+     real empty gap above each group for spacing. background-clip stops the fill
+     at the padding edge so the --bg top border reads as a gap, not a band. */
+  background: var(--panel);
+  background-clip: padding-box;
+  border-top: 0.7rem solid var(--bg);
+  border-bottom: 2px solid var(--border);
 }
+/* The first month sits directly under the column headers — no leading gap. */
+.tl-month:first-of-type .tl-month-row th { border-top-width: 0; }
 .tl-month-head {
   font-size: 0.95rem;
   font-weight: 600;
