@@ -409,6 +409,7 @@ a:hover { color: var(--link-hover); }
 .hover-tip-top .hover-tip-label { color: var(--accent); font-weight: 400; }
 .hover-tip-top .hover-tip-ship { color: var(--text-dim); font-weight: 400; font-size: 0.75rem; }
 .hover-tip-top .hover-tip-amount { color: var(--bad); font-variant-numeric: tabular-nums; }
+.hover-tip-ship-icon { width: 16px; height: 16px; border-radius: 2px; vertical-align: -3px; margin-right: 0.25rem; }
 .hover-tip-secondary { color: var(--text-dim); font-size: 0.75rem; margin-bottom: 0.1rem; }
 .hover-tip-secondary .hover-tip-label { color: var(--text-dim); }
 .hover-tip-secondary .hover-tip-ship { font-size: 0.72rem; }

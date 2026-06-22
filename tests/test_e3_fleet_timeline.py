@@ -767,11 +767,10 @@ async def test_leaders_per_bucket_picks_max_character(db_session_maker) -> None:
 
     idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
     ld = tl.leaders[idx]
-    # No killmail alliance data → both chars are unknown-side (treated as hostile).
+    # No killmail alliance data → both chars unknown-side (hostile); with no friendly
+    # OUTGOING damage seeded, every receiver metric is None.
     assert ld.top_friendly_dmg_taken is None
-    assert ld.top_hostile_dmg_taken is not None
-    assert ld.top_hostile_dmg_taken.name == "Bob"
-    assert ld.top_hostile_dmg_taken.amount == pytest.approx(300.0)
+    assert ld.top_hostile_dmg_taken is None
     assert ld.top_friendly_rep_recv is None
 
 
@@ -904,6 +903,9 @@ async def test_side_aware_leaders_friendly_dmg_taken(db_session_maker) -> None:
         await _insert_bucket(session, fight_id, CHAR_H2, BUCKET_TS_1, "damage", "in", 100.0, 1)
         await _insert_bucket(session, fight_id, CHAR_F2, BUCKET_TS_1, "rep_armor", "in", 300.0, 1)
         await _insert_bucket(session, fight_id, CHAR_F1, BUCKET_TS_1, "rep_armor", "in", 100.0, 1)
+        # Hostile receivers come from friendly OUTGOING damage by target (other_name).
+        await _insert_out_dmg(session, fight_id, CHAR_F1, "HostileOne", 800.0, BUCKET_TS_1, "od1")
+        await _insert_out_dmg(session, fight_id, CHAR_F1, "HostileTwo", 100.0, BUCKET_TS_1, "od2")
         await session.commit()
 
     async with db_session_maker() as session:
@@ -984,9 +986,10 @@ async def test_side_aware_leaders_null_when_no_friendly(db_session_maker) -> Non
 
     idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
     ld = tl.leaders[idx]
+    # Only a hostile char's incoming bucket, no friendly OUTGOING damage → no
+    # receiver metric populates (hostile-taken is read from friendly outgoing damage).
     assert ld.top_friendly_dmg_taken is None
-    assert ld.top_hostile_dmg_taken is not None
-    assert ld.top_hostile_dmg_taken.name == "HostileOnly"
+    assert ld.top_hostile_dmg_taken is None
     assert ld.top_friendly_rep_recv is None
 
 
@@ -1021,8 +1024,11 @@ async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> Non
             Character(character_id=CHAR_A, name="Alice", last_seen_at=dt.datetime.now(dt.UTC))
         )
         await session.flush()
-        # Only damage:in bucket — top_dmg_taken should be Alice; top_rep_recv should be null.
+        # A bucket establishes the x-axis. Alice is unknown-side → hostile, so her
+        # incoming bucket yields no friendly metric; her "taken" damage comes from
+        # our OUTGOING damage aimed at her (other_name).
         await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "in", 400.0, 4)
+        await _insert_out_dmg(session, fight_id, CHAR_A, "Alice", 400.0, BUCKET_TS_1, "oda")
         await session.commit()
 
     get_app_config.cache_clear()
@@ -1076,6 +1082,24 @@ async def _make_gamelog_file(session, char_id: int, sha: str):  # type: ignore[n
     session.add(gf)
     await session.flush()
     return gf
+
+
+async def _insert_out_dmg(  # type: ignore[no-untyped-def]
+    session, fight_id, owner_cid, target_name, amount, ts, sha
+):
+    """Insert a friendly OUTGOING damage LogEvent aimed at *target_name*.
+
+    top_hostile_dmg_taken is computed from outgoing damage aggregated by target,
+    so hostile-receiver tests seed these rows (the target must be a hostile
+    killmail participant with a Character row so its name resolves)."""
+    from app.db.models import LogEvent  # isort:skip
+    gf = await _make_gamelog_file(session, owner_cid, sha)
+    session.add(LogEvent(
+        file_id=gf.file_id, character_id=owner_cid, ts=ts,
+        effect_type="damage", direction="out", amount=amount,
+        other_name=target_name, fight_id=fight_id,
+    ))
+    await session.flush()
 
 
 async def test_snapshot_tackle_deduped_single_contribution(db_session_maker) -> None:

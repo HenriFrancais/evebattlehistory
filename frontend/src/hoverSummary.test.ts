@@ -9,9 +9,9 @@ function mk(effect_type: string, direction: string, values: (number | null)[]) {
 }
 
 const leadersPopulated: Leaders = {
-  top_friendly_dmg_taken: { name: 'Bob<evil>', ship: 'Tengu', amount: 12000 },
-  top_hostile_dmg_taken: { name: 'EnemyAce', ship: 'Loki', amount: 9000 },
-  top_friendly_rep_recv: { name: 'Alice', ship: 'Scimitar', amount: 8500 },
+  top_friendly_dmg_taken: { name: 'Bob<evil>', ship: 'Tengu', amount: 12000, ship_type_id: 29984 },
+  top_hostile_dmg_taken: { name: 'EnemyAce', ship: 'Loki', amount: 9000, ship_type_id: 29990 },
+  top_friendly_rep_recv: { name: 'Alice', ship: 'Scimitar', amount: 8500, ship_type_id: 11978 },
 }
 
 const leadersAllNull: Leaders = {
@@ -71,6 +71,14 @@ describe('renderHoverSummary', () => {
     expect(html).toContain('Tengu')
     expect(html).toContain('Loki')
     expect(html).toContain('Scimitar')
+  })
+
+  it('bucket 0 — renders a ship icon img for each entry from ship_type_id', () => {
+    const html = renderHoverSummary(view, leaders, 0)
+    expect(html).toContain('hover-tip-ship-icon')
+    expect(html).toContain('https://images.evetech.net/types/29984/icon')
+    expect(html).toContain('https://images.evetech.net/types/29990/icon')
+    expect(html).toContain('https://images.evetech.net/types/11978/icon')
   })
 
   it('bucket 0 — does NOT contain old dealer/repper labels', () => {

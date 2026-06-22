@@ -428,6 +428,7 @@ class LeaderEntry:
     name: str
     ship: str | None
     amount: float
+    ship_type_id: int | None = None
 
 
 @dataclass
@@ -496,12 +497,12 @@ CAPSULE_TYPE_ID = 670
 
 async def _resolve_char_ships(
     session: AsyncSession, fight_ids: list[int]
-) -> dict[int, str]:
-    """Return character_id → hull name from killmail data (capsules excluded).
+) -> dict[int, tuple[int, str]]:
+    """Return character_id → (hull type_id, hull name) from killmail data.
 
     Mirrors composition.py: victim hull first, then attacker hull; capsules
     (type_id 670) are skipped. Only the first non-capsule hull per character
-    is retained (sufficient for the tooltip label).
+    is retained (sufficient for the tooltip label + icon).
     """
     km_ids: list[int] = list(
         (
@@ -549,7 +550,7 @@ async def _resolve_char_ships(
     ).scalars():
         inv_names[inv.type_id] = inv.name
 
-    return {cid: inv_names[sid] for cid, sid in char_ship.items() if sid in inv_names}
+    return {cid: (sid, inv_names[sid]) for cid, sid in char_ship.items() if sid in inv_names}
 
 
 async def _build_char_side_map(
@@ -677,11 +678,13 @@ async def _compute_leaders(
 
     Returns [] (not a list of Leaders) when no log buckets exist.
 
-    Metric classification (by TARGET side):
-      FRIENDLY target, damage / in  → top_friendly_dmg_taken
-      HOSTILE  target, damage / in  → top_hostile_dmg_taken
-      FRIENDLY target, rep* / in    → top_friendly_rep_recv
+    Metric classification (all by the TARGET / receiver):
+      FRIENDLY target, damage / in        → top_friendly_dmg_taken
+      HOSTILE  target, friendly damage out → top_hostile_dmg_taken (by other_name)
+      FRIENDLY target, rep* / in          → top_friendly_rep_recv
 
+    We only have friendly logs, so a hostile receiver's damage is read from our
+    OUTGOING damage aggregated by target (other_name), not from incoming events.
     Characters not found in the killmail side map are treated as HOSTILE.
     """
     if not x:
@@ -722,47 +725,77 @@ async def _compute_leaders(
     if not rows:
         return []
 
-    char_ids: set[int] = {char_id for _, char_id, _, _, _ in rows}
-    char_names = await _resolve_char_names(session, settings, char_ids)
-    char_ships = await _resolve_char_ships(session, fight_ids)
+    bucket_char_ids: set[int] = {char_id for _, char_id, _, _, _ in rows}
+    side_char_ids: set[int] = bucket_char_ids | set(char_side_map.keys())
+    char_names = await _resolve_char_names(session, settings, side_char_ids)
+    char_hulls = await _resolve_char_ships(session, fight_ids)  # cid → (type_id, name)
+    # cleaned pilot name → character_id, to resolve outgoing-damage targets.
+    name_to_cid: dict[str, int] = {}
+    for cid, nm in char_names.items():
+        if nm:
+            name_to_cid.setdefault(nm.lower(), cid)
 
-    # Three side-aware accumulators per bucket index:
-    #   "friendly_dmg_taken" | "hostile_dmg_taken" | "friendly_rep_recv"
+    # Per-bucket accumulators: metric → character_id → amount.
     BucketAcc = dict[str, dict[int, float]]
     bucket_acc: dict[int, BucketAcc] = {}
 
+    # Friendly receivers come from their OWN incoming events (owner-keyed buckets):
+    #   FRIENDLY target, damage/in → friendly_dmg_taken
+    #   FRIENDLY target, rep*/in   → friendly_rep_recv
     for bucket_ts, char_id, effect_type, direction, total in rows:
+        if direction != "in":
+            continue
         idx = x_index.get(_epoch(bucket_ts))
         if idx is None:
             continue
-        amount = float(total or 0.0)
-
-        # Only incoming effects matter; outgoing is dropped (we track receivers).
-        if direction != "in":
+        if char_side_map.get(char_id, "hostile") != "friendly":
             continue
-
-        # Determine target's side; unknown → hostile (safe default).
-        side = char_side_map.get(char_id, "hostile")
-
         if effect_type == "damage":
-            metric = "friendly_dmg_taken" if side == "friendly" else "hostile_dmg_taken"
+            metric = "friendly_dmg_taken"
         elif effect_type.startswith("rep"):
-            if side != "friendly":
-                continue  # no hostile rep recv entry
             metric = "friendly_rep_recv"
         else:
             continue
-
         acc = bucket_acc.setdefault(idx, {})
         per_char = acc.setdefault(metric, {})
-        per_char[char_id] = per_char.get(char_id, 0.0) + amount
+        per_char[char_id] = per_char.get(char_id, 0.0) + float(total or 0.0)
+
+    # Hostile receivers (hostile target taking the most FRIENDLY damage) cannot come
+    # from incoming events — we have no hostile logs. They live in friendly OUTGOING
+    # damage aggregated by TARGET (LogEvent.other_name), resolved to a hostile pilot.
+    out_rows = (
+        await session.execute(
+            select(LogEvent.ts, LogEvent.other_name, LogEvent.amount).where(
+                LogEvent.fight_id.in_(fight_ids),
+                LogEvent.effect_type == "damage",
+                LogEvent.direction == "out",
+                LogEvent.other_name.is_not(None),
+            )
+        )
+    ).all()
+    for ts, other_name, amount in out_rows:
+        tgt_cid = name_to_cid.get((other_name or "").lower())
+        if tgt_cid is None or char_side_map.get(tgt_cid) != "hostile":
+            continue
+        floored = (_epoch(ts) // BUCKET_SECONDS) * BUCKET_SECONDS
+        idx = x_index.get(floored)
+        if idx is None:
+            continue
+        acc = bucket_acc.setdefault(idx, {})
+        per_char = acc.setdefault("hostile_dmg_taken", {})
+        per_char[tgt_cid] = per_char.get(tgt_cid, 0.0) + abs(float(amount or 0.0))
 
     def _best(per_char: dict[int, float] | None) -> LeaderEntry | None:
         if not per_char:
             return None
         best_id, best_amt = max(per_char.items(), key=lambda kv: kv[1])
-        name = char_names.get(best_id) or f"Char {best_id}"
-        return LeaderEntry(name=name, ship=char_ships.get(best_id), amount=best_amt)
+        hull = char_hulls.get(best_id)
+        return LeaderEntry(
+            name=char_names.get(best_id) or f"Char {best_id}",
+            ship=hull[1] if hull else None,
+            ship_type_id=hull[0] if hull else None,
+            amount=best_amt,
+        )
 
     leaders: list[Leaders] = []
     for i in range(len(x)):

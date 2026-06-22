@@ -384,6 +384,7 @@ class LeaderEntryOut(BaseModel):
     name: str
     ship: str | None
     amount: float
+    ship_type_id: int | None = None
 
 
 class LeadersOut(BaseModel):

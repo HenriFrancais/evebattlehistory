@@ -328,6 +328,7 @@ export interface LeaderEntry {
   name: string
   ship: string | null
   amount: number
+  ship_type_id: number | null
 }
 
 export interface Leaders {

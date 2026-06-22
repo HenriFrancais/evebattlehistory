@@ -9,7 +9,7 @@
 // The `view` parameter is retained for API compatibility with the FleetGraph
 // plugin wiring, but is no longer used for side-total computation.
 
-import type { Leaders } from './api'
+import type { LeaderEntry, Leaders } from './api'
 import type { FleetView } from './fleet'
 import { fmtCompact } from './format'
 
@@ -29,10 +29,15 @@ function allNull(l: Leaders): boolean {
   )
 }
 
-function leaderLine(label: string, e: { name: string; ship: string | null; amount: number }): string {
+function leaderLine(label: string, e: LeaderEntry): string {
+  const icon =
+    e.ship_type_id != null
+      ? `<img class="hover-tip-ship-icon" src="https://images.evetech.net/types/${e.ship_type_id}/icon?size=32" width="16" height="16" alt="" />`
+      : ''
   return (
     `<div class="hover-tip-top">` +
     `<span class="hover-tip-label">${label}:</span> ` +
+    icon +
     `<strong>${esc(e.name)}</strong>` +
     (e.ship ? ` <span class="hover-tip-ship">(${esc(e.ship)})</span>` : '') +
     ` <span class="hover-tip-amount">${fmtCompact(e.amount)}</span>` +

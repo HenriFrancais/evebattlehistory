@@ -42,7 +42,9 @@ def _leader_out(e: object) -> LeaderEntryOut | None:
         return None
     if not isinstance(e, LeaderEntry):
         raise TypeError(f"Expected LeaderEntry, got {type(e)!r}")
-    return LeaderEntryOut(name=e.name, ship=e.ship, amount=e.amount)
+    return LeaderEntryOut(
+        name=e.name, ship=e.ship, amount=e.amount, ship_type_id=e.ship_type_id
+    )
 
 
 async def _require_br(br_id: str, session: AsyncSession) -> None:
