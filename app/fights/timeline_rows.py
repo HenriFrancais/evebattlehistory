@@ -50,6 +50,8 @@ class BrRowExtra:
     """Extra timeline columns for one BR."""
 
     systems: list[str] = field(default_factory=list)
+    #: Solar-system ids parallel to `systems` (same order/length).
+    system_ids: list[int] = field(default_factory=list)
     our_name: str | None = None
     opponent_name: str | None = None
     friendly_pilots: int = 0
@@ -201,7 +203,9 @@ async def enrich_br_rows(
         overrides_by_br.setdefault(br, {})[(etype, eid)] = side
 
     # --- 7. systems per BR, in fight order (one query) ---
+    # systems_by_br and system_ids_by_br are kept parallel (same dedup, order).
     systems_by_br: dict[str, list[str]] = {b: [] for b in br_ids}
+    system_ids_by_br: dict[str, list[int]] = {b: [] for b in br_ids}
     sys_seen: dict[str, set[int]] = {b: set() for b in br_ids}
     if all_fight_ids:
         for br, sid, name in (
@@ -216,6 +220,7 @@ async def enrich_br_rows(
             if sid not in sys_seen[br]:
                 sys_seen[br].add(sid)
                 systems_by_br[br].append(name or f"System {sid}")
+                system_ids_by_br[br].append(sid)
 
     # --- 8. classify pilots per BR; collect entity keys for one name lookup ---
     per_br_sides: dict[str, tuple[_EntityKey | None, _EntityKey | None, int, int]] = {}
@@ -259,6 +264,7 @@ async def enrich_br_rows(
         our_key, opp_key, friendly_pilots, enemy_pilots = per_br_sides[br]
         out[br] = BrRowExtra(
             systems=systems_by_br[br],
+            system_ids=system_ids_by_br[br],
             our_name=names.get(our_key) if our_key is not None else None,
             opponent_name=names.get(opp_key) if opp_key is not None else None,
             friendly_pilots=friendly_pilots,

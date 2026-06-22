@@ -94,6 +94,9 @@ class BrSummary(BaseModel):
     created_at: dt.datetime
     # Timeline-list extras (populated by list/filter endpoints; default elsewhere).
     systems: list[str] = []
+    #: Solar-system ids parallel to `systems` (same order/length); empty when
+    #: not enriched. Used to build zKillboard system links in the timeline.
+    system_ids: list[int] = []
     our_name: str | None = None
     opponent_name: str | None = None
     friendly_pilots: int = 0

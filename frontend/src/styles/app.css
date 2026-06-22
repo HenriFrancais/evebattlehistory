@@ -127,6 +127,9 @@ a:hover { color: var(--link-hover); }
   vertical-align: top;
 }
 .tl-table tr:hover td { background: var(--panel-2); }
+.tl-row-link { cursor: pointer; }
+.tl-sys-link { color: var(--text); text-decoration: none; }
+.tl-sys-link:hover { color: var(--accent); text-decoration: underline; }
 .tl-table .tl-num { text-align: right; white-space: nowrap; }
 .tl-table .tl-center { text-align: center; }
 .tl-title { color: var(--text); text-decoration: none; font-weight: 600; }

@@ -4,7 +4,8 @@
 // the viewer was present, and log-upload coverage (the viewer's own characters
 // and the whole NV roster present).
 
-import { Link } from 'react-router-dom'
+import { Fragment } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import type { BrSummary } from '../api'
 import { fmtIsk, fmtDateTime } from '../format'
 
@@ -30,7 +31,37 @@ function monthKey(br: BrSummary): string {
   return (br.battle_at ?? br.created_at).slice(0, 7) // YYYY-MM (UTC)
 }
 
+/** System names, each a zKillboard link when its system id is known. */
+function SystemLinks({ br }: { br: BrSummary }) {
+  const names = br.systems ?? []
+  if (names.length === 0) return <>—</>
+  const ids = br.system_ids ?? []
+  return (
+    <>
+      {names.map((name, i) => (
+        <Fragment key={i}>
+          {i > 0 && ', '}
+          {ids[i] != null ? (
+            <a
+              href={`https://zkillboard.com/system/${ids[i]}/`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="tl-sys-link"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {name}
+            </a>
+          ) : (
+            name
+          )}
+        </Fragment>
+      ))}
+    </>
+  )
+}
+
 export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
+  const navigate = useNavigate()
   // Newest battle first.
   const sorted = [...brs].sort((a, b) => {
     const ta = a.battle_at ?? a.created_at
@@ -76,7 +107,16 @@ export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
               </th>
             </tr>
             {g.rows.map((br) => (
-              <tr key={br.br_id} data-testid="timeline-row">
+              <tr
+                key={br.br_id}
+                data-testid="timeline-row"
+                className="tl-row-link"
+                onClick={(e) => {
+                  // Let inner links/buttons (system zkill link, title) handle their own clicks.
+                  if ((e.target as HTMLElement).closest('a, button')) return
+                  navigate(`/brs/${br.br_id}`)
+                }}
+              >
                 <td>
                   <Link to={`/brs/${br.br_id}`} className="tl-title">
                     {br.title ?? `BR ${br.br_id}`}
@@ -85,7 +125,7 @@ export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
                     {fmtDateTime(br.battle_at ?? br.created_at)}
                   </div>
                 </td>
-                <td>{br.systems && br.systems.length ? br.systems.join(', ') : '—'}</td>
+                <td><SystemLinks br={br} /></td>
                 <td>
                   <span className="side-us">{br.our_name ?? 'Us'}</span>
                   <span className="dim"> vs </span>

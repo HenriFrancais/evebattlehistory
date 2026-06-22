@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import type { BrSummary } from '../api'
 import { BrTimelineTable } from './BrTimelineTable'
@@ -20,6 +21,7 @@ function makeBr(overrides: Partial<BrSummary> = {}): BrSummary {
     battle_at: '2026-06-10T18:30:00Z',
     created_at: '2026-06-10T20:00:00Z',
     systems: ['J123456'],
+    system_ids: [31002150],
     our_name: 'No Vacancies.',
     opponent_name: 'Big Enemy',
     friendly_pilots: 12,
@@ -83,5 +85,43 @@ describe('BrTimelineTable', () => {
     const row = screen.getByTestId('timeline-row')
     expect(within(row).getByText('2026-06-10 18:30')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: '2026-06' })).toBeInTheDocument()
+  })
+
+  it('links the system name to zKillboard', () => {
+    renderTable([makeBr()])
+    const link = screen.getByRole('link', { name: 'J123456' })
+    expect(link).toHaveAttribute('href', 'https://zkillboard.com/system/31002150/')
+    expect(link).toHaveAttribute('target', '_blank')
+  })
+
+  it('renders the system as plain text when its id is unknown', () => {
+    renderTable([makeBr({ system_ids: [] })])
+    const row = screen.getByTestId('timeline-row')
+    expect(within(row).getByText('J123456')).toBeInTheDocument()
+    expect(within(row).queryByRole('link', { name: 'J123456' })).not.toBeInTheDocument()
+  })
+
+  it('navigates to the BR when the row is clicked, but not when the system link is clicked', async () => {
+    const user = userEvent.setup()
+    function LocationProbe() {
+      return <div data-testid="loc">{useLocation().pathname}</div>
+    }
+    render(
+      <MemoryRouter
+        initialEntries={['/']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <Routes>
+          <Route path="/" element={<BrTimelineTable brs={[makeBr({ br_id: 'b9' })]} />} />
+          <Route path="/brs/:id" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    // Clicking the system link must NOT navigate to the BR (stopPropagation).
+    await user.click(screen.getByRole('link', { name: 'J123456' }))
+    expect(screen.queryByTestId('loc')).not.toBeInTheDocument()
+    // Clicking elsewhere on the row navigates to the BR detail page.
+    await user.click(screen.getByText('No Vacancies.'))
+    expect(screen.getByTestId('loc')).toHaveTextContent('/brs/b9')
   })
 })

@@ -41,6 +41,8 @@ export interface BrSummary {
   created_at: string
   // Timeline-list extras (populated by list/filter endpoints).
   systems?: string[]
+  // Solar-system ids parallel to `systems` (same order/length).
+  system_ids?: number[]
   our_name?: string | null
   opponent_name?: string | null
   friendly_pilots?: number

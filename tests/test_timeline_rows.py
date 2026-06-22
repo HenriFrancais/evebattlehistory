@@ -137,9 +137,11 @@ async def test_enrich_batches_multiple_brs_independently(db_session_maker):
     assert extras[br1].enemy_pilots == 3
     assert extras[br1].opponent_name == "Big Enemy"
     assert extras[br1].systems == ["J-Tl"]
+    assert extras[br1].system_ids == [31077777]
     # BR2 has its own shape: 1 friendly (char 11), 1 enemy (Small Enemy char 30).
     assert extras[br2].friendly_pilots == 1
     assert extras[br2].enemy_pilots == 1
     assert extras[br2].our_name == "No Vacancies."
     assert extras[br2].opponent_name == "Small Enemy"
     assert extras[br2].systems == ["J-Tl2"]
+    assert extras[br2].system_ids == [31077778]
