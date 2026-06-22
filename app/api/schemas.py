@@ -413,16 +413,17 @@ class FleetTimelineOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CompositionShipOut(BaseModel):
-    ship_type_id: int
-    ship_name: str
-    count: int
-
-
 class WeaponEffectOut(BaseModel):
     type_id: int
     name: str
     role: str
+
+
+class CompositionShipOut(BaseModel):
+    ship_type_id: int
+    ship_name: str
+    count: int
+    top_modules: list[WeaponEffectOut] = []
 
 
 class CompositionPilotOut(BaseModel):

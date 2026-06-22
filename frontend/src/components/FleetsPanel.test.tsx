@@ -13,7 +13,7 @@ import { api } from '../api'
 const base: CompositionResponse = {
   by_user_available: false,
   sides: [
-    { side_kind: 'friendly', pilot_count: 2, ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 2 }],
+    { side_kind: 'friendly', pilot_count: 2, ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 2, top_modules: [{ type_id: 3057, name: 'Heavy Pulse Laser II', role: 'turret' }, { type_id: 2048, name: 'Damage Control II', role: 'other' }] }],
       pilots: [
         { character_id: 1, character_name: 'A', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: false, killmail_id: null, user_name: null, weapons: [] },
         { character_id: 2, character_name: 'B', ship_type_id: 22428, ship_name: 'Absolution', lost: true, reship: false, killmail_id: 100, user_name: null, weapons: [] },
@@ -29,6 +29,17 @@ describe('FleetsPanel', () => {
     render(<FleetsPanel brId="br1" />)
     await waitFor(() => expect(screen.getByText(/Absolution/)).toBeInTheDocument())
     expect(screen.getByText(/2×/)).toBeInTheDocument()
+  })
+
+  it('renders top-module icons per hull with the module name as tooltip', async () => {
+    vi.mocked(api.composition).mockResolvedValue(base)
+    render(<FleetsPanel brId="br1" />)
+    await waitFor(() => expect(screen.getByText(/Absolution/)).toBeInTheDocument())
+    const icon = screen.getByTitle('Heavy Pulse Laser II') as HTMLImageElement
+    expect(icon.src).toContain('https://images.evetech.net/types/3057/icon')
+    expect(screen.getByTitle('Damage Control II')).toBeInTheDocument()
+    // 5 fixed columns (2 real + 3 empty placeholders) for alignment.
+    expect(screen.getByTestId('ship-modules').children.length).toBe(5)
   })
 
   it('hides the By-user tab when not available', async () => {
@@ -55,8 +66,8 @@ describe('FleetsPanel', () => {
     vi.mocked(api.composition).mockResolvedValue({
       by_user_available: false,
       sides: [{ side_kind: 'friendly', pilot_count: 1,
-        ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1 },
-                { ship_type_id: 11987, ship_name: 'Guardian', count: 1 }],
+        ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1, top_modules: [] },
+                { ship_type_id: 11987, ship_name: 'Guardian', count: 1, top_modules: [] }],
         pilots: [
           { character_id: 1, character_name: 'Talun', ship_type_id: 22428, ship_name: 'Absolution', lost: false, reship: true, killmail_id: null, user_name: null, weapons: [] },
           { character_id: 1, character_name: 'Talun', ship_type_id: 11987, ship_name: 'Guardian', lost: false, reship: true, killmail_id: null, user_name: null, weapons: [] },
@@ -73,7 +84,7 @@ describe('FleetsPanel', () => {
     vi.mocked(api.composition).mockResolvedValue({
       by_user_available: false,
       sides: [{ side_kind: 'friendly', pilot_count: 1,
-        ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1 }],
+        ships: [{ ship_type_id: 22428, ship_name: 'Absolution', count: 1, top_modules: [] }],
         pilots: [{ character_id: 1, character_name: 'A', ship_type_id: 22428, ship_name: 'Absolution',
                    lost: false, reship: false, killmail_id: null, user_name: null,
                    weapons: [
@@ -111,7 +122,7 @@ describe('FleetsPanel', () => {
     vi.mocked(api.composition).mockResolvedValue({
       by_user_available: false,
       sides: [{ side_kind: 'friendly', pilot_count: 1,
-        ships: [{ ship_type_id: 645, ship_name: 'Dominix', count: 1 }],
+        ships: [{ ship_type_id: 645, ship_name: 'Dominix', count: 1, top_modules: [] }],
         pilots: [{ character_id: 7, character_name: 'Vic', ship_type_id: 645, ship_name: 'Dominix',
                    lost: true, reship: false, user_name: null, killmail_id: 12345, weapons: [] }] }],
     })

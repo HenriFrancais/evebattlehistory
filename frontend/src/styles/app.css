@@ -456,6 +456,10 @@ a:hover { color: var(--link-hover); }
 .comp-count { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.4rem; }
 .comp-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .comp-ship-sub { font-size: 0.72rem; flex: none; }
+/* Top-5 module icons per hull, in fixed columns that align across all rows. */
+.comp-mod-cols { display: grid; grid-template-columns: repeat(5, 18px); gap: 2px; flex: none; margin-left: auto; }
+.comp-mod-cols .comp-item-icon { width: 18px; height: 18px; border-radius: 2px; background: var(--panel-2); }
+.comp-mod-empty { visibility: hidden; }
 .comp-lost { color: var(--bad); }
 .comp-reship { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
 /* Per-pilot nested module list: items indented under the character, smaller font. */

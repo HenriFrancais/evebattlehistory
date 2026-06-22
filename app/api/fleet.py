@@ -226,9 +226,12 @@ async def get_composition(
             CompositionSideOut(
                 side_kind=s.side_kind,
                 pilot_count=s.pilot_count,
-                ships=[CompositionShipOut(ship_type_id=sh.ship_type_id,
-                                          ship_name=sh.ship_name, count=sh.count)
-                       for sh in s.ships],
+                ships=[CompositionShipOut(
+                    ship_type_id=sh.ship_type_id,
+                    ship_name=sh.ship_name, count=sh.count,
+                    top_modules=[WeaponEffectOut(type_id=w.type_id, name=w.name, role=w.role)
+                                 for w in sh.top_modules],
+                ) for sh in s.ships],
                 pilots=[CompositionPilotOut(character_id=p.character_id,
                                             character_name=p.character_name,
                                             ship_type_id=p.ship_type_id, ship_name=p.ship_name,

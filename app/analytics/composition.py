@@ -13,7 +13,7 @@ Consistent with the kill-marker classification on the fleet timeline.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,6 +60,8 @@ class CompositionShip:
     ship_type_id: int
     ship_name: str
     count: int
+    #: Up to 5 most common modules among pilots flying this hull, most-common first.
+    top_modules: list[WeaponEffect] = field(default_factory=list)
 
 
 @dataclass
@@ -217,11 +219,30 @@ async def fleet_composition(
             continue
         plist.sort(key=lambda x: (x.ship_name, x.character_name))
         counts: Counter[int] = Counter()
+        # Per ship_type_id: how many pilots flying it carry each module type_id.
+        mod_counts: dict[int, Counter[int]] = {}
+        mod_effect: dict[int, WeaponEffect] = {}
         for pilot in plist:
-            if pilot.ship_type_id is not None:
-                counts[pilot.ship_type_id] += 1
+            if pilot.ship_type_id is None:
+                continue
+            counts[pilot.ship_type_id] += 1
+            per_hull = mod_counts.setdefault(pilot.ship_type_id, Counter())
+            for w in pilot.weapons:
+                if w.type_id == pilot.ship_type_id:
+                    continue  # the hull itself is logged as a weapon sometimes — not a module
+                per_hull[w.type_id] += 1
+                mod_effect.setdefault(w.type_id, w)
         ships = [
-            CompositionShip(ship_type_id=sid, ship_name=ship_names.get(sid, "Unknown"), count=c)
+            CompositionShip(
+                ship_type_id=sid,
+                ship_name=ship_names.get(sid, "Unknown"),
+                count=c,
+                top_modules=[
+                    mod_effect[wid]
+                    for wid, _ in mod_counts.get(sid, Counter()).most_common(5)
+                    if wid in mod_effect
+                ],
+            )
             for sid, c in counts.most_common()
         ]
         pilot_count = len({p.character_id for p in plist})

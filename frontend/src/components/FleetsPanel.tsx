@@ -45,6 +45,24 @@ function CompositionView({ side }: { side: CompositionSide }) {
           {shipIcon(sh.ship_type_id)}
           <span className="comp-count">{sh.count}×</span>
           <span className="comp-name" title={sh.ship_name}>{sh.ship_name}</span>
+          <span className="comp-mod-cols" data-testid="ship-modules">
+            {Array.from({ length: 5 }, (_, i) => {
+              const m = (sh.top_modules ?? [])[i]
+              return m ? (
+                <img
+                  key={m.type_id}
+                  className="comp-item-icon"
+                  width={18}
+                  height={18}
+                  src={`https://images.evetech.net/types/${m.type_id}/icon?size=32`}
+                  title={m.name}
+                  alt={m.name}
+                />
+              ) : (
+                <span key={`empty-${i}`} className="comp-item-icon comp-mod-empty" />
+              )
+            })}
+          </span>
         </div>
       ))}
     </div>

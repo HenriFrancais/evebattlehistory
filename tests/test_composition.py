@@ -203,6 +203,40 @@ async def test_composition_pilot_weapons_from_attacker(db_session_maker) -> None
 
 
 @pytest.mark.asyncio
+async def test_composition_ship_top_modules(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """CompositionShip.top_modules lists the hull's modules (most common first, ≤5)."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER flies Absolution
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        session.add(InventoryType(
+            type_id=RAILGUN_ID, name=RAILGUN_NAME, group_name="Hybrid Weapon", category_id=6,
+        ))
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=RAILGUN_ID)
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    absol = next(sh for s in result.sides for sh in s.ships if sh.ship_name == "Absolution")
+    assert len(absol.top_modules) <= 5
+    assert any(m.type_id == RAILGUN_ID and m.name == RAILGUN_NAME for m in absol.top_modules)
+
+
+@pytest.mark.asyncio
 async def test_composition_pilot_weapons_none_weapon_type_id(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     """Pilot with no weapon_type_id has an empty weapons list (no crash)."""
     from app.analytics.composition import fleet_composition

@@ -389,16 +389,17 @@ export interface ContributionsResponse {
   rows: Contribution[]
 }
 
-export interface CompositionShip {
-  ship_type_id: number
-  ship_name: string
-  count: number
-}
-
 export interface WeaponEffect {
   type_id: number
   name: string
   role: string
+}
+
+export interface CompositionShip {
+  ship_type_id: number
+  ship_name: string
+  count: number
+  top_modules: WeaponEffect[]
 }
 
 export interface CompositionPilot {
