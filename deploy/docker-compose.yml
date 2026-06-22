@@ -28,7 +28,9 @@ services:
       # moves. Point Caddy's upstream at the same APP_PORT.
       - "127.0.0.1:${APP_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000${URL_PREFIX:-/fc/br}/healthz"]
+      # Use Python (always in the image) — the slim base ships no curl, which made
+      # the old curl-based check fail with "curl: not found" → permanently unhealthy.
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:8000'+os.environ.get('URL_PREFIX','')+'/healthz')\""]
       interval: 30s
       timeout: 5s
       retries: 3
