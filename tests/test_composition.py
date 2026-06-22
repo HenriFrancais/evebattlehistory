@@ -346,3 +346,37 @@ async def test_composition_capsule_weapon_type_id_produces_no_weapon(db_session_
     assert CAPSULE_TYPE_ID not in weapon_type_ids, (
         f"Capsule type_id {CAPSULE_TYPE_ID} must not appear in pilot.weapons"
     )
+
+
+@pytest.mark.asyncio
+async def test_composition_pilot_weapons_exclude_hull(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """The hull is sometimes logged as a weapon; it must not appear in pilot.weapons."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER flies Absolution (the hull)
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        # Log the hull itself as the attacker's weapon_type_id.
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=ABSOLUTION)
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilot = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert pilot.ship_type_id == ABSOLUTION
+    assert ABSOLUTION not in {w.type_id for w in pilot.weapons}, (
+        "The hull must not appear in its own pilot.weapons list"
+    )

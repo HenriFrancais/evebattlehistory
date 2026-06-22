@@ -75,8 +75,8 @@ describe('FleetsPanel', () => {
     })
     const user = userEvent.setup()
     render(<FleetsPanel brId="br1" />)
-    await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: /Per-character/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /By character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /By character/i }))
     expect(screen.getAllByText(/reship/i).length).toBeGreaterThanOrEqual(1)
   })
 
@@ -94,8 +94,8 @@ describe('FleetsPanel', () => {
     })
     const user = userEvent.setup()
     render(<FleetsPanel brId="br1" />)
-    await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: /Per-character/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /By character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /By character/i }))
 
     // Toggle button is visible; modules collapsed by default
     const toggleBtn = screen.getByTestId('toggle-modules-btn')
@@ -128,8 +128,8 @@ describe('FleetsPanel', () => {
     })
     const user = userEvent.setup()
     render(<FleetsPanel brId="br1" />)
-    await waitFor(() => expect(screen.getByRole('button', { name: /Per-character/i })).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: /Per-character/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /By character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /By character/i }))
     const link = screen.getByRole('link', { name: /lost/i })
     expect(link).toHaveAttribute('href', 'https://zkillboard.com/kill/12345/')
   })

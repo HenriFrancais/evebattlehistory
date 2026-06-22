@@ -198,11 +198,14 @@ async def fleet_composition(
             weapons.append(WeaponEffect(type_id=wid, name=winv.name, role=wr.role))
         if a.hulls:
             for sid, (lost, km_id) in a.hulls.items():
+                # The hull is sometimes logged as a weapon; exclude it from the
+                # per-pilot module list (mirrors the summary top_modules filter).
+                hull_weapons = [w for w in weapons if w.type_id != sid]
                 by_side.setdefault(a.side, []).append(
                     CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
                                      ship_name=ship_names.get(sid, "Unknown"), lost=lost,
                                      reship=is_reship, user_name=user, killmail_id=km_id,
-                                     weapons=weapons)
+                                     weapons=hull_weapons)
                 )
         else:
             # Capsule-only / no hull recorded.

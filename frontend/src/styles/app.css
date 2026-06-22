@@ -98,16 +98,19 @@ a:hover { color: var(--link-hover); }
 .badge-source { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
 .badge-pending { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
 
-/* Battle-report timeline table */
-.tl-month { margin-top: 1.25rem; }
+/* Battle-report timeline table — one table, a <tbody> per year-month, so
+   columns stay aligned across every month. */
+.tl-month-row th {
+  text-align: left;
+  padding: 1.25rem 0.6rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
 .tl-month-head {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--text-dim);
   letter-spacing: 0.04em;
-  margin: 0 0 0.4rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid var(--border);
+  margin: 0;
 }
 .tl-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .tl-table th {

@@ -49,65 +49,70 @@ export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
 
   if (sorted.length === 0) return <p className="dim">No battle reports yet.</p>
 
+  // One table for the whole timeline so columns stay globally aligned across
+  // every year-month; each month is a <tbody> introduced by a full-width
+  // header row.
   return (
     <div data-testid="timeline-table">
-      {groups.map((g) => (
-        <section key={g.key} className="tl-month">
-          <h2 className="tl-month-head">{g.key}</h2>
-          <table className="tl-table">
-            <thead>
-              <tr>
-                <th>Battle</th>
-                <th>System</th>
-                <th>Entities</th>
-                <th>Result</th>
-                <th className="tl-num">ISK killed</th>
-                <th className="tl-num">ISK lost</th>
-                <th className="tl-num">Pilots</th>
-                <th className="tl-center">Present</th>
-                <th>Logs</th>
+      <table className="tl-table">
+        <thead>
+          <tr>
+            <th>Battle</th>
+            <th>System</th>
+            <th>Entities</th>
+            <th>Result</th>
+            <th className="tl-num">ISK killed</th>
+            <th className="tl-num">ISK lost</th>
+            <th className="tl-num">Pilots</th>
+            <th className="tl-center">Present</th>
+            <th>Logs</th>
+          </tr>
+        </thead>
+        {groups.map((g) => (
+          <tbody key={g.key} className="tl-month">
+            <tr className="tl-month-row">
+              <th colSpan={9} scope="colgroup">
+                <h2 className="tl-month-head">{g.key}</h2>
+              </th>
+            </tr>
+            {g.rows.map((br) => (
+              <tr key={br.br_id} data-testid="timeline-row">
+                <td>
+                  <Link to={`/brs/${br.br_id}`} className="tl-title">
+                    {br.title ?? `BR ${br.br_id}`}
+                  </Link>
+                  <div className="dim tl-sub">
+                    {fmtDateTime(br.battle_at ?? br.created_at)}
+                  </div>
+                </td>
+                <td>{br.systems && br.systems.length ? br.systems.join(', ') : '—'}</td>
+                <td>
+                  <span className="side-us">{br.our_name ?? 'Us'}</span>
+                  <span className="dim"> vs </span>
+                  <span className="side-them">{br.opponent_name ?? '—'}</span>
+                </td>
+                <td><ResultBadge result={br.result} /></td>
+                <td className="tl-num">{fmtIsk(br.our_isk_destroyed)}</td>
+                <td className="tl-num">{fmtIsk(br.our_isk_lost)}</td>
+                <td className="tl-num">
+                  <span className="side-us">{br.friendly_pilots ?? 0}</span>
+                  <span className="dim"> v </span>
+                  <span className="side-them">{br.enemy_pilots ?? 0}</span>
+                </td>
+                <td className="tl-center">
+                  {br.you_present
+                    ? <span className="cov-covered" title="You were present">✓</span>
+                    : <span className="dim" title="You were not present">✗</span>}
+                </td>
+                <td className="tl-logs">
+                  <Coverage logged={br.your_logged ?? 0} present={br.your_present ?? 0} label="you" />
+                  <Coverage logged={br.roster_logged ?? 0} present={br.roster_present ?? 0} label="all" />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {g.rows.map((br) => (
-                <tr key={br.br_id} data-testid="timeline-row">
-                  <td>
-                    <Link to={`/brs/${br.br_id}`} className="tl-title">
-                      {br.title ?? `BR ${br.br_id}`}
-                    </Link>
-                    <div className="dim tl-sub">
-                      {fmtDateTime(br.battle_at ?? br.created_at)}
-                    </div>
-                  </td>
-                  <td>{br.systems && br.systems.length ? br.systems.join(', ') : '—'}</td>
-                  <td>
-                    <span className="side-us">{br.our_name ?? 'Us'}</span>
-                    <span className="dim"> vs </span>
-                    <span className="side-them">{br.opponent_name ?? '—'}</span>
-                  </td>
-                  <td><ResultBadge result={br.result} /></td>
-                  <td className="tl-num">{fmtIsk(br.our_isk_destroyed)}</td>
-                  <td className="tl-num">{fmtIsk(br.our_isk_lost)}</td>
-                  <td className="tl-num">
-                    <span className="side-us">{br.friendly_pilots ?? 0}</span>
-                    <span className="dim"> v </span>
-                    <span className="side-them">{br.enemy_pilots ?? 0}</span>
-                  </td>
-                  <td className="tl-center">
-                    {br.you_present
-                      ? <span className="cov-covered" title="You were present">✓</span>
-                      : <span className="dim" title="You were not present">✗</span>}
-                  </td>
-                  <td className="tl-logs">
-                    <Coverage logged={br.your_logged ?? 0} present={br.your_present ?? 0} label="you" />
-                    <Coverage logged={br.roster_logged ?? 0} present={br.roster_present ?? 0} label="all" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
+            ))}
+          </tbody>
+        ))}
+      </table>
     </div>
   )
 }

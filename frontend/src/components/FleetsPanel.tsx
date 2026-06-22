@@ -1,4 +1,4 @@
-// Fleet composition summary with Composition / Per-character / By-user modes.
+// Fleet composition summary with Composition / By-character / By-user modes.
 import { useEffect, useMemo, useState } from 'react'
 import type { CompositionPilot, CompositionResponse, CompositionSide } from '../api'
 import { api } from '../api'
@@ -196,7 +196,7 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
             <button className={mode === 'composition' ? 'on' : ''} aria-pressed={mode === 'composition'}
               onClick={() => setMode('composition')}>Composition</button>
             <button className={mode === 'character' ? 'on' : ''} aria-pressed={mode === 'character'}
-              onClick={() => setMode('character')}>Per-character</button>
+              onClick={() => setMode('character')}>By character</button>
             {data.by_user_available && (
               <button className={mode === 'user' ? 'on' : ''} aria-pressed={mode === 'user'}
                 onClick={() => setMode('user')}>By user</button>
