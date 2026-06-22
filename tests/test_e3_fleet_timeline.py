@@ -4,7 +4,8 @@ The fleet timeline aggregates LogEventBucket rows across ALL characters for all
 fights in a BR into one series per ``(effect_type, direction)`` pair with data:
 
   - key         : "{effect_type}:{direction}"  (e.g. "damage:out", "damage:in")
-  - effect_type : damage / rep_armor / rep_shield / neut / nos / cap_transfer / scram / disrupt / jam
+  - effect_type : damage / rep_armor / rep_shield / neut / nos / cap_transfer /
+                  scram / disrupt / jam
   - direction   : "out" or "in"
   - metric      : "amount" (abs(sum_amount)) or "count" (event_count, EWAR)
   - values      : per-bucket MAGNITUDE aligned to x (None where no data)
@@ -550,7 +551,8 @@ async def test_fleet_snapshot_character_id_scopes_to_one_pilot(db_session_maker)
         br_id, fight_id = await _make_br_with_fight(session)
         ts = BUCKET_TS_1
         for cid, sha in ((CHAR_A, "aa"), (CHAR_B, "bb")):
-            gf = GamelogFile(uploaded_by_user="u", claimed_character_id=cid, resolved_via="filename",
+            gf = GamelogFile(uploaded_by_user="u", claimed_character_id=cid,
+                             resolved_via="filename",
                              stored_path=f"/{sha}", sha256=sha, mime="text/plain", size=1,
                              parse_status="parsed", event_count=1,
                              uploaded_at=_dt.datetime.now(_dt.UTC))
@@ -564,7 +566,8 @@ async def test_fleet_snapshot_character_id_scopes_to_one_pilot(db_session_maker)
     frm = int(ts.timestamp())
     async with db_session_maker() as session:
         all_rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
-        a_rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings(), character_id=CHAR_A)
+        a_rows = await fleet_snapshot(
+            session, br_id, frm, frm + 1, get_settings(), character_id=CHAR_A)
 
     assert {r.source_character_id for r in all_rows} == {CHAR_A, CHAR_B}
     assert {r.source_character_id for r in a_rows} == {CHAR_A}
@@ -669,7 +672,8 @@ async def test_fleet_snapshot_range_ship_and_quality(db_session_maker) -> None: 
         session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t1, effect_type="damage",
                              direction="out", amount=100.0, quality="Smashes",
                              other_name="Enemy1", other_ship_name="Loki", fight_id=fight_id))
-        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t_out, effect_type="damage",
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=t_out,
+                             effect_type="damage",
                              direction="out", amount=999.0, quality="Grazes",
                              other_name="Enemy1", other_ship_name="Loki", fight_id=fight_id))
         await session.commit()
@@ -1046,3 +1050,164 @@ async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> Non
     reset_engine_for_tests()
     get_settings.cache_clear()
     get_app_config.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Tackle-fix tests: fleet_snapshot scram/disrupt use deduped source_name path
+# ---------------------------------------------------------------------------
+
+
+async def _make_gamelog_file(session, char_id: int, sha: str):  # type: ignore[no-untyped-def]
+    """Insert a minimal GamelogFile and return it (flushed, not committed)."""
+    import datetime as _dt
+    from app.db.models import GamelogFile  # isort:skip
+    gf = GamelogFile(
+        uploaded_by_user="u",
+        claimed_character_id=char_id,
+        resolved_via="filename",
+        stored_path=f"/{sha}",
+        sha256=sha,
+        mime="text/plain",
+        size=1,
+        parse_status="parsed",
+        event_count=1,
+        uploaded_at=_dt.datetime.now(_dt.UTC),
+    )
+    session.add(gf)
+    await session.flush()
+    return gf
+
+
+async def test_snapshot_tackle_deduped_single_contribution(db_session_maker) -> None:
+    """Deduped scram rows produce exactly ONE Contribution (source_name->target_name),
+    NOT a friendly-on-friendly owner-attributed row per the old logic."""
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import LogEvent
+
+    OWNER1 = 4100000001  # a bystander log owner
+    OWNER2 = 4100000002  # another bystander log owner
+    OWNER3 = 4100000003  # authoritative observer
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        ts = BUCKET_TS_1
+
+        # Authoritative survivor row (dedupe_suppressed=False): real tackle
+        gf1 = await _make_gamelog_file(session, OWNER3, "tackle-auth")
+        session.add(LogEvent(
+            file_id=gf1.file_id, character_id=OWNER3, ts=ts,
+            effect_type="scram", direction="out", amount=0.0,
+            other_name="Victim", fight_id=fight_id,
+            source_name="Tackler", target_name="Victim",
+            authoritative=True, dedupe_suppressed=False,
+        ))
+
+        # Three suppressed duplicates from other observers
+        for sha, owner in (("tackle-b1", OWNER1), ("tackle-b2", OWNER2), ("tackle-b3", OWNER3)):
+            gf = await _make_gamelog_file(session, owner, sha)
+            session.add(LogEvent(
+                file_id=gf.file_id, character_id=owner, ts=ts,
+                effect_type="scram", direction="out", amount=0.0,
+                other_name="Victim", fight_id=fight_id,
+                source_name="Tackler", target_name="Victim",
+                authoritative=False, dedupe_suppressed=True,
+            ))
+
+        # Old-style owner-attributed noise row (what the broken path used to produce).
+        # source_name=None means not pilot-resolved -- ship-only/NPC party; excluded by new logic.
+        gf_noise = await _make_gamelog_file(session, OWNER1, "tackle-noise")
+        session.add(LogEvent(
+            file_id=gf_noise.file_id, character_id=OWNER1, ts=ts,
+            effect_type="scram", direction="out", amount=0.0,
+            other_name="Friend", fight_id=fight_id,
+            source_name=None, target_name=None,
+            authoritative=False, dedupe_suppressed=False,
+        ))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    tackle_rows = [r for r in rows if r.effect_type in ("scram", "disrupt")]
+
+    # Exactly one tackle Contribution
+    assert len(tackle_rows) == 1, (
+        f"Expected 1 tackle row, got {len(tackle_rows)}: "
+        f"{[(r.source_name, r.target_name, r.effect_type) for r in tackle_rows]}"
+    )
+    c = tackle_rows[0]
+    assert c.source_name == "Tackler"
+    assert c.target_name == "Victim"
+    assert c.source_character_id is None      # pilot-resolved path has no char_id
+    assert c.group == "ewar"
+    assert c.direction == "out"
+    assert c.value == 1                       # 1 deduped row = 1 event
+
+
+async def test_snapshot_tackle_null_source_excluded(db_session_maker) -> None:
+    """Tackle rows where source_name IS NULL (ship-only/NPC) do NOT appear."""
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        ts = BUCKET_TS_1
+        gf = await _make_gamelog_file(session, CHAR_A, "tackle-null-src")
+        session.add(LogEvent(
+            file_id=gf.file_id, character_id=CHAR_A, ts=ts,
+            effect_type="scram", direction="out", amount=0.0,
+            other_name="Victim", fight_id=fight_id,
+            source_name=None, target_name=None,
+            authoritative=False, dedupe_suppressed=False,
+        ))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    tackle_rows = [r for r in rows if r.effect_type in ("scram", "disrupt")]
+    assert tackle_rows == [], (
+        f"Expected no tackle rows for NULL source, got {tackle_rows}"
+    )
+
+
+async def test_snapshot_damage_still_aggregates_by_owner(db_session_maker) -> None:
+    """Regression: non-tackle effects (damage) are still owner-attributed as before."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import Character, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        ts = BUCKET_TS_1
+        await session.merge(
+            Character(character_id=CHAR_A, name="DmgPilot",
+                      last_seen_at=_dt.datetime.now(_dt.UTC))
+        )
+        await session.flush()
+        gf = await _make_gamelog_file(session, CHAR_A, "dmg-regression")
+        session.add(LogEvent(
+            file_id=gf.file_id, character_id=CHAR_A, ts=ts,
+            effect_type="damage", direction="out", amount=500.0,
+            other_name="Enemy1", fight_id=fight_id,
+            source_name=None, target_name=None,
+            dedupe_suppressed=False,
+        ))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    dmg_rows = [r for r in rows if r.effect_type == "damage"]
+    assert len(dmg_rows) == 1
+    assert dmg_rows[0].source_character_id == CHAR_A
+    assert dmg_rows[0].source_name == "DmgPilot"
+    assert dmg_rows[0].target_name == "Enemy1"
+    assert dmg_rows[0].value == pytest.approx(500.0)

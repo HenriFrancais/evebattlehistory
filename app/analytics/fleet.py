@@ -137,6 +137,12 @@ async def fleet_snapshot(
 
     When *character_id* is given, only that character's log perspective is included
     (their outgoing + incoming events) — the per-pilot snapshot.
+
+    scram/disrupt use a separate deduped path (source_name/target_name,
+    dedupe_suppressed=False only) identical to fight_ewar, so every on-grid
+    observer's duplicate observation of one physical tackle is collapsed to one
+    row.  All other effects (damage/reps/cap/jam) continue to aggregate by the
+    log owner (character_id) + other_name.
     """
     fight_ids = list(
         (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
@@ -148,11 +154,14 @@ async def fleet_snapshot(
     start = dt.datetime.fromtimestamp(from_ts, tz=dt.UTC).replace(tzinfo=None)
     end = dt.datetime.fromtimestamp(to_ts, tz=dt.UTC).replace(tzinfo=None)
 
+    # Effects handled by the generic owner-attributed path (scram/disrupt excluded).
+    _GENERIC_EFFECTS = _KNOWN_EFFECTS - _TACKLE_EFFECTS
+
     conditions = [
         LogEvent.fight_id.in_(fight_ids),
         LogEvent.ts >= start,
         LogEvent.ts < end,
-        LogEvent.effect_type.in_(_KNOWN_EFFECTS),
+        LogEvent.effect_type.in_(_GENERIC_EFFECTS),
     ]
     if character_id is not None:
         conditions.append(LogEvent.character_id == character_id)
@@ -239,6 +248,82 @@ async def fleet_snapshot(
                 quality=quality_label,
             )
         )
+
+    # ------------------------------------------------------------------
+    # Deduped tackle path (scram / disrupt): use pilot-resolved
+    # source_name/target_name from non-suppressed rows only, exactly
+    # like fight_ewar.  This collapses all per-observer duplicates of
+    # one physical tackle to a single Contribution.
+    # ------------------------------------------------------------------
+    tackle_conditions = [
+        LogEvent.fight_id.in_(fight_ids),
+        LogEvent.ts >= start,
+        LogEvent.ts < end,
+        LogEvent.effect_type.in_(list(_TACKLE_EFFECTS)),
+        LogEvent.dedupe_suppressed.is_(False),
+        LogEvent.source_name.is_not(None),
+        LogEvent.target_name.is_not(None),
+    ]
+    if character_id is not None:
+        # Resolve this character's name so we can filter by it in source/target.
+        char_name: str | None = None
+        char_row = (
+            await session.execute(
+                select(Character.name).where(Character.character_id == character_id)
+            )
+        ).scalar_one_or_none()
+        char_name = char_row  # may be None
+        if char_name is not None:
+            tackle_conditions.append(
+                (LogEvent.source_name == char_name) | (LogEvent.target_name == char_name)
+            )
+        else:
+            # Cannot resolve pilot name → no tackle rows for per-character view.
+            tackle_conditions.append(LogEvent.source_name == "__no_match__")
+
+    TackleKey = tuple[str, str, str, str]  # (source_name, target_name, eff, dir)
+    tackle_agg: dict[TackleKey, int] = {}
+    for src, tgt, eff, direction, cnt in (
+        await session.execute(
+            select(
+                LogEvent.source_name,
+                LogEvent.target_name,
+                LogEvent.effect_type,
+                LogEvent.direction,
+                func.count(LogEvent.event_id).label("cnt"),
+            )
+            .where(*tackle_conditions)
+            .group_by(
+                LogEvent.source_name,
+                LogEvent.target_name,
+                LogEvent.effect_type,
+                LogEvent.direction,
+            )
+        )
+    ).all():
+        if not eff or not direction:
+            continue
+        tkey: TackleKey = (src or "", tgt or "", eff, direction)
+        tackle_agg[tkey] = tackle_agg.get(tkey, 0) + int(cnt)
+
+    for (src, tgt, eff, direction), val in tackle_agg.items():
+        out.append(
+            Contribution(
+                source_character_id=None,
+                source_name=src,
+                target_name=tgt,
+                target_ship=None,
+                effect_type=eff,
+                direction=direction,
+                group=_EFFECT_GROUP.get(eff, "ewar"),
+                value=float(val),
+                module_name=None,
+                icon_type_id=None,
+                weapon_category=None,
+                quality=None,
+            )
+        )
+
     out.sort(key=lambda c: c.value, reverse=True)
     return out
 
@@ -255,6 +340,8 @@ _AMOUNT_EFFECTS = frozenset(
 #: ``event_count`` (their sum_amount is meaningless / zero).
 _COUNT_EFFECTS = frozenset({"scram", "disrupt", "jam"})
 _KNOWN_EFFECTS = _AMOUNT_EFFECTS | _COUNT_EFFECTS
+#: scram/disrupt are handled via the deduped pilot-resolved path in fleet_snapshot.
+_TACKLE_EFFECTS = frozenset({"scram", "disrupt"})
 
 #: Stable presentation order: damage, reps, cap, then ewar.
 _EFFECT_ORDER = (
