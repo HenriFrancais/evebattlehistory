@@ -29,8 +29,10 @@ from app.analytics.sides_config import classify_entity
 from app.config import Settings
 from app.db.models import (
     Alliance,
+    BrCharSide,
     BrFight,
     BrSideOverride,
+    Character,
     Corporation,
     Fight,
     FightKill,
@@ -202,6 +204,30 @@ async def enrich_br_rows(
     ).all():
         overrides_by_br.setdefault(br, {})[(etype, eid)] = side
 
+    # --- 6b. per-character side overrides (FC/HC), and affiliations for log-only
+    # characters not on any killmail (so off-BR participants are classified too). ---
+    char_side_by_br: dict[str, dict[int, str]] = {b: {} for b in br_ids}
+    for br, cid, side in (
+        await session.execute(
+            select(BrCharSide.br_id, BrCharSide.character_id, BrCharSide.side).where(
+                BrCharSide.br_id.in_(br_ids)
+            )
+        )
+    ).all():
+        char_side_by_br.setdefault(br, {})[int(cid)] = side
+
+    log_only_ids = {c for b in br_ids for c in log_chars[b] if c not in char_entity[b]}
+    log_char_aff: dict[int, tuple[int | None, int | None]] = {}
+    if log_only_ids:
+        for cid, alli, corp in (
+            await session.execute(
+                select(
+                    Character.character_id, Character.alliance_id, Character.corporation_id
+                ).where(Character.character_id.in_(log_only_ids))
+            )
+        ).all():
+            log_char_aff[int(cid)] = (alli, corp)
+
     # --- 7. systems per BR, in fight order (one query) ---
     # systems_by_br and system_ids_by_br are kept parallel (same dedup, order).
     systems_by_br: dict[str, list[str]] = {b: [] for b in br_ids}
@@ -229,8 +255,12 @@ async def enrich_br_rows(
         friendly_pilots = enemy_pilots = 0
         friendly_groups: dict[_EntityKey, int] = {}
         enemy_groups: dict[_EntityKey, int] = {}
-        for alli, corp in char_entity[br].values():
-            side = classify_entity(
+        char_sides = char_side_by_br.get(br, {})
+        # Count every participant — killmail + log-derived — once, by character.
+        for char in km_chars[br] | log_chars[br]:
+            alli, corp = char_entity[br].get(char) or log_char_aff.get(char, (None, None))
+            # A per-character FC/HC override wins over entity classification.
+            side = char_sides.get(char) or classify_entity(
                 alli, corp, baseline_alliances=baseline_alliances,
                 baseline_corps=baseline_corps, overrides=overrides_by_br.get(br, {}),
             )
