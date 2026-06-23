@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.db.models import Alliance, Character, Corporation
+from app.db.models import Alliance, Character, Corporation, LogEvent
 from app.observability.logging import log
 
 
@@ -131,3 +131,40 @@ async def resolve_log_characters(
             new_count += 1
     await session.flush()
     return new_count
+
+
+async def backfill_log_characters(
+    session: AsyncSession, settings: Settings, esi=None  # type: ignore[no-untyped-def]
+) -> int:
+    """One-time backfill: resolve+persist every counterparty name across all stored
+    LogEvents, so off-BR participants in BRs uploaded before this feature existed
+    become identifiable. Returns the count of newly-persisted characters.
+
+    Safe to re-run (idempotent: already-known names are skipped). Best-effort on ESI.
+    """
+    rows = (
+        await session.execute(
+            select(LogEvent.other_name, LogEvent.source_name, LogEvent.target_name).distinct()
+        )
+    ).all()
+    names = {v for row in rows for v in row if v}
+    log.info("offbr_resolve.backfill_start", distinct_names=len(names))
+    n = await resolve_log_characters(session, settings, names, esi=esi)
+    log.info("offbr_resolve.backfill_done", new_characters=n)
+    return n
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import asyncio
+
+    from app.config import get_settings
+    from app.db.engine import get_sessionmaker
+
+    async def _main() -> None:
+        settings = get_settings()
+        async with get_sessionmaker(settings)() as session:
+            n = await backfill_log_characters(session, settings)
+            await session.commit()
+        print(f"resolved + persisted {n} new characters from existing logs")
+
+    asyncio.run(_main())

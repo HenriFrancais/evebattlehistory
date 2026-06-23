@@ -69,3 +69,38 @@ async def test_resolve_log_characters_esi_failure_is_safe(db_session_maker, tmp_
             session, get_settings(), {"Whoever"}, esi=_BoomEsi()
         )
     assert n == 0
+
+
+@pytest.mark.asyncio
+async def test_backfill_resolves_existing_log_counterparties(db_session_maker, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "ids.json").write_text('{"Old Hostile": 800}')
+    (tmp_path / "affiliations.json").write_text('{"800": {"corporation_id": 80, "alliance_id": 88}}')
+    from app.config import get_settings
+    from app.db.models import Character, GamelogFile, LogEvent
+    from app.esi.demo import DemoEsiClient
+    from app.fights.offbr_resolve import backfill_log_characters
+
+    async with db_session_maker() as session:
+        gf = GamelogFile(
+            uploaded_by_user="u", claimed_character_id=None, listener_name=None,
+            character_name=None, original_filename="x.txt", resolved_via="unresolved",
+            session_started_at=None, log_start_at=None, log_end_at=None,
+            stored_path="/tmp/x.txt", sha256="bf" + "0" * 62, mime="text/plain",
+            size=1, parse_status="parsed", event_count=1, uploaded_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(gf)
+        await session.flush()
+        session.add(LogEvent(file_id=gf.file_id, character_id=None, ts=dt.datetime.now(dt.UTC),
+                             effect_type="neut", direction="out", other_name="Old Hostile"))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        n = await backfill_log_characters(session, get_settings(), esi=DemoEsiClient(tmp_path))
+        await session.commit()
+    assert n == 1
+
+    async with db_session_maker() as session:
+        ch = (await session.execute(
+            select(Character).where(Character.character_id == 800)
+        )).scalar_one()
+        assert ch.name == "Old Hostile" and ch.alliance_id == 88
