@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import fight_side_losses, load_overrides
@@ -141,6 +142,19 @@ async def _resolve_window_system_names(
         esi_map = await esi.resolve_system_ids(missing)
         for name, sid in esi_map.items():
             resolved[name.lower()] = sid
+        # Persist the canonical name so the sources panel can show it before any
+        # killmail for that system has been ingested. Idempotent.
+        if esi_map:
+            await session.execute(
+                sqlite_insert(SolarSystem)
+                .values(
+                    [
+                        {"system_id": sid, "name": name, "security": None}
+                        for name, sid in esi_map.items()
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=["system_id"])
+            )
 
     for s in pending:
         name = (s.system_name or "").strip()
@@ -286,7 +300,27 @@ async def get_br_sources(
             await session.execute(select(BrSource).where(BrSource.br_id == br_id))
         ).scalars()
     )
-    return [_source_to_out(s) for s in rows]
+
+    sys_ids = {s.system_id for s in rows if s.system_id is not None}
+    name_by_id: dict[int, str] = {}
+    if sys_ids:
+        name_by_id = {
+            sid: name
+            for sid, name in (
+                await session.execute(
+                    select(SolarSystem.system_id, SolarSystem.name).where(
+                        SolarSystem.system_id.in_(sys_ids)
+                    )
+                )
+            ).all()
+        }
+
+    return [
+        _source_to_out(
+            s, name_by_id.get(s.system_id) if s.system_id is not None else None
+        )
+        for s in rows
+    ]
 
 
 @router.post("/api/brs/{br_id}/sources", status_code=202)
@@ -489,13 +523,14 @@ async def delete_br(
     log.info("brs.deleted", br_id=br_id, user=user.user_name)
 
 
-def _source_to_out(src: BrSource) -> BrSourceOut:
+def _source_to_out(src: BrSource, system_name: str | None = None) -> BrSourceOut:
     return BrSourceOut(
         source_id=src.source_id,
         br_id=src.br_id,
         kind=src.kind,
         url=src.url,
         system_id=src.system_id,
+        system_name=system_name,
         window_start=src.window_start,
         window_end=src.window_end,
         label=src.label,

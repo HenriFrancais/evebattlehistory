@@ -506,6 +506,46 @@ async def test_get_sources(tmp_path, monkeypatch):
     _teardown()
 
 
+@pytest.mark.asyncio
+async def test_get_sources_includes_system_name(tmp_path, monkeypatch):
+    """GET /api/brs/{br_id}/sources resolves each window source's system_name."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models
+    from app.db.models import SolarSystem
+    from app.main import create_app
+
+    _setup_env(tmp_path, monkeypatch)
+    settings = get_settings()
+    await init_models(settings)
+    session_maker = get_sessionmaker(settings)
+
+    async with session_maker() as session:
+        session.add(SolarSystem(system_id=31002222, name="J123456", security=-1.0))
+        await session.commit()
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        with patch("app.api.brs.schedule_ingest"):
+            resp = client.post(
+                "/api/brs",
+                json={"sources": [_DEMO_WINDOW]},
+                headers=CREATOR_HEADERS,
+            )
+        br_id = resp.json()["br_id"]
+        sources_resp = client.get(
+            f"/api/brs/{br_id}/sources",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+
+    assert sources_resp.status_code == 200, sources_resp.text
+    window = next(s for s in sources_resp.json() if s["kind"] == "window")
+    assert window["system_id"] == 31002222
+    assert window["system_name"] == "J123456"
+
+    _teardown()
+
+
 # ---------------------------------------------------------------------------
 # 8. POST /api/brs/{br_id}/sources adds a source and triggers refresh
 # ---------------------------------------------------------------------------

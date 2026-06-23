@@ -111,6 +111,7 @@ export interface BrSourceOut {
   kind: string
   url: string | null
   system_id: number | null
+  system_name: string | null
   window_start: string | null
   window_end: string | null
   label: string | null

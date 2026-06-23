@@ -395,7 +395,7 @@ function SourcesPanel({ brId, onRefreshTriggered }: SourcesPanelProps) {
               </div>
             ) : (
               <div style={{ fontSize: '0.85rem' }}>
-                <span className="dim">Window</span> sys {src.system_id}
+                <span className="dim">Window</span> {src.system_name ?? `sys ${src.system_id}`}
                 {src.label && <span> — {src.label}</span>}
                 {src.window_start && <div className="dim" style={{ fontSize: '0.75rem' }}>{src.window_start} → {src.window_end}</div>}
               </div>
