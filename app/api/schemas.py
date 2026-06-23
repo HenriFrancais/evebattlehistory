@@ -37,6 +37,7 @@ class BrSourceOut(BaseModel):
     kind: str
     url: str | None
     system_id: int | None
+    system_name: str | None = None
     window_start: dt.datetime | None
     window_end: dt.datetime | None
     label: str | None

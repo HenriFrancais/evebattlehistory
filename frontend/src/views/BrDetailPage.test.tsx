@@ -360,6 +360,7 @@ describe('BrDetailPage', () => {
         kind: 'link',
         url: 'https://zkillboard.com/related/30004759/202606101800/',
         system_id: null,
+        system_name: null,
         window_start: null,
         window_end: null,
         label: null,
@@ -368,6 +369,36 @@ describe('BrDetailPage', () => {
         km_count: 42,
       },
     ]
+
+    const windowSource: BrSourceOut = {
+      source_id: 2,
+      br_id: 'br1',
+      kind: 'window',
+      url: null,
+      system_id: 31002502,
+      system_name: 'J125122',
+      window_start: '2025-02-19T19:00:00Z',
+      window_end: '2025-02-19T22:00:00Z',
+      label: null,
+      status: 'ready',
+      error_text: null,
+      km_count: 17,
+    }
+
+    it('renders a window source by system name, not id', async () => {
+      vi.mocked(api.getBr).mockResolvedValue(mockBr)
+      vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))
+      vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverageAll)
+      vi.mocked(api.brCoverage).mockResolvedValue(mockFullCoverage)
+      vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+      vi.mocked(api.getSources).mockResolvedValue([windowSource])
+
+      renderBrDetailPage()
+
+      await waitFor(() => expect(screen.getByTestId('sources-panel')).toBeInTheDocument())
+      expect(screen.getByText(/J125122/)).toBeInTheDocument()
+      expect(screen.queryByText(/31002502/)).not.toBeInTheDocument()
+    })
 
     it('sources panel is visible for can_create_br user and lists sources with status + km_count', async () => {
       vi.mocked(api.getBr).mockResolvedValue(mockBr)
