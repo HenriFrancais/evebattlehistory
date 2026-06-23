@@ -75,7 +75,10 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
   let tip: HTMLDivElement | null = null
   let detachDrag: (() => void) | null = null
 
-  const showTip = (k: KillEvent, ev: MouseEvent) => {
+  // Anchored above the chart, horizontally centred on the marker's triangle —
+  // NOT following the cursor. This keeps the kill tip clear of the cursor-tracking
+  // damage hover-tip (.hover-tip), which would otherwise render on top of it.
+  const showTip = (k: KillEvent, el: HTMLElement) => {
     if (!tip) return
     const icon =
       k.victim_ship_type_id != null
@@ -92,12 +95,15 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
       `<div class="kill-tip-meta">${t} UTC${isk}</div>` +
       `<div class="kill-tip-meta">⌃-click → zKill</div></div>`
     tip.style.display = 'flex'
-    moveTip(ev)
-  }
-  const moveTip = (ev: MouseEvent) => {
-    if (!tip) return
-    tip.style.left = `${ev.clientX + 12}px`
-    tip.style.top = `${ev.clientY + 12}px`
+    // The marker spans the full plot height (top:0, height:100%), so its rect's
+    // top edge is the chart top and its mid-x is the triangle's position.
+    const m = el.getBoundingClientRect()
+    const centerX = (m.left + m.right) / 2
+    const gap = 10 // sits just above the chart, pointing down at the triangle
+    let left = centerX - tip.offsetWidth / 2
+    left = Math.max(4, Math.min(left, window.innerWidth - tip.offsetWidth - 4))
+    tip.style.left = `${left}px`
+    tip.style.top = `${Math.max(4, m.top - tip.offsetHeight - gap)}px`
   }
   const hideTip = () => {
     if (tip) tip.style.display = 'none'
@@ -123,8 +129,7 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
       flag.className = 'fleet-kill-flag'
       flag.style.borderTopColor = color
       el.appendChild(flag)
-      el.addEventListener('mouseenter', (ev) => showTip(k, ev))
-      el.addEventListener('mousemove', moveTip)
+      el.addEventListener('mouseenter', () => showTip(k, el))
       el.addEventListener('mouseleave', hideTip)
       el.addEventListener('click', (ev) => {
         if (ev.ctrlKey || ev.metaKey) {
