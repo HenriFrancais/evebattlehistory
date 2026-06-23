@@ -658,3 +658,41 @@ async def test_composition_offbr_ship_override_wins(db_session_maker) -> None:  
 
     pilots = {p.character_id: p for s in result.sides for p in s.pilots}
     assert pilots[OFFBR_LOGI].ship_name == "Guardian"  # override applied
+
+
+@pytest.mark.asyncio
+async def test_composition_per_character_side_override(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A BrCharSide override places an off-BR participant on the chosen side,
+    overriding entity classification (e.g. a stale/wrong corp/alliance)."""
+    import datetime as dt
+
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import BrCharSide
+    from tests.test_offbr_participants import HOSTILE_GUY, _seed_offbr_br
+
+    async with db_session_maker() as session:
+        br_id = await _seed_offbr_br(session)
+        await session.commit()
+
+    # HostileGuy classifies unassigned by entity (alliance not baseline). Force friendly.
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+        side_of = {p.character_id: s.side_kind for s in result.sides for p in s.pilots}
+        assert side_of[HOSTILE_GUY] == "unassigned"  # before override
+
+    async with db_session_maker() as session:
+        session.add(BrCharSide(br_id=br_id, character_id=HOSTILE_GUY, side="friendly",
+                               set_by_user="fc", set_at=dt.datetime.now(dt.UTC)))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+    side_of = {p.character_id: s.side_kind for s in result.sides for p in s.pilots}
+    assert side_of[HOSTILE_GUY] == "friendly"  # override wins

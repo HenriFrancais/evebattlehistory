@@ -15,6 +15,7 @@ from app.api.access import acting_user, can_view_character
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
 from app.api.schemas import (
+    CharSideIn,
     CompositionOut,
     CompositionPilotOut,
     CompositionShipOut,
@@ -32,7 +33,7 @@ from app.api.schemas import (
     WeaponEffectOut,
 )
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrCharShip, InventoryType
+from app.db.models import BattleReport, BrCharShip, BrCharSide, InventoryType
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 from app.sde.load import SHIP_LIKE_CATEGORIES
@@ -281,6 +282,39 @@ async def set_participant_ship(
                 br_id=br_id,
                 character_id=character_id,
                 ship_type_id=body.ship_type_id,
+                set_by_user=acting.user_name,
+                set_at=dt.datetime.now(dt.UTC),
+            )
+        )
+    await session.commit()
+    return {"ok": True}
+
+
+@router.put("/api/brs/{br_id}/participants/{character_id}/side")
+async def set_participant_side(
+    br_id: str, character_id: int, body: CharSideIn, request: Request, session: SessionDep
+) -> dict[str, bool]:
+    """Set or clear an FC/HC per-character side assignment. ``side`` null clears it.
+    Wins over entity classification. FC/HC only."""
+    await _require_br(br_id, session)
+    settings = get_settings()
+    acting = await acting_user(request, settings)
+    if not can_create_br(acting):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if body.side is not None and body.side not in ("friendly", "hostile"):
+        raise HTTPException(status_code=400, detail="invalid side")
+
+    await session.execute(
+        delete(BrCharSide).where(
+            BrCharSide.br_id == br_id, BrCharSide.character_id == character_id
+        )
+    )
+    if body.side is not None:
+        session.add(
+            BrCharSide(
+                br_id=br_id,
+                character_id=character_id,
+                side=body.side,
                 set_by_user=acting.user_name,
                 set_at=dt.datetime.now(dt.UTC),
             )

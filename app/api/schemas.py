@@ -457,6 +457,12 @@ class ShipTypeOut(BaseModel):
     name: str
 
 
+class CharSideIn(BaseModel):
+    """FC/HC per-character side assignment; null clears it."""
+
+    side: str | None = None  # 'friendly' | 'hostile' | null
+
+
 class CompositionSideOut(BaseModel):
     side_kind: str  # 'friendly' | 'hostile' | 'unassigned'
     pilot_count: int

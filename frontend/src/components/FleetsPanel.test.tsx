@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CompositionResponse } from '../api'
@@ -8,7 +8,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
     ...actual,
-    api: { ...actual.api, composition: vi.fn(), searchShipTypes: vi.fn(), setParticipantShip: vi.fn() },
+    api: { ...actual.api, composition: vi.fn(), searchShipTypes: vi.fn(), setParticipantShip: vi.fn(), setParticipantSide: vi.fn() },
   }
 })
 import { api } from '../api'
@@ -217,5 +217,18 @@ describe('FleetsPanel', () => {
     await user.type(screen.getByPlaceholderText('Search ship…'), 'osp')
     await user.click(await screen.findByText('Osprey'))
     expect(api.setParticipantShip).toHaveBeenCalledWith('br1', 11, 620)
+  })
+
+  it('lets an FC set a per-character side on a log-derived pilot', async () => {
+    vi.mocked(api.composition).mockResolvedValue(withFromLogs)
+    vi.mocked(api.setParticipantSide).mockResolvedValue({ ok: true })
+    const user = userEvent.setup()
+    render(<FleetsPanel brId="br1" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /By character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /By character/i }))
+    // Pilot 11 (from_logs) has a side control; clicking H assigns hostile.
+    const control = screen.getByTestId('side-set-11')
+    await user.click(within(control).getByRole('button', { name: 'H' }))
+    expect(api.setParticipantSide).toHaveBeenCalledWith('br1', 11, 'hostile')
   })
 })

@@ -708,6 +708,15 @@ export const api = {
         body: JSON.stringify({ ship_type_id: shipTypeId }),
       },
     ),
+  setParticipantSide: (brId: string, characterId: number, side: 'friendly' | 'hostile' | null) =>
+    jsonFetch<{ ok: boolean }>(
+      `${API}/brs/${brId}/participants/${characterId}/side`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ side }),
+      },
+    ),
   lossDamage: (brId: string, kmId: number) =>
     jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/losses/${kmId}/damage`),
   lossItems: (brId: string, kmId: number) =>

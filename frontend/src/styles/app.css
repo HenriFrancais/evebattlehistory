@@ -509,6 +509,11 @@ a:hover { color: var(--link-hover); }
 .comp-unknown-row { opacity: 0.82; }
 /* Inline ship picker (FC/HC). */
 .comp-ship-set { margin-left: 0.35rem; font-size: 0.7rem; padding: 0.02rem 0.3rem; }
+/* Per-character side control (FC/HC) on log-derived rows. */
+.comp-side-set { display: inline-flex; gap: 0.15rem; margin-left: 0.35rem; }
+.comp-side-set .btn-mini { font-size: 0.7rem; padding: 0.02rem 0.32rem; line-height: 1.2; }
+.comp-side-set .side-f.on { background: var(--ok); color: #06210d; border-color: var(--ok); }
+.comp-side-set .side-h.on { background: var(--bad); color: #2a0a0a; border-color: var(--bad); }
 .ship-picker { position: relative; display: inline-flex; align-items: center; gap: 0.25rem; margin-left: 0.35rem; }
 .ship-picker-input { font-size: 0.78rem; padding: 0.05rem 0.3rem; width: 9rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px; color: inherit; }
 .ship-picker-results { position: absolute; top: 100%; left: 0; z-index: 10; min-width: 11rem; max-height: 12rem; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
