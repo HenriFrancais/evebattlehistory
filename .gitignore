@@ -30,3 +30,7 @@ frontend/dist/
 
 # TypeScript incremental build cache
 frontend/tsconfig.tsbuildinfo
+
+# User-shared backup log archives (contain real player data — debugging only, never commit)
+*.zip
+backup-logs/

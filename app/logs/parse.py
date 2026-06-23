@@ -22,9 +22,18 @@ from typing import Any, Literal
 _TAG_RE = re.compile(r"<[^>]+>")
 _NBSP_RE = re.compile(r"&nbsp;")
 
+# A ship given a custom (user-entered) name renders that cosmetic name in italics —
+# "<u>ShipType</u> <i>CustomName</i>]" — with the real pilot following in a separate
+# [bracket]. The custom name is arbitrary text (brackets, unicode, punctuation) that
+# otherwise gets mistaken for the pilot, so drop the whole decoration: an optional
+# fused corp-ticker prefix "[CORP ", the "<i>..</i>" span, and a trailing "]".
+# It is purely cosmetic and we never want it. (<i> is used for nothing else in logs.)
+_CUSTOM_SHIP_NAME_RE = re.compile(r"(?:\[[^\[\]<]*)?<i>.*?</i>\]?", re.DOTALL)
+
 
 def strip_eve_markup(s: str) -> str:
     """Remove all HTML/EVE color+font tags from *s*; collapse excess whitespace minimally."""
+    s = _CUSTOM_SHIP_NAME_RE.sub(" ", s)
     s = _TAG_RE.sub("", s)
     s = _NBSP_RE.sub(" ", s)
     # collapse runs of spaces to a single space
