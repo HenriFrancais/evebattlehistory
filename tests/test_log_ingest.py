@@ -639,6 +639,88 @@ async def test_ingest_splits_merged_target(db_session_maker) -> None:  # type: i
 
 
 # ---------------------------------------------------------------------------
+# Custom (user-entered) ship names: EVE renders a named ship's cosmetic name in
+# <i>..</i>; it must NOT be attributed as the pilot. The real pilot is still in a
+# trailing [bracket] and must be recovered. These are real lines from fight 8 of
+# the 2026-06-14 31002150 BR (with custom names like "[I] Nurse Sarah", "+[BDA] DPS").
+# ---------------------------------------------------------------------------
+
+_NAMED_SHIP_NEUT_LOG = GAMELOG_HEADER + (
+    b"[ 2026.06.14 21:01:59 ] (combat) <color=0xff7fffff><b>144 GJ</b><color=0x77ffffff>"
+    b"<font size=10> energy neutralized </font><b><color=0xffffffff><fontsize=12>"
+    b"<color=0xFFFEBB64><b> <u>Nestor</u></b></color></fontsize> <i>[I] Nurse Sarah</i>]"
+    b"</b></fontsize><fontsize=10> [Izmaragd Dawnstar]</fontsize><color=0xFFFFFFFF><b> -"
+    b"<fontsize=12><color=0xFFFEFF6F> [ECHO.]</color></fontsize></b><color=0x77ffffff>"
+    b"<font size=10> - Medium Energy Neutralizer II</font>\n"
+)
+
+_NAMED_SHIP_SCRAM_LOG = GAMELOG_HEADER + (
+    b"[ 2026.06.14 18:18:32 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+    b"<color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><fontsize=12>"
+    b"<color=0xFFFEBB64><b> <u>Legion</u></b></color></fontsize> <i>+[BDA] DPS</i>]"
+    b"</b></fontsize><fontsize=10> [Ra'zok Zateki]</fontsize><color=0xFFFFFFFF><b> -"
+    b"<fontsize=12><color=0xFFFEFF6F> [NV]</color></fontsize></b> <color=0x77ffffff>"
+    b"<font size=10>to <b><color=0xffffffff></font><fontsize=12><color=0xFFFEBB64><b> "
+    b"<u>Huginn</u></b></color></fontsize> <i>Famous Mockingbird</i>]</b></fontsize>"
+    b"<fontsize=10> [Sue Moe]</fontsize><color=0xFFFFFFFF><b> -<fontsize=12>"
+    b"<color=0xFFFEFF6F> [HIGH.]</color></fontsize>\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_custom_named_ship_other_name_is_pilot(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A neut on a custom-named Nestor must attribute the pilot (Izmaragd Dawnstar),
+    not the cosmetic ship name ("Nurse Sarah")."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+
+    async with db_session_maker() as session:
+        session.add(InventoryType(type_id=33472, name="Nestor", category_id=6))
+        await session.flush()
+        await ingest_log(session, get_settings(), "u", "L_20260614_210000_90000001.txt",
+                         _NAMED_SHIP_NEUT_LOG, lambda n: 90000001)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        ev = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "neut")
+        )).scalar_one()
+    assert ev.other_name == "Izmaragd Dawnstar", (
+        f"custom ship name leaked: other_name={ev.other_name!r}"
+    )
+    assert ev.other_ship_name == "Nestor"
+
+
+@pytest.mark.asyncio
+async def test_ingest_custom_named_ship_ewar_source_target_are_pilots(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A third-party scram between two custom-named ships must record both real pilots
+    (Ra'zok Zateki / Sue Moe), never the cosmetic names ("+[BDA] DPS" / "Famous Mockingbird")."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+
+    async with db_session_maker() as session:
+        session.add(InventoryType(type_id=29986, name="Legion", category_id=6))
+        session.add(InventoryType(type_id=11961, name="Huginn", category_id=6))
+        await session.flush()
+        await ingest_log(session, get_settings(), "u", "L_20260614_181800_90000002.txt",
+                         _NAMED_SHIP_SCRAM_LOG, lambda n: 90000002)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        ev = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "scram")
+        )).scalar_one()
+    assert ev.source_name == "Ra'zok Zateki", f"source leaked: {ev.source_name!r}"
+    assert ev.target_name == "Sue Moe", f"target leaked: {ev.target_name!r}"
+
+
+# ---------------------------------------------------------------------------
 # Fix B: "you" as source resolves to owner character_name
 # ---------------------------------------------------------------------------
 

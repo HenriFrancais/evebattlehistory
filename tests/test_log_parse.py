@@ -41,6 +41,35 @@ def test_strip_eve_markup_keeps_text() -> None:
     assert strip_eve_markup(raw) == "hello world"
 
 
+def test_strip_eve_markup_drops_custom_ship_name_form_a() -> None:
+    """A user-named ship renders its (cosmetic) name in <i>..</i>; it must be dropped,
+    while the ship type (<u>) and the real pilot ([bracket]) survive. Form A has no
+    corp ticker fused to the name bracket."""
+    raw = (
+        "<fontsize=12><color=0xFFFEBB64><b> <u>Nestor</u></b></color></fontsize> "
+        "<i>[I] Nurse Sarah</i>]</b></fontsize><fontsize=10> [Izmaragd Dawnstar]</fontsize>"
+    )
+    out = strip_eve_markup(raw)
+    assert "Nurse Sarah" not in out  # cosmetic ship name gone
+    assert "Nestor" in out  # ship type kept
+    assert "Izmaragd Dawnstar" in out  # real pilot kept
+
+
+def test_strip_eve_markup_drops_custom_ship_name_form_b() -> None:
+    """Form B fuses the corp ticker into the name bracket: ``[CORP <i>custom</i>]``.
+    The whole decoration must go so it can't swallow the trailing pilot bracket."""
+    raw = (
+        "<fontsize=12><color=0xFFFEBB64><b> <u>Legion</u></b></color></fontsize> "
+        "<fontsize=10><b>[NVACA <i>+[BDA] DPS</i>]</b></fontsize>"
+        "<fontsize=10> [Kyra Venalia]</fontsize>"
+    )
+    out = strip_eve_markup(raw)
+    assert "DPS" not in out  # cosmetic ship name gone
+    assert "NVACA" not in out  # corp ticker fused to the name bracket gone too
+    assert "Legion" in out  # ship type kept
+    assert "Kyra Venalia" in out  # real pilot kept
+
+
 # ---------------------------------------------------------------------------
 # parse_line — envelope
 # ---------------------------------------------------------------------------
