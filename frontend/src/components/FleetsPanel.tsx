@@ -18,9 +18,9 @@ function itemIcon(typeId: number) {
   return (
     <img
       className="comp-item-icon"
-      width={20}
-      height={20}
-      src={`https://images.evetech.net/types/${typeId}/icon?size=32`}
+      width={26}
+      height={26}
+      src={`https://images.evetech.net/types/${typeId}/icon?size=64`}
       alt=""
     />
   )

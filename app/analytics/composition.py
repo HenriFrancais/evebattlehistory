@@ -91,7 +91,7 @@ class _Acc:
     side: str
     hulls: dict[int, tuple[bool, int | None]]  # ship_type_id → (lost?, killmail_id)
     podded: bool            # appeared only in a capsule
-    weapon_ids: set[int]    # weapon_type_ids seen across all attacker rows
+    weapons_by_hull: dict[int, set[int]]  # ship_type_id → weapon_type_ids used from that hull
 
 
 _REP_TYPES = ("rep_armor", "rep_shield")
@@ -216,7 +216,7 @@ async def fleet_composition(
     def _ensure(char_id: int, side: str) -> _Acc:
         a = acc.get(char_id)
         if a is None:
-            a = _Acc(side=side, hulls={}, podded=False, weapon_ids=set())
+            a = _Acc(side=side, hulls={}, podded=False, weapons_by_hull={})
             acc[char_id] = a
         return a
 
@@ -258,12 +258,15 @@ async def fleet_composition(
         a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
             a.hulls.setdefault(ship_id, (False, None))
-        if weapon_id is not None and weapon_id != CAPSULE_TYPE_ID:
-            a.weapon_ids.add(weapon_id)
+            # A weapon belongs to the hull on its own attacker row, so a reship's
+            # modules stay with the ship they were used from. Rows with no/capsule
+            # hull can't be attributed to a hull, so their weapons are dropped.
+            if weapon_id is not None and weapon_id != CAPSULE_TYPE_ID:
+                a.weapons_by_hull.setdefault(ship_id, set()).add(weapon_id)
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}
-    weapon_ids_all = {wid for a in acc.values() for wid in a.weapon_ids}
+    weapon_ids_all = {wid for a in acc.values() for wids in a.weapons_by_hull.values() for wid in wids}
     all_type_ids = ship_ids | weapon_ids_all
     ship_names: dict[int, str] = {}
     inv_by_id: dict[int, InventoryType] = {}
@@ -327,13 +330,13 @@ async def fleet_composition(
             if cid is not None
         }
 
-    by_side: dict[str, list[CompositionPilot]] = {}
-    for char_id, a in acc.items():
-        name = char_names.get(char_id) or f"Char {char_id}"
-        user = char_to_user.get(char_id) if char_to_user else None
-        is_reship = len(a.hulls) > 1
-        weapons: list[WeaponEffect] = []
-        for wid in a.weapon_ids:
+    def _weapons_for(wids: set[int], hull_id: int) -> list[WeaponEffect]:
+        out: list[WeaponEffect] = []
+        for wid in wids:
+            # The hull is sometimes logged as a weapon; exclude it from the
+            # per-pilot module list (mirrors the summary top_modules filter).
+            if wid == hull_id:
+                continue
             winv = inv_by_id.get(wid)
             if winv is None:
                 continue
@@ -342,12 +345,17 @@ async def fleet_composition(
                 group_name=winv.group_name, category_id=winv.category_id,
             )
             wr = weapon_role(info)
-            weapons.append(WeaponEffect(type_id=wid, name=winv.name, role=wr.role))
+            out.append(WeaponEffect(type_id=wid, name=winv.name, role=wr.role))
+        return out
+
+    by_side: dict[str, list[CompositionPilot]] = {}
+    for char_id, a in acc.items():
+        name = char_names.get(char_id) or f"Char {char_id}"
+        user = char_to_user.get(char_id) if char_to_user else None
+        is_reship = len(a.hulls) > 1
         if a.hulls:
             for sid, (lost, km_id) in a.hulls.items():
-                # The hull is sometimes logged as a weapon; exclude it from the
-                # per-pilot module list (mirrors the summary top_modules filter).
-                hull_weapons = [w for w in weapons if w.type_id != sid]
+                hull_weapons = _weapons_for(a.weapons_by_hull.get(sid, set()), sid)
                 by_side.setdefault(a.side, []).append(
                     CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
                                      ship_name=ship_names.get(sid, "Unknown"), lost=lost,
@@ -359,11 +367,11 @@ async def fleet_composition(
                                      has_logs=char_id in log_char_ids)
                 )
         else:
-            # Capsule-only / no hull recorded.
+            # Capsule-only / no hull recorded: no hull to attribute modules to.
             by_side.setdefault(a.side, []).append(
                 CompositionPilot(character_id=char_id, character_name=name, ship_type_id=None,
                                  ship_name="Unknown", lost=a.podded, reship=False,
-                                 user_name=user, killmail_id=None, weapons=weapons,
+                                 user_name=user, killmail_id=None, weapons=[],
                                  damage_done=dmg_by_char.get(char_id, 0),
                                  kill_count=kc_by_char.get(char_id, 0),
                                  reps_out=reps_by_char.get(char_id, 0.0),
