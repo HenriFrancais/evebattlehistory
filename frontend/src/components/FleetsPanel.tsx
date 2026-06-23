@@ -32,7 +32,7 @@ function SideHeader({ side }: { side: CompositionSide }) {
   return (
     <div className={`comp-side-h ${cls}`}>
       <span className={`comp-side-name ${cls}`}>{side.side_kind}</span>
-      <span className="dim" style={{ fontSize: '0.74rem' }}>{side.pilot_count} pilots · {hulls} hulls</span>
+      <span className="dim" style={{ fontSize: '0.95rem' }}>{side.pilot_count} pilots · {hulls} hulls</span>
     </div>
   )
 }
@@ -43,7 +43,7 @@ function CompositionView({ side }: { side: CompositionSide }) {
       <SideHeader side={side} />
       {side.ships.map((sh) => (
         <div className="comp-row" key={sh.ship_type_id}>
-          {shipIcon(sh.ship_type_id)}
+          {shipIcon(sh.ship_type_id, 34)}
           <span className="comp-count">{sh.count}×</span>
           <span className="comp-name" title={sh.ship_name}>{sh.ship_name}</span>
           <span className="comp-mod-cols" data-testid="ship-modules">
@@ -53,9 +53,9 @@ function CompositionView({ side }: { side: CompositionSide }) {
                 <img
                   key={m.type_id}
                   className="comp-item-icon"
-                  width={18}
-                  height={18}
-                  src={`https://images.evetech.net/types/${m.type_id}/icon?size=32`}
+                  width={34}
+                  height={34}
+                  src={`https://images.evetech.net/types/${m.type_id}/icon?size=64`}
                   title={m.name}
                   alt={m.name}
                 />
