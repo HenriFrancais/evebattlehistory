@@ -210,6 +210,32 @@ docker compose ps                                  # nvbr should be "healthy"
 docker compose logs -f nvbr                        # watch startup
 ```
 
+### Updating an existing deployment
+
+`deploy/deploy.sh` does a full update in one command: `git pull`, rebuild the image
+(including the SPA), restart the container, wait until it's healthy, then run any data
+migrations. New DB tables (e.g. `br_char_ship`) are created automatically on startup.
+
+```bash
+# Routine code-only deploy:
+./deploy/deploy.sh
+
+# First deploy of the log-identified-participants feature — also re-parse stored
+# gamelogs (one-time, cleans stored names) and backfill off-BR counterparties via ESI:
+./deploy/deploy.sh --reparse
+```
+
+Flags: `--reparse` (also re-parse all gamelogs first — slow, one-time after the
+custom-ship-name fix), `--skip-backfill` (skip the ESI off-BR counterparty backfill),
+`--no-pull` (deploy whatever is checked out). `--help` prints the full usage.
+
+The two data steps it can run are also available standalone inside the container:
+
+```bash
+docker compose exec nvbr python -m app.logs.reparse          # re-parse stored gamelogs
+docker compose exec nvbr python -m app.fights.offbr_resolve  # backfill off-BR counterparties (ESI)
+```
+
 ### Step 4 — TLS reverse proxy (Caddy)
 
 The VM **must** terminate TLS and forward to the loopback container — NV Tools only runs the
