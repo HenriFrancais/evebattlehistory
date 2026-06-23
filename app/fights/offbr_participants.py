@@ -32,7 +32,6 @@ class OffBrChar:
     alliance_id: int | None
     corporation_id: int | None
     detected_ship_type_id: int | None
-    reps_out: float
     user_name: str | None
     source: str  # "log_owner" | "counterparty"
 
@@ -115,12 +114,6 @@ async def offbr_log_characters(
         ).scalars():
             ship_name_to_id[inv.name] = inv.type_id
 
-    # Reps applied (log-based), reusing the composition helper.
-    from app.analytics.composition import _reps_applied_by_char
-
-    cand_names = {cid: (chars[cid].name or f"Char {cid}") for cid in candidates if cid in chars}
-    reps = await _reps_applied_by_char(session, fight_ids, settings, cand_names)
-
     # Roster user names (best-effort).
     char_to_user: dict[int, str] = {}
     try:
@@ -142,7 +135,6 @@ async def offbr_log_characters(
                 alliance_id=(c.alliance_id if c else None),
                 corporation_id=(c.corporation_id if c else None),
                 detected_ship_type_id=detected,
-                reps_out=reps.get(cid, 0.0),
                 user_name=char_to_user.get(cid),
                 source=("log_owner" if cid in log_owners else "counterparty"),
             )

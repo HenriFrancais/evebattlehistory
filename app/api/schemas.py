@@ -443,6 +443,7 @@ class CompositionPilotOut(BaseModel):
     kill_count: int = 0
     reps_out: float = 0.0
     has_logs: bool = False
+    from_logs: bool = False
 
 
 class CompositionSideOut(BaseModel):

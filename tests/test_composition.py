@@ -593,3 +593,68 @@ async def test_composition_pilot_weapons_exclude_hull(db_session_maker) -> None:
     assert ABSOLUTION not in {w.type_id for w in pilot.weapons}, (
         "The hull must not appear in its own pilot.weapons list"
     )
+
+
+# ---------------------------------------------------------------------------
+# Off-BR log-identified participants folded into composition.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_composition_includes_offbr_log_participant(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Off-BR log-uploader (friendly via baseline) and counterparty (unassigned,
+    Guardian) appear with from_logs=True; the known Guardian counts in its tally."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from tests.test_offbr_participants import (
+        GUARDIAN, HOSTILE_GUY, LOGI_ALLI, OFFBR_LOGI, _seed_offbr_br,
+    )
+
+    async with db_session_maker() as session:
+        br_id = await _seed_offbr_br(session)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances={LOGI_ALLI}, baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.character_id: p for s in result.sides for p in s.pilots}
+    assert pilots[OFFBR_LOGI].from_logs is True
+    assert pilots[OFFBR_LOGI].ship_type_id is None  # no detected hull → Unknown
+    assert pilots[HOSTILE_GUY].from_logs is True
+    assert pilots[HOSTILE_GUY].ship_name == "Guardian"
+
+    # OffbrLogi is friendly (baseline); HostileGuy is unassigned.
+    friendly = next(s for s in result.sides if s.side_kind == "friendly")
+    assert any(p.character_id == OFFBR_LOGI for p in friendly.pilots)
+    unassigned = next(s for s in result.sides if s.side_kind == "unassigned")
+    guardian = next(sh for sh in unassigned.ships if sh.ship_type_id == GUARDIAN)
+    assert guardian.count == 1  # known hull counts in the tally
+
+
+@pytest.mark.asyncio
+async def test_composition_offbr_ship_override_wins(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A BrCharShip override sets the hull for an otherwise-Unknown off-BR pilot."""
+    import datetime as dt
+
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import BrCharShip
+    from tests.test_offbr_participants import GUARDIAN, LOGI_ALLI, OFFBR_LOGI, _seed_offbr_br
+
+    async with db_session_maker() as session:
+        br_id = await _seed_offbr_br(session)
+        session.add(BrCharShip(br_id=br_id, character_id=OFFBR_LOGI, ship_type_id=GUARDIAN,
+                               set_by_user="fc", set_at=dt.datetime.now(dt.UTC)))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances={LOGI_ALLI}, baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.character_id: p for s in result.sides for p in s.pilots}
+    assert pilots[OFFBR_LOGI].ship_name == "Guardian"  # override applied

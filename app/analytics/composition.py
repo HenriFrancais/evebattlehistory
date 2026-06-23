@@ -23,6 +23,7 @@ from app.analytics.sides_config import EntityKey, classify_entity
 from app.analytics.weapon_roles import WeaponTypeInfo, weapon_role
 from app.config import Settings
 from app.db.models import (
+    BrCharShip,
     BrFight,
     FightKill,
     InventoryType,
@@ -62,6 +63,8 @@ class CompositionPilot:
     reps_out: float = 0.0
     #: True when this character has uploaded gamelogs associated with the BR's fights.
     has_logs: bool = False
+    #: True when this pilot is NOT on any killmail and was identified from logs.
+    from_logs: bool = False
 
 
 @dataclass
@@ -264,6 +267,32 @@ async def fleet_composition(
             if weapon_id is not None and weapon_id != CAPSULE_TYPE_ID:
                 a.weapons_by_hull.setdefault(ship_id, set()).add(weapon_id)
 
+    # Off-BR log-identified participants: fold them in so they appear on their
+    # classified side. Side via classify_entity; ship via FC/HC override →
+    # log-detected → Unknown. Marked from_logs; counted in pilot_count, and (when a
+    # ship is known) in that ship's tally. (Local import avoids an import cycle.)
+    from app.fights.offbr_participants import offbr_log_characters
+
+    ship_overrides: dict[int, int] = {
+        int(cid): int(sid)
+        for cid, sid in (
+            await session.execute(
+                select(BrCharShip.character_id, BrCharShip.ship_type_id).where(
+                    BrCharShip.br_id == br_id
+                )
+            )
+        ).all()
+    }
+    from_logs_ids: set[int] = set()
+    for oc in await offbr_log_characters(session, settings, br_id):
+        if oc.character_id in acc:
+            continue
+        from_logs_ids.add(oc.character_id)
+        a = _ensure(oc.character_id, _side(oc.alliance_id, oc.corporation_id))
+        ship = ship_overrides.get(oc.character_id) or oc.detected_ship_type_id
+        if ship is not None:
+            a.hulls[ship] = (False, None)
+
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}
     weapon_ids_all = {wid for a in acc.values() for wids in a.weapons_by_hull.values() for wid in wids}
@@ -364,7 +393,8 @@ async def fleet_composition(
                                      damage_done=dmg_by_char.get(char_id, 0),
                                      kill_count=kc_by_char.get(char_id, 0),
                                      reps_out=reps_by_char.get(char_id, 0.0),
-                                     has_logs=char_id in log_char_ids)
+                                     has_logs=char_id in log_char_ids,
+                                     from_logs=char_id in from_logs_ids)
                 )
         else:
             # Capsule-only / no hull recorded: no hull to attribute modules to.
@@ -375,7 +405,8 @@ async def fleet_composition(
                                  damage_done=dmg_by_char.get(char_id, 0),
                                  kill_count=kc_by_char.get(char_id, 0),
                                  reps_out=reps_by_char.get(char_id, 0.0),
-                                 has_logs=char_id in log_char_ids)
+                                 has_logs=char_id in log_char_ids,
+                                 from_logs=char_id in from_logs_ids)
             )
 
     sides: list[CompositionSide] = []
