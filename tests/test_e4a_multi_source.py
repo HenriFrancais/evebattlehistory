@@ -875,3 +875,95 @@ async def test_all_sources_error_sets_br_error_text(tmp_path, monkeypatch):
     assert len(br.error_text) > 0
 
     _teardown()
+
+
+# ---------------------------------------------------------------------------
+# Window source via system NAME (resolves to system_id server-side)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_window_source_resolves_system_name(tmp_path, monkeypatch):
+    """A window source given system_name resolves to system_id via solar_system."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models
+    from app.db.models import BrSource, SolarSystem
+    from app.main import create_app
+
+    _setup_env(tmp_path, monkeypatch)
+    settings = get_settings()
+    await init_models(settings)
+    session_maker = get_sessionmaker(settings)
+
+    # Seed the local solar_system table so resolution needs no network.
+    async with session_maker() as session:
+        session.add(SolarSystem(system_id=31002502, name="J125122", security=-1.0))
+        await session.commit()
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        with patch("app.api.brs.schedule_ingest"):
+            resp = client.post(
+                "/api/brs",
+                json={
+                    "title": "Name-based window",
+                    "sources": [
+                        {
+                            "kind": "window",
+                            "system_name": "j125122",  # case-insensitive
+                            "window_start": "2025-02-19T19:00:00Z",
+                            "window_end": "2025-02-19T22:00:00Z",
+                        }
+                    ],
+                },
+                headers=CREATOR_HEADERS,
+            )
+
+    assert resp.status_code == 202, resp.text
+    br_id = resp.json()["br_id"]
+
+    async with session_maker() as session:
+        src = (
+            await session.execute(select(BrSource).where(BrSource.br_id == br_id))
+        ).scalar_one()
+    assert src.kind == "window"
+    assert src.system_id == 31002502
+
+    _teardown()
+
+
+@pytest.mark.asyncio
+async def test_create_window_source_unknown_name_400(tmp_path, monkeypatch):
+    """An unresolvable system_name yields HTTP 400 (demo ESI returns nothing)."""
+    from app.config import get_app_config, get_settings
+    from app.db.engine import init_models
+    from app.main import create_app
+
+    _setup_env(tmp_path, monkeypatch)
+    settings = get_settings()
+    await init_models(settings)
+
+    get_app_config.cache_clear()
+    app = create_app()
+    with TestClient(app) as client:
+        with patch("app.api.brs.schedule_ingest"):
+            resp = client.post(
+                "/api/brs",
+                json={
+                    "sources": [
+                        {
+                            "kind": "window",
+                            "system_name": "NotARealSystem999",
+                            "window_start": "2025-02-19T19:00:00Z",
+                            "window_end": "2025-02-19T22:00:00Z",
+                        }
+                    ],
+                },
+                headers=CREATOR_HEADERS,
+            )
+
+    assert resp.status_code == 400, resp.text
+    assert "Unknown solar system" in resp.text
+
+    _teardown()

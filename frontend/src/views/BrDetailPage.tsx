@@ -201,7 +201,7 @@ interface AddSourceFormProps {
 function AddSourceForm({ brId, onAdded }: AddSourceFormProps) {
   const [kind, setKind] = useState<'link' | 'window'>('link')
   const [url, setUrl] = useState('')
-  const [systemId, setSystemId] = useState('')
+  const [systemName, setSystemName] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const [label, setLabel] = useState('')
@@ -227,14 +227,14 @@ function AddSourceForm({ brId, onAdded }: AddSourceFormProps) {
       }
       source = { kind: 'link', url: url.trim() }
     } else {
-      if (!systemId.trim() || isNaN(Number(systemId))) { setError('Valid system ID required'); return }
+      if (!systemName.trim()) { setError('System name required'); return }
       if (!start || !end) { setError('Start and end are required'); return }
       const startD = new Date(start + (start.length === 16 ? ':00Z' : 'Z'))
       const endD = new Date(end + (end.length === 16 ? ':00Z' : 'Z'))
       if (startD >= endD) { setError('Start must be before end'); return }
       source = {
         kind: 'window',
-        system_id: Number(systemId),
+        system_name: systemName.trim(),
         window_start: startD.toISOString(),
         window_end: endD.toISOString(),
         ...(label.trim() ? { label: label.trim() } : {}),
@@ -245,7 +245,7 @@ function AddSourceForm({ brId, onAdded }: AddSourceFormProps) {
     try {
       await api.addSource(brId, source)
       onAdded()
-      setUrl(''); setSystemId(''); setStart(''); setEnd(''); setLabel('')
+      setUrl(''); setSystemName(''); setStart(''); setEnd(''); setLabel('')
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : String(ex))
     } finally {
@@ -279,11 +279,12 @@ function AddSourceForm({ brId, onAdded }: AddSourceFormProps) {
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
           <input
-            type="number"
-            value={systemId}
-            onChange={(e) => setSystemId(e.target.value)}
-            placeholder="System ID"
-            style={{ width: '8rem' }}
+            type="text"
+            value={systemName}
+            onChange={(e) => setSystemName(e.target.value)}
+            placeholder="System name (e.g. J125122)"
+            aria-label="System name"
+            style={{ width: '12rem' }}
           />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
             <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>Start (UTC)</label>

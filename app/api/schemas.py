@@ -13,7 +13,9 @@ class BrSourceIn(BaseModel):
     kind: str  # "link" | "window"
     # For kind=link
     url: str | None = None
-    # For kind=window
+    # For kind=window — accept a system *name* (preferred) or a raw system_id.
+    # When system_name is given, the server resolves it to a system_id.
+    system_name: str | None = None
     system_id: int | None = None
     window_start: dt.datetime | None = None
     window_end: dt.datetime | None = None

@@ -64,8 +64,8 @@ describe('SourceComposer', () => {
     fireEvent.change(typeSelects[1], { target: { value: 'window' } })
 
     // Fill window row fields
-    const systemInputs = screen.getAllByPlaceholderText(/system id/i)
-    fireEvent.change(systemInputs[0], { target: { value: '30004759' } })
+    const systemInputs = screen.getAllByPlaceholderText(/system name/i)
+    fireEvent.change(systemInputs[0], { target: { value: 'J125122' } })
 
     const startInputs = screen.getAllByLabelText(/start/i)
     fireEvent.change(startInputs[0], { target: { value: '2026-06-10T18:00' } })
@@ -83,7 +83,7 @@ describe('SourceComposer', () => {
 
     const win = call.sources![1]
     expect(win.kind).toBe('window')
-    expect(win.system_id).toBe(30004759)
+    expect(win.system_name).toBe('J125122')
     // UTC ISO: 2026-06-10T18:00 treated as UTC → "2026-06-10T18:00:00.000Z"
     expect(win.window_start).toBe('2026-06-10T18:00:00.000Z')
     expect(win.window_end).toBe('2026-06-10T20:00:00.000Z')
@@ -97,8 +97,8 @@ describe('SourceComposer', () => {
     const typeSelect = screen.getByRole('combobox', { name: /Source type/i })
     fireEvent.change(typeSelect, { target: { value: 'window' } })
 
-    const systemInputs = screen.getAllByPlaceholderText(/system id/i)
-    fireEvent.change(systemInputs[0], { target: { value: '30004759' } })
+    const systemInputs = screen.getAllByPlaceholderText(/system name/i)
+    fireEvent.change(systemInputs[0], { target: { value: 'J125122' } })
 
     const startInputs = screen.getAllByLabelText(/start/i)
     fireEvent.change(startInputs[0], { target: { value: '2026-06-10T20:00' } })
