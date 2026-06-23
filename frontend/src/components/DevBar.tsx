@@ -5,14 +5,15 @@
 // In production impersonation_available is false, so this renders nothing.
 
 import { useEffect, useState } from 'react'
-import { type MeResponse, api } from '../api'
+import type { MeResponse } from '../api'
+import { loadMe } from '../cache'
 import { ImpersonationPicker } from './ImpersonationPicker'
 
 export function DevBar() {
   const [me, setMe] = useState<MeResponse | null>(null)
 
   useEffect(() => {
-    api.me().then(setMe).catch(() => setMe(null))
+    loadMe().then(setMe).catch(() => setMe(null))
   }, [])
 
   if (!me?.impersonation_available) return null

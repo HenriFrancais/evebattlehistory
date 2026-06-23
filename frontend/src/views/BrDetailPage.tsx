@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
+import { invalidateBr, loadBr, loadMe } from '../cache'
 import { CoverageMatrix } from '../components/CoverageMatrix'
 import { FleetGraph } from '../components/FleetGraph'
 import { FleetsPanel } from '../components/FleetsPanel'
@@ -444,10 +445,13 @@ export function BrDetailPage() {
   const [selectedKillmailId, setSelectedKillmailId] = useState<number | null>(null)
   const [graphFullscreen, setGraphFullscreen] = useState(false)
 
-  const load = useCallback(() => {
+  // `force` bypasses the prefetch cache and refreshes it — used after an ingest
+  // or refresh completes. The initial mount load uses the cache so a row that was
+  // hovered on the overview opens already-populated.
+  const load = useCallback((force = false) => {
     if (!id) return
     let cancelled = false
-    api.getBr(id).then(
+    loadBr(id, force).then(
       (d) => {
         if (!cancelled) {
           setBr(d)
@@ -459,7 +463,7 @@ export function BrDetailPage() {
     return () => { cancelled = true }
   }, [id])
 
-  useEffect(() => { return load() }, [load])
+  useEffect(() => { return load(false) }, [load])
 
   // Close the fullscreen graph overlay on Escape.
   useEffect(() => {
@@ -471,22 +475,25 @@ export function BrDetailPage() {
 
   useEffect(() => {
     let cancelled = false
-    api.me().then(
+    loadMe().then(
       (d) => { if (!cancelled) setMe(d) },
       () => { /* ignore errors; coverage just won't show */ },
     )
     return () => { cancelled = true }
   }, [])
 
+  // Fires as soon as id + me are known — no longer waits on getBr, so the
+  // FC/HC coverage request runs in parallel with the BR detail load instead of
+  // after it.
   useEffect(() => {
-    if (!br || !id || !me?.can_create_br) return
+    if (!id || !me?.can_create_br) return
     let cancelled = false
     api.brCoverage(id).then(
       (data) => { if (!cancelled) setFullCoverage(data) },
       () => { /* non-critical; ignore */ },
     )
     return () => { cancelled = true }
-  }, [br, id, me])
+  }, [id, me])
 
   async function handleRefresh() {
     if (!id) return
@@ -514,6 +521,7 @@ export function BrDetailPage() {
     setDeleting(true)
     try {
       await api.deleteBr(id)
+      invalidateBr(id)
       navigate('/')
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e))
@@ -523,7 +531,7 @@ export function BrDetailPage() {
 
   function handleRefreshReady() {
     setRefreshStatus(null)
-    load()
+    load(true)
     // Force the data panels (composition, fleet graph, coverage) to re-fetch so newly
     // ingested sources show without a manual page reload.
     setSidesVersion((v) => v + 1)
@@ -550,7 +558,7 @@ export function BrDetailPage() {
             <EditableTitle
               brId={br.br_id}
               title={displayTitle}
-              onUpdated={(t) => setDisplayTitle(t)}
+              onUpdated={(t) => { setDisplayTitle(t); invalidateBr(br.br_id) }}
             />
           ) : (
             <h1 style={{ margin: '0.25rem 0 0' }}>{displayTitle}</h1>
@@ -637,7 +645,7 @@ export function BrDetailPage() {
       </div>
 
       {br.status !== 'ready' && (
-        <IngestProgress brId={br.br_id} initialStatus={brStatus} onReady={load} />
+        <IngestProgress brId={br.br_id} initialStatus={brStatus} onReady={() => load(true)} />
       )}
 
       {refreshStatus && (
