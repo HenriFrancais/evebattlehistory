@@ -446,6 +446,17 @@ class CompositionPilotOut(BaseModel):
     from_logs: bool = False
 
 
+class ShipOverrideIn(BaseModel):
+    """FC/HC per-character ship assignment; null clears it."""
+
+    ship_type_id: int | None = None
+
+
+class ShipTypeOut(BaseModel):
+    type_id: int
+    name: str
+
+
 class CompositionSideOut(BaseModel):
     side_kind: str  # 'friendly' | 'hostile' | 'unassigned'
     pilot_count: int

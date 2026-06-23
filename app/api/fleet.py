@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
@@ -24,13 +26,16 @@ from app.api.schemas import (
     KillEventOut,
     LeaderEntryOut,
     LeadersOut,
+    ShipOverrideIn,
+    ShipTypeOut,
     TimelineFightInfo,
     WeaponEffectOut,
 )
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport
+from app.db.models import BattleReport, BrCharShip, InventoryType
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
+from app.sde.load import SHIP_LIKE_CATEGORIES
 
 router = APIRouter()
 
@@ -251,3 +256,54 @@ async def get_composition(
             for s in result.sides
         ],
     )
+
+
+@router.put("/api/brs/{br_id}/participants/{character_id}/ship")
+async def set_participant_ship(
+    br_id: str, character_id: int, body: ShipOverrideIn, request: Request, session: SessionDep
+) -> dict[str, bool]:
+    """Set or clear an FC/HC per-character ship assignment for an off-BR
+    participant. ``ship_type_id`` null clears it. FC/HC only."""
+    await _require_br(br_id, session)
+    settings = get_settings()
+    acting = await acting_user(request, settings)
+    if not can_create_br(acting):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    await session.execute(
+        delete(BrCharShip).where(
+            BrCharShip.br_id == br_id, BrCharShip.character_id == character_id
+        )
+    )
+    if body.ship_type_id is not None:
+        session.add(
+            BrCharShip(
+                br_id=br_id,
+                character_id=character_id,
+                ship_type_id=body.ship_type_id,
+                set_by_user=acting.user_name,
+                set_at=dt.datetime.now(dt.UTC),
+            )
+        )
+    await session.commit()
+    return {"ok": True}
+
+
+@router.get("/api/ship-types")
+async def search_ship_types(q: str, session: SessionDep) -> list[ShipTypeOut]:
+    """Search SDE ship types by name substring (for the participant ship picker)."""
+    q = (q or "").strip()
+    if not q:
+        return []
+    rows = (
+        await session.execute(
+            select(InventoryType.type_id, InventoryType.name)
+            .where(
+                InventoryType.category_id.in_(SHIP_LIKE_CATEGORIES),
+                InventoryType.name.ilike(f"%{q}%"),
+            )
+            .order_by(InventoryType.name)
+            .limit(25)
+        )
+    ).all()
+    return [ShipTypeOut(type_id=tid, name=name) for tid, name in rows]

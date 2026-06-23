@@ -295,7 +295,9 @@ async def fleet_composition(
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}
-    weapon_ids_all = {wid for a in acc.values() for wids in a.weapons_by_hull.values() for wid in wids}
+    weapon_ids_all = {
+        wid for a in acc.values() for wids in a.weapons_by_hull.values() for wid in wids
+    }
     all_type_ids = ship_ids | weapon_ids_all
     ship_names: dict[int, str] = {}
     inv_by_id: dict[int, InventoryType] = {}
@@ -430,7 +432,9 @@ async def fleet_composition(
                 mod_effect.setdefault(w.type_id, w)
         # Order pilots so the most-flown hull leads, then alphabetically by ship and
         # character within each hull group (hull-less pilots sort last).
-        plist.sort(key=lambda x: (-counts.get(x.ship_type_id or 0, 0), x.ship_name, x.character_name))
+        plist.sort(
+            key=lambda x: (-counts.get(x.ship_type_id or 0, 0), x.ship_name, x.character_name)
+        )
         # Ships: most numerous first, ties broken alphabetically.
         ships = [
             CompositionShip(

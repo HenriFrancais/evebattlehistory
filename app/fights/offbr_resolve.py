@@ -96,16 +96,18 @@ async def resolve_log_characters(
     seen_alli: set[int] = set()
     seen_corp: set[int] = set()
     new_count = 0
-    for name, cid in name_to_id.items():
-        corp, alli = affil.get(cid, (None, None))
+    for _corp, alli in affil.values():
         if alli is not None and alli not in seen_alli:
             seen_alli.add(alli)
             await session.merge(
-                Alliance(alliance_id=alli, name=ent_names.get(alli, {}).get("name"), last_seen_at=now)
+                Alliance(
+                    alliance_id=alli,
+                    name=ent_names.get(alli, {}).get("name"),
+                    last_seen_at=now,
+                )
             )
     await session.flush()
-    for name, cid in name_to_id.items():
-        corp, alli = affil.get(cid, (None, None))
+    for corp, alli in affil.values():
         if corp is not None and corp not in seen_corp:
             seen_corp.add(corp)
             await session.merge(

@@ -126,7 +126,7 @@ async def offbr_log_characters(
     for cid in sorted(candidates):
         c = chars.get(cid)
         detected = None
-        if cid in ship_counts and ship_counts[cid]:
+        if ship_counts.get(cid):
             detected = ship_name_to_id.get(ship_counts[cid].most_common(1)[0][0])
         out.append(
             OffBrChar(
