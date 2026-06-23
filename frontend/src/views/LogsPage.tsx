@@ -46,6 +46,17 @@ export function LogsPage() {
         </div>
       </div>
 
+      <p className="dim" style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>
+        For details on your logs and where to find them, read{' '}
+        <a
+          href="https://tools.novacancies.space/wiki/pages/eve-logs"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          this wiki page
+        </a>.
+      </p>
+
       <BulkUploader onUploaded={loadLogs} />
 
       {error && <p className="error-text">{error}</p>}

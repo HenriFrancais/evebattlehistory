@@ -54,4 +54,10 @@ describe('fmtCompact', () => {
     expect(fmtCompact(9200)).toBe('9.2k')
     expect(fmtCompact(42)).toBe('42')
   })
+
+  it('drops a trailing .0 (44k, not 44.0k)', () => {
+    expect(fmtCompact(44_000)).toBe('44k')
+    expect(fmtCompact(1_000_000)).toBe('1M')
+    expect(fmtCompact(12_300)).toBe('12.3k')
+  })
 })

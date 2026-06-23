@@ -47,10 +47,10 @@ export function fmtDateTime(x: Date | number | string): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
 }
 
-/** Compact magnitude: 1.5M / 1.5k / integer (preserves sign). */
+/** Compact magnitude: 1.5M / 44k / integer, dropping a trailing .0 (preserves sign). */
 export function fmtCompact(n: number): string {
   const a = Math.abs(n)
-  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (a >= 1e3) return `${(n / 1e3).toFixed(1)}k`
+  if (a >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
+  if (a >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}k`
   return `${Math.round(n)}`
 }

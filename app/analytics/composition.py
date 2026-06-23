@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.fleet import _resolve_char_names
@@ -28,6 +28,7 @@ from app.db.models import (
     InventoryType,
     Killmail,
     KillmailAttacker,
+    LogEvent,
 )
 
 _SIDE_ORDER = ("friendly", "hostile", "unassigned")
@@ -53,6 +54,14 @@ class CompositionPilot:
     user_name: str | None
     killmail_id: int | None
     weapons: list[WeaponEffect]
+    #: Total damage this character dealt across all of the BR's killmails (attacker rows).
+    damage_done: int = 0
+    #: Distinct killmails this character is involved with as an attacker.
+    kill_count: int = 0
+    #: Total HP this character repaired onto others (logi "out" log events across the BR).
+    reps_out: float = 0.0
+    #: True when this character has uploaded gamelogs associated with the BR's fights.
+    has_logs: bool = False
 
 
 @dataclass
@@ -83,6 +92,94 @@ class _Acc:
     hulls: dict[int, tuple[bool, int | None]]  # ship_type_id → (lost?, killmail_id)
     podded: bool            # appeared only in a capsule
     weapon_ids: set[int]    # weapon_type_ids seen across all attacker rows
+
+
+_REP_TYPES = ("rep_armor", "rep_shield")
+
+
+async def _reps_applied_by_char(
+    session: AsyncSession,
+    fight_ids: list[int],
+    settings: Settings,
+    char_names: dict[int, str],
+) -> dict[int, float]:
+    """Total HP each character remote-repaired onto others across *fight_ids*.
+
+    A single physical rep tick can be logged twice — once by the repper
+    (direction="out") and once by the recipient (direction="in", other_name=repper).
+    We use *all* of that information without double counting:
+
+      * every "out" tick is the repper's own authoritative record — counted in full;
+      * an "in" tick is added only when no matching "out" tick exists (i.e. the repper
+        never logged that tick), so reps from non-uploading logi are still captured.
+
+    Ticks are matched on (repper_name, recipient_name, effect_type, ts, amount). EVE
+    stamps both clients with the same server-second timestamp, so the same physical tick
+    lines up across the two logs; a Counter handles ticks that repeat within a second.
+    """
+    reps: dict[int, float] = {}
+    if not fight_ids:
+        return reps
+
+    rows = (
+        await session.execute(
+            select(
+                LogEvent.character_id,
+                LogEvent.direction,
+                LogEvent.other_name,
+                LogEvent.effect_type,
+                LogEvent.amount,
+                LogEvent.ts,
+            ).where(
+                LogEvent.fight_id.in_(fight_ids),
+                LogEvent.effect_type.in_(_REP_TYPES),
+                LogEvent.direction.in_(["out", "in"]),
+                LogEvent.character_id.is_not(None),
+                LogEvent.amount.is_not(None),
+            )
+        )
+    ).all()
+    if not rows:
+        return reps
+
+    # id→name for every log owner (superset of the killmail-derived char_names), plus the
+    # inverse over displayable pilots for attributing recipient-only ("in") reps.
+    id_to_name: dict[int, str] = dict(char_names)
+    missing = {int(r[0]) for r in rows} - id_to_name.keys()
+    if missing:
+        id_to_name.update(await _resolve_char_names(session, settings, missing))
+    name_to_id = {name: cid for cid, name in char_names.items()}
+
+    # Pass 1: count every "out" tick for displayable reppers; index all out ticks.
+    out_ticks: Counter[tuple] = Counter()
+    for cid, direction, other_name, et, amount, ts in rows:
+        if direction != "out":
+            continue
+        cid = int(cid)
+        amt = float(amount)
+        if cid in char_names:
+            reps[cid] = reps.get(cid, 0.0) + amt
+        repper_name = id_to_name.get(cid)
+        if repper_name is not None and other_name is not None:
+            out_ticks[(repper_name, other_name, et, ts, amt)] += 1
+
+    # Pass 2: add "in" ticks with no matching "out" tick (repper never logged them).
+    for cid, direction, other_name, et, amount, ts in rows:
+        if direction != "in" or other_name is None:
+            continue
+        recipient_name = id_to_name.get(int(cid))
+        if recipient_name is None:
+            continue
+        amt = float(amount)
+        key = (other_name, recipient_name, et, ts, amt)
+        if out_ticks.get(key, 0) > 0:
+            out_ticks[key] -= 1  # consume the authoritative duplicate
+            continue
+        repper_id = name_to_id.get(other_name)
+        if repper_id is not None:
+            reps[repper_id] = reps.get(repper_id, 0.0) + amt
+
+    return reps
 
 
 async def fleet_composition(
@@ -180,6 +277,56 @@ async def fleet_composition(
             if inv.type_id in ship_ids:
                 ship_names[inv.type_id] = inv.name
 
+    # Per-character battle stats: damage dealt + count of distinct killmails the
+    # character is an attacker on, across the whole BR.
+    dmg_by_char: dict[int, int] = {}
+    kc_by_char: dict[int, int] = {}
+    for char_id, dmg, kc in (
+        await session.execute(
+            select(
+                KillmailAttacker.character_id,
+                func.sum(KillmailAttacker.damage_done),
+                func.count(func.distinct(KillmailAttacker.killmail_id)),
+            )
+            .where(
+                KillmailAttacker.killmail_id.in_(km_ids),
+                KillmailAttacker.character_id.is_not(None),
+            )
+            .group_by(KillmailAttacker.character_id)
+        )
+    ).all():
+        if char_id is None:
+            continue
+        dmg_by_char[int(char_id)] = int(dmg or 0)
+        kc_by_char[int(char_id)] = int(kc or 0)
+
+    # Reps applied (logistics output), deduped across the two logs that can record the
+    # same tick — see _reps_applied_by_char.
+    fight_ids = list(
+        (
+            await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))
+        ).scalars()
+    )
+    reps_by_char = await _reps_applied_by_char(session, fight_ids, settings, char_names)
+
+    # Characters who uploaded gamelogs associated with this BR (log owners).
+    log_char_ids: set[int] = set()
+    if fight_ids:
+        log_char_ids = {
+            int(cid)
+            for cid in (
+                await session.execute(
+                    select(LogEvent.character_id)
+                    .where(
+                        LogEvent.fight_id.in_(fight_ids),
+                        LogEvent.character_id.is_not(None),
+                    )
+                    .distinct()
+                )
+            ).scalars()
+            if cid is not None
+        }
+
     by_side: dict[str, list[CompositionPilot]] = {}
     for char_id, a in acc.items():
         name = char_names.get(char_id) or f"Char {char_id}"
@@ -205,14 +352,22 @@ async def fleet_composition(
                     CompositionPilot(character_id=char_id, character_name=name, ship_type_id=sid,
                                      ship_name=ship_names.get(sid, "Unknown"), lost=lost,
                                      reship=is_reship, user_name=user, killmail_id=km_id,
-                                     weapons=hull_weapons)
+                                     weapons=hull_weapons,
+                                     damage_done=dmg_by_char.get(char_id, 0),
+                                     kill_count=kc_by_char.get(char_id, 0),
+                                     reps_out=reps_by_char.get(char_id, 0.0),
+                                     has_logs=char_id in log_char_ids)
                 )
         else:
             # Capsule-only / no hull recorded.
             by_side.setdefault(a.side, []).append(
                 CompositionPilot(character_id=char_id, character_name=name, ship_type_id=None,
                                  ship_name="Unknown", lost=a.podded, reship=False,
-                                 user_name=user, killmail_id=None, weapons=weapons)
+                                 user_name=user, killmail_id=None, weapons=weapons,
+                                 damage_done=dmg_by_char.get(char_id, 0),
+                                 kill_count=kc_by_char.get(char_id, 0),
+                                 reps_out=reps_by_char.get(char_id, 0.0),
+                                 has_logs=char_id in log_char_ids)
             )
 
     sides: list[CompositionSide] = []
@@ -220,7 +375,6 @@ async def fleet_composition(
         plist = by_side.get(side_kind)
         if not plist:
             continue
-        plist.sort(key=lambda x: (x.ship_name, x.character_name))
         counts: Counter[int] = Counter()
         # Per ship_type_id: how many pilots flying it carry each module type_id.
         mod_counts: dict[int, Counter[int]] = {}
@@ -235,6 +389,10 @@ async def fleet_composition(
                     continue  # the hull itself is logged as a weapon sometimes — not a module
                 per_hull[w.type_id] += 1
                 mod_effect.setdefault(w.type_id, w)
+        # Order pilots so the most-flown hull leads, then alphabetically by ship and
+        # character within each hull group (hull-less pilots sort last).
+        plist.sort(key=lambda x: (-counts.get(x.ship_type_id or 0, 0), x.ship_name, x.character_name))
+        # Ships: most numerous first, ties broken alphabetically.
         ships = [
             CompositionShip(
                 ship_type_id=sid,
@@ -246,7 +404,9 @@ async def fleet_composition(
                     if wid in mod_effect
                 ],
             )
-            for sid, c in counts.most_common()
+            for sid, c in sorted(
+                counts.items(), key=lambda kv: (-kv[1], ship_names.get(kv[0], "Unknown"))
+            )
         ]
         pilot_count = len({p.character_id for p in plist})
         sides.append(CompositionSide(side_kind=side_kind, pilot_count=pilot_count,

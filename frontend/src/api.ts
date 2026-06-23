@@ -414,6 +414,14 @@ export interface CompositionPilot {
   killmail_id: number | null
   user_name: string | null
   weapons: WeaponEffect[]
+  /** Total damage dealt across all the BR's killmails (attacker rows). */
+  damage_done: number
+  /** Distinct killmails this character is involved with as an attacker. */
+  kill_count: number
+  /** Total HP repaired onto others (logi output, "out" log events). */
+  reps_out: number
+  /** True when this character has uploaded gamelogs for the BR (friendly side only in UI). */
+  has_logs: boolean
 }
 
 export interface CompositionSide {
