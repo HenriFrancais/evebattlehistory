@@ -238,6 +238,10 @@ async def get_composition(
                                             lost=p.lost, reship=p.reship,
                                             killmail_id=p.killmail_id,
                                             user_name=p.user_name,
+                                            damage_done=p.damage_done,
+                                            kill_count=p.kill_count,
+                                            reps_out=p.reps_out,
+                                            has_logs=p.has_logs,
                                             weapons=[WeaponEffectOut(type_id=w.type_id,
                                                                      name=w.name,
                                                                      role=w.role)

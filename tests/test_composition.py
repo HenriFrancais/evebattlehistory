@@ -257,6 +257,159 @@ async def test_composition_pilot_weapons_none_weapon_type_id(db_session_maker) -
 
 
 @pytest.mark.asyncio
+async def test_composition_damage_and_killmail_count(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Pilot rows carry total damage dealt and the count of distinct killmails."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, _ = await _seed(session)  # ATTACKER deals 100 dmg on 1 killmail
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    attacker = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert attacker.damage_done == 100
+    assert attacker.kill_count == 1
+    # The victim dealt no damage and is on no attacker rows.
+    victim = next(p for s in result.sides for p in s.pilots if p.character_id == VICTIM)
+    assert victim.damage_done == 0
+    assert victim.kill_count == 0
+
+
+LOGI = 9003
+
+
+@pytest.mark.asyncio
+async def test_composition_reps_dedup_and_in_only_attribution(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """reps_out dedups a tick logged by both parties, yet still captures reps known
+    only from the recipient's log (repper who never uploaded their own)."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import Character, GamelogFile, KillmailAttacker, LogEvent
+    from tests.test_association import _insert_character
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER "Char9002", VICTIM "Char9001"
+        km_id = (await session.execute(
+            select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+        )).scalar_one()
+        # A pure-logi pilot LOGI on the killmail (so it's a displayable pilot) who never
+        # uploaded their own gamelog — their reps are known only via VICTIM's "in" log.
+        await _insert_character(session, LOGI)
+        session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=2, character_id=LOGI,
+                                     ship_type_id=ABSOLUTION, damage_done=0, final_blow=False))
+        gf = GamelogFile(
+            uploaded_by_user="t", resolved_via="manual", stored_path="/x",
+            sha256="sha-reps-test", mime="text/plain", size=1, parse_status="parsed",
+            uploaded_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(gf)
+        await session.flush()
+        t = FIGHT_START
+        t2 = FIGHT_START + dt.timedelta(seconds=5)
+        # ATTACKER reps VICTIM: own "out" log (authoritative) ...
+        session.add(LogEvent(file_id=gf.file_id, character_id=ATTACKER, ts=t,
+                             direction="out", effect_type="rep_armor", amount=500.0,
+                             other_name="Char9001", fight_id=fight_id))
+        session.add(LogEvent(file_id=gf.file_id, character_id=ATTACKER, ts=t,
+                             direction="out", effect_type="rep_shield", amount=300.0,
+                             other_name="Char9001", fight_id=fight_id))
+        # ... and VICTIM's mirror "in" row for the same 500 armor tick — a duplicate.
+        session.add(LogEvent(file_id=gf.file_id, character_id=VICTIM, ts=t,
+                             direction="in", effect_type="rep_armor", amount=500.0,
+                             other_name="Char9002", fight_id=fight_id))
+        # LOGI reps VICTIM 700; only VICTIM logged it (LOGI uploaded nothing) — must count.
+        session.add(LogEvent(file_id=gf.file_id, character_id=VICTIM, ts=t2,
+                             direction="in", effect_type="rep_armor", amount=700.0,
+                             other_name="Char9003", fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.character_id: p for s in result.sides for p in s.pilots}
+    assert pilots[ATTACKER].reps_out == 800.0  # 500 armor + 300 shield; mirror not double-counted
+    assert pilots[VICTIM].reps_out == 0.0      # only received reps, applied none
+    assert pilots[LOGI].reps_out == 700.0      # captured from the recipient's log alone
+
+
+@pytest.mark.asyncio
+async def test_composition_orders_by_ship_count_then_alpha(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Ships and pilots lead with the most-flown hull; ties break alphabetically."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import InventoryType, KillmailAttacker
+    from tests.test_association import _insert_character
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER 9002 flies Absolution (1 of it)
+        km_id = (await session.execute(
+            select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+        )).scalar_one()
+        session.add(InventoryType(type_id=GUARDIAN, name="Guardian"))
+        # Three Guardian pilots, deliberately added out of alphabetical order.
+        for idx, cid in enumerate([9012, 9010, 9011], start=10):
+            await _insert_character(session, cid)
+            session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=idx, character_id=cid,
+                                         ship_type_id=GUARDIAN, damage_done=1, final_blow=False))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    side = next(s for s in result.sides if any(p.ship_name == "Guardian" for p in s.pilots))
+    # Ships: Guardian (3) leads Absolution (1).
+    ship_order = [sh.ship_name for sh in side.ships]
+    assert ship_order.index("Guardian") < ship_order.index("Absolution")
+    # Pilots: most-numerous hull first; Guardians alphabetical by character.
+    assert side.pilots[0].ship_name == "Guardian"
+    guardian_names = [p.character_name for p in side.pilots if p.ship_name == "Guardian"]
+    assert guardian_names == ["Char9010", "Char9011", "Char9012"]
+
+
+@pytest.mark.asyncio
+async def test_composition_has_logs_flag(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """has_logs is True for characters with gamelogs associated to the BR's fights."""
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+    from app.db.models import GamelogFile, LogEvent
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)
+        gf = GamelogFile(
+            uploaded_by_user="t", resolved_via="manual", stored_path="/x",
+            sha256="sha-has-logs", mime="text/plain", size=1, parse_status="parsed",
+            uploaded_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(gf)
+        await session.flush()
+        session.add(LogEvent(file_id=gf.file_id, character_id=ATTACKER, ts=FIGHT_START,
+                             direction="out", effect_type="damage", amount=1.0, fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.character_id: p for s in result.sides for p in s.pilots}
+    assert pilots[ATTACKER].has_logs is True
+    assert pilots[VICTIM].has_logs is False
+
+
+@pytest.mark.asyncio
 async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from fastapi.testclient import TestClient
 
@@ -288,6 +441,10 @@ async def test_api_composition_contract(tmp_path, monkeypatch) -> None:  # type:
     assert member.json()["by_user_available"] is False
     assert all(p["user_name"] is None for s in member.json()["sides"] for p in s["pilots"])
     assert all("weapons" in p for s in member.json()["sides"] for p in s["pilots"])
+    assert all(
+        {"damage_done", "kill_count", "reps_out", "has_logs"} <= p.keys()
+        for s in member.json()["sides"] for p in s["pilots"]
+    )
     assert creator.status_code == 200
 
     reset_engine_for_tests()

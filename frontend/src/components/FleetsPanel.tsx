@@ -2,11 +2,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CompositionPilot, CompositionResponse, CompositionSide } from '../api'
 import { api } from '../api'
+import { fmtCompact } from '../format'
 
 type Mode = 'composition' | 'character' | 'user'
 
 function shipIcon(id: number | null, size = 30) {
-  if (id == null) return <span className="comp-ship-icon comp-ship-none" />
+  if (id == null) return <span className="comp-ship-icon comp-ship-none" style={{ width: size, height: size }} />
   return (
     <img className="comp-ship-icon" width={size} height={size}
       src={`https://images.evetech.net/types/${id}/icon?size=32`} alt="" />
@@ -69,13 +70,20 @@ function CompositionView({ side }: { side: CompositionSide }) {
   )
 }
 
-function PilotRow({ p, onSelectKill, showWeapons }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean }) {
+function PilotRow({ p, onSelectKill, showWeapons, showLogs }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean }) {
   const weapons = p.weapons ?? []
   return (
     <div>
-      <div className="comp-row">
-        {shipIcon(p.ship_type_id, 18)}
+      <div className="comp-prow">
+        {shipIcon(p.ship_type_id, 34)}
         <span className="comp-name" title={p.character_name}>
+          {showLogs && (
+            <span
+              className={`comp-log-dot ${p.has_logs ? 'comp-log-yes' : 'comp-log-no'}`}
+              aria-hidden
+              title={p.has_logs ? 'logs uploaded' : 'no logs uploaded'}
+            >●</span>
+          )}
           {p.character_name}
           {p.lost && p.killmail_id != null ? (
             <>
@@ -97,8 +105,25 @@ function PilotRow({ p, onSelectKill, showWeapons }: { p: CompositionPilot; onSel
             <span className="comp-lost" title="lost ship"> ✗</span>
           ) : null}
         </span>
-        <span className="dim comp-ship-sub">{p.ship_name}</span>
-        {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
+        {p.kill_count > 0 ? (
+          <span className="comp-stat comp-stat-dmg"
+            title={`${p.damage_done.toLocaleString()} damage dealt across ${p.kill_count} killmail${p.kill_count === 1 ? '' : 's'}`}>
+            <span className="comp-stat-icon" aria-hidden>⚔</span>
+            {fmtCompact(p.damage_done)}
+            <span className="comp-stat-count"> [{p.kill_count}]</span>
+          </span>
+        ) : <span className="comp-stat comp-stat-dmg" />}
+        <span className="comp-line2">
+          <span className="dim comp-ship-sub">{p.ship_name}</span>
+          {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
+        </span>
+        {p.reps_out > 0 ? (
+          <span className="comp-stat comp-stat-rep"
+            title={`${Math.round(p.reps_out).toLocaleString()} HP remote-repaired onto others`}>
+            <span className="comp-stat-icon" aria-hidden>✚</span>
+            {fmtCompact(p.reps_out)}
+          </span>
+        ) : <span className="comp-stat comp-stat-rep" />}
       </div>
       {showWeapons && weapons.length > 0 && (
         <div className="comp-pilot-modules" data-testid="pilot-modules">
@@ -115,6 +140,7 @@ function PilotRow({ p, onSelectKill, showWeapons }: { p: CompositionPilot; onSel
 }
 
 function CharacterView({ side, onSelectKill, showWeapons }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean }) {
+  const showLogs = side.side_kind === 'friendly'
   return (
     <div>
       <SideHeader side={side} />
@@ -124,6 +150,7 @@ function CharacterView({ side, onSelectKill, showWeapons }: { side: CompositionS
           p={p}
           onSelectKill={onSelectKill}
           showWeapons={showWeapons}
+          showLogs={showLogs}
         />
       ))}
     </div>
@@ -140,6 +167,7 @@ function UserView({ side, onSelectKill, showWeapons }: { side: CompositionSide; 
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [side.pilots])
+  const showLogs = side.side_kind === 'friendly'
   return (
     <div>
       <SideHeader side={side} />
@@ -152,6 +180,7 @@ function UserView({ side, onSelectKill, showWeapons }: { side: CompositionSide; 
               p={p}
               onSelectKill={onSelectKill}
               showWeapons={showWeapons}
+              showLogs={showLogs}
             />
           ))}
         </div>

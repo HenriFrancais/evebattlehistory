@@ -439,6 +439,10 @@ class CompositionPilotOut(BaseModel):
     killmail_id: int | None = None
     user_name: str | None = None
     weapons: list[WeaponEffectOut] = []
+    damage_done: int = 0
+    kill_count: int = 0
+    reps_out: float = 0.0
+    has_logs: bool = False
 
 
 class CompositionSideOut(BaseModel):

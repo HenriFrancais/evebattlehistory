@@ -61,9 +61,9 @@ describe('renderHoverSummary', () => {
 
   it('bucket 0 — amounts formatted with fmtCompact', () => {
     const html = renderHoverSummary(view, leaders, 0)
-    expect(html).toContain('12.0k')  // 12000 → "12.0k"
-    expect(html).toContain('9.0k')   // 9000  → "9.0k"
-    expect(html).toContain('8.5k')   // 8500  → "8.5k"
+    expect(html).toContain('12k')  // 12000 → "12k" (trailing .0 dropped)
+    expect(html).toContain('9k')   // 9000  → "9k"
+    expect(html).toContain('8.5k') // 8500  → "8.5k"
   })
 
   it('bucket 0 — ship names appear in output', () => {

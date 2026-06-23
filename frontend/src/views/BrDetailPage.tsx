@@ -442,6 +442,7 @@ export function BrDetailPage() {
   const [sidesVersion, setSidesVersion] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
   const [selectedKillmailId, setSelectedKillmailId] = useState<number | null>(null)
+  const [graphFullscreen, setGraphFullscreen] = useState(false)
 
   const load = useCallback(() => {
     if (!id) return
@@ -459,6 +460,14 @@ export function BrDetailPage() {
   }, [id])
 
   useEffect(() => { return load() }, [load])
+
+  // Close the fullscreen graph overlay on Escape.
+  useEffect(() => {
+    if (!graphFullscreen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setGraphFullscreen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [graphFullscreen])
 
   useEffect(() => {
     let cancelled = false
@@ -515,6 +524,9 @@ export function BrDetailPage() {
   function handleRefreshReady() {
     setRefreshStatus(null)
     load()
+    // Force the data panels (composition, fleet graph, coverage) to re-fetch so newly
+    // ingested sources show without a manual page reload.
+    setSidesVersion((v) => v + 1)
   }
 
   if (error) return <div className="page"><p className="error-text">{error}</p></div>
@@ -544,29 +556,34 @@ export function BrDetailPage() {
             <h1 style={{ margin: '0.25rem 0 0' }}>{displayTitle}</h1>
           )}
         </div>
-        {canCreate && (
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <button
-              data-testid="refresh-btn"
-              className="btn"
-              disabled={refreshing}
-              onClick={() => { void handleRefresh() }}
-              style={{ fontSize: '0.85rem' }}
-            >
-              {refreshing ? 'Refreshing…' : '↻ Refresh'}
-            </button>
-            <button
-              data-testid="delete-br-btn"
-              className="btn"
-              disabled={deleting}
-              onClick={() => { void handleDelete() }}
-              title="Delete this battle report (FC / High Command)"
-              style={{ fontSize: '0.85rem', color: 'var(--bad)', borderColor: 'var(--bad)' }}
-            >
-              {deleting ? 'Deleting…' : '🗑 Delete'}
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <Link to="/logs" className="btn" data-testid="logs-btn" style={{ fontSize: '0.85rem' }}>
+            Logs
+          </Link>
+          {canCreate && (
+            <>
+              <button
+                data-testid="refresh-btn"
+                className="btn"
+                disabled={refreshing}
+                onClick={() => { void handleRefresh() }}
+                style={{ fontSize: '0.85rem' }}
+              >
+                {refreshing ? 'Refreshing…' : '↻ Refresh'}
+              </button>
+              <button
+                data-testid="delete-br-btn"
+                className="btn"
+                disabled={deleting}
+                onClick={() => { void handleDelete() }}
+                title="Delete this battle report (FC / High Command)"
+                style={{ fontSize: '0.85rem', color: 'var(--bad)', borderColor: 'var(--bad)' }}
+              >
+                {deleting ? 'Deleting…' : '🗑 Delete'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="panel" data-testid="summary-section">
@@ -612,7 +629,7 @@ export function BrDetailPage() {
             <div>
               <span className="badge badge-source">{br.source}</span>
               {br.source_url && (
-                <a href={br.source_url} target="_top" rel="noopener noreferrer" style={{ marginLeft: '0.5rem' }}>View source ↗</a>
+                <a href={br.source_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '0.5rem' }}>View source ↗</a>
               )}
             </div>
           </div>
@@ -643,16 +660,31 @@ export function BrDetailPage() {
         {id && <SidesEditor brId={id} onChange={() => setSidesVersion((v) => v + 1)} />}
       </section>
 
+      {/* Fleets spans the full page width; the snapshot/graph grid begins below it. */}
+      <section className="panel" data-testid="fleets-section">
+        {id && <FleetsPanel brId={id} reloadKey={sidesVersion} onSelectKill={setSelectedKillmailId} />}
+      </section>
+
       <div className="br-detail-grid" data-testid="br-detail-grid">
         <div className="br-col-main" data-testid="br-col-main">
-          <section className="panel">
-            {id && <FleetsPanel brId={id} reloadKey={sidesVersion} onSelectKill={setSelectedKillmailId} />}
-          </section>
           <section data-testid="fleet-graph-section" className="panel">
-            <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Graph</h2>
-            {id && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 0.75rem' }}>
+              <h2 style={{ margin: 0 }}>Fleet Graph</h2>
+              <button
+                type="button"
+                className="btn-mini"
+                data-testid="expand-graph-btn"
+                aria-label="Expand graph to fullscreen"
+                title="Expand to fullscreen"
+                onClick={() => setGraphFullscreen(true)}
+              >
+                ⤢ Expand
+              </button>
+            </div>
+            {id && !graphFullscreen && (
               <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} />
             )}
+            {graphFullscreen && <p className="dim" style={{ fontSize: '0.85rem' }}>Graph open in fullscreen…</p>}
           </section>
         </div>
         <div className="br-col-side" data-testid="br-col-side">
@@ -689,6 +721,39 @@ export function BrDetailPage() {
           </div>
         )}
       </section>
+
+      {graphFullscreen && id && (
+        <div
+          className="graph-overlay"
+          data-testid="graph-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Fleet Graph fullscreen"
+        >
+          <div className="graph-overlay-head">
+            <h2 style={{ margin: 0 }}>Fleet Graph</h2>
+            <button
+              type="button"
+              className="btn"
+              data-testid="close-graph-btn"
+              aria-label="Close fullscreen graph"
+              onClick={() => setGraphFullscreen(false)}
+              style={{ fontSize: '0.85rem' }}
+            >
+              ✕ Close
+            </button>
+          </div>
+          <div className="graph-overlay-body">
+            <section className="panel graph-overlay-main">
+              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} height={360} />
+            </section>
+            <section className="panel graph-overlay-side">
+              <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
+              <SnapshotPanel brId={id} range={range} onClearRange={() => setRange(null)} />
+            </section>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

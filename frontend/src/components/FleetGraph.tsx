@@ -855,9 +855,11 @@ interface Props {
   /** Selected time range (epoch seconds), owned by the parent; null = none. */
   selectedRange: { from: number; to: number } | null
   onSelectRange: (r: { from: number; to: number } | null) => void
+  /** Per-panel height in px (taller in the fullscreen overlay). */
+  height?: number
 }
 
-export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Props) {
+export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange, height = 260 }: Props) {
   const [fleet, setFleet] = useState<FleetTimeline | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -902,6 +904,6 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange }: Pr
     )
 
   return (
-    <FleetGraphCore fleet={fleet} selectedRange={selectedRange} onSelectRange={onSelectRange} />
+    <FleetGraphCore fleet={fleet} selectedRange={selectedRange} onSelectRange={onSelectRange} height={height} />
   )
 }

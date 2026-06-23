@@ -258,6 +258,24 @@ describe('BrDetailPage', () => {
     expect(screen.getByTestId('moment-detail-empty')).toBeInTheDocument()
   })
 
+  it('expands the fleet graph into a fullscreen overlay and closes it', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+    const user = userEvent.setup()
+    renderBrDetailPage()
+    await waitFor(() => expect(screen.getByTestId('expand-graph-btn')).toBeInTheDocument())
+
+    expect(screen.queryByTestId('graph-overlay')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('expand-graph-btn'))
+    expect(screen.getByTestId('graph-overlay')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('close-graph-btn'))
+    expect(screen.queryByTestId('graph-overlay')).not.toBeInTheDocument()
+  })
+
   it('shows Summary then Sides, no Engagements/filter, Snapshot in the rail', async () => {
     vi.mocked(api.getBr).mockResolvedValue(mockBr)
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
