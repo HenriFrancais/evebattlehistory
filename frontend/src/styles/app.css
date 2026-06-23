@@ -461,36 +461,36 @@ a:hover { color: var(--link-hover); }
 .comp-side-h { display: flex; align-items: center; justify-content: space-between; padding-bottom: 0.35rem; margin-bottom: 0.45rem; border-bottom: 1px solid var(--border); }
 .comp-side-h.friendly { border-color: rgba(76,175,80,0.5); }
 .comp-side-h.hostile { border-color: rgba(239,83,80,0.5); }
-.comp-side-name { font-weight: 700; text-transform: capitalize; }
+.comp-side-name { font-weight: 700; text-transform: capitalize; font-size: 1.15rem; }
 .comp-side-name.friendly { color: #7fd18a; }
 .comp-side-name.hostile { color: #f3938f; }
-.comp-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.16rem 0; font-size: 0.82rem; }
+.comp-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.16rem 0; font-size: 1rem; }
 .comp-ship-icon { border-radius: 4px; background: var(--panel-2); flex: none; }
 .comp-ship-none { width: 18px; height: 18px; display: inline-block; }
-.comp-count { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.4rem; }
+.comp-count { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2.6rem; font-size: 1.05rem; }
 .comp-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.comp-ship-sub { font-size: 0.72rem; flex: none; }
+.comp-ship-sub { font-size: 0.84rem; flex: none; }
 /* Top-5 module icons per hull, in fixed columns that align across all rows. */
-.comp-mod-cols { display: grid; grid-template-columns: repeat(5, 18px); gap: 2px; flex: none; margin-left: auto; }
-.comp-mod-cols .comp-item-icon { width: 18px; height: 18px; border-radius: 2px; background: var(--panel-2); }
+.comp-mod-cols { display: grid; grid-template-columns: repeat(5, 34px); gap: 3px; flex: none; margin-left: auto; }
+.comp-mod-cols .comp-item-icon { width: 34px; height: 34px; border-radius: 3px; background: var(--panel-2); }
 .comp-mod-empty { visibility: hidden; }
 .comp-lost { color: var(--bad); }
-.comp-reship { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
+.comp-reship { flex: none; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--border); border-radius: 3px; padding: 0 0.2rem; }
 /* Per-pilot 2x2 row: ship icon spans both lines; character + damage on line 1,
    ship + reps on line 2; the two stat cells sit right-aligned in column 3. */
-.comp-prow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 0.5rem; align-items: center; padding: 0.18rem 0; font-size: 0.82rem; }
+.comp-prow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 0.5rem; align-items: center; padding: 0.2rem 0; font-size: 0.95rem; }
 .comp-prow > .comp-ship-icon { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
 .comp-prow > .comp-name { grid-column: 2; grid-row: 1; align-self: end; }
 .comp-prow > .comp-stat-dmg { grid-column: 3; grid-row: 1; align-self: end; }
 .comp-prow > .comp-line2 { grid-column: 2; grid-row: 2; align-self: start; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
 .comp-prow > .comp-stat-rep { grid-column: 3; grid-row: 2; align-self: start; }
-.comp-stat { justify-self: end; text-align: right; white-space: nowrap; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
-.comp-stat-icon { margin-right: 0.2rem; opacity: 0.9; }
+.comp-stat { justify-self: end; text-align: right; white-space: nowrap; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.comp-stat-icon { margin-right: 0.25rem; font-size: 1.15rem; opacity: 0.9; }
 .comp-stat-count { color: var(--text-dim, #9aa3ad); }
 .comp-stat-dmg .comp-stat-icon { color: #e0a96d; }
 .comp-stat-rep { color: #7fd18a; }
 /* Logs-provided indicator (friendly side only): green = uploaded, red = missing. */
-.comp-log-dot { font-size: 0.6rem; margin-right: 0.35rem; vertical-align: middle; }
+.comp-log-dot { font-size: 0.72rem; margin-right: 0.35rem; vertical-align: middle; }
 .comp-log-yes { color: #4caf50; }
 .comp-log-no { color: #ef5350; }
 /* Per-pilot nested module list: items indented under the character, smaller font. */
