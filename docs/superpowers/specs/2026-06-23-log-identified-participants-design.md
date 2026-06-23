@@ -1,8 +1,9 @@
 # Log-identified off-BR participants + FC/HC logs-list sort
 
 Date: 2026-06-23
-Status: Approved design (pending spec review). Revised: dropped inference for FC/HC
-allocation in v1; added per-character ship allocation.
+Status: Implemented (2026-06-23). Revised during brainstorming: dropped inference for
+FC/HC allocation in v1; added per-character ship allocation. ESI resolution runs at
+log-upload (write) time to honor the no-ESI-on-read constraint.
 
 ## Problem
 
