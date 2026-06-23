@@ -318,18 +318,18 @@ class TestComputeOutcome:
     @pytest.mark.parametrize(
         "our_destroyed, our_lost, expected_result",
         [
-            # Win boundary: eff = 0.60 exactly → win
-            (60.0, 40.0, "win"),
+            # Win boundary: eff = 0.52 exactly → win
+            (52.0, 48.0, "win"),
             # Win above boundary
             (70.0, 30.0, "win"),
-            # Tie: eff = 0.40 exactly → tie
-            (40.0, 60.0, "tie"),
-            # Tie: eff = 0.5999 → tie (just below win boundary)
-            (59.99, 40.01, "tie"),
+            # Tie: eff = 0.48 exactly → tie
+            (48.0, 52.0, "tie"),
+            # Tie: eff = 0.5199 → tie (just below win boundary)
+            (51.99, 48.01, "tie"),
             # Tie: middle of range
             (50.0, 50.0, "tie"),
-            # Loss: eff < 0.40
-            (30.0, 70.0, "loss"),
+            # Loss: eff just below tie band (0.47 < 0.48)
+            (47.0, 53.0, "loss"),
             # Loss: eff = 0.0 (nothing destroyed)
             (0.0, 100.0, "loss"),
         ],
