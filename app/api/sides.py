@@ -10,7 +10,7 @@ from app.analytics.sides_config import br_entities, load_overrides, recompute_br
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import BrSidesOut, SideEntityOut, SideOverrideIn
-from app.config import get_app_config
+from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrSideOverride
 
 router = APIRouter()
@@ -36,6 +36,7 @@ async def _build_out(br_id: str, session: AsyncSession, can_edit: bool) -> BrSid
         baseline_alliances=set(cfg.our_alliance_ids),
         baseline_corps=set(cfg.our_corp_ids),
         overrides=overrides,
+        settings=get_settings(),
     )
     return BrSidesOut(
         entities=[SideEntityOut(**e) for e in entities],
