@@ -145,3 +145,53 @@ async def test_enrich_batches_multiple_brs_independently(db_session_maker):
     assert extras[br2].opponent_name == "Small Enemy"
     assert extras[br2].systems == ["J-Tl2"]
     assert extras[br2].system_ids == [31077778]
+
+
+@pytest.mark.asyncio
+async def test_enrich_counts_log_participants_and_char_side_override(db_session_maker):  # type: ignore[no-untyped-def]
+    """Overview pilot counts include off-BR log participants, and per-character
+    side overrides move them between sides."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import BrCharSide, BrFight, Character, GamelogFile, LogEvent
+    from app.fights.timeline_rows import enrich_br_rows
+
+    now = dt.datetime(2026, 6, 1, tzinfo=dt.UTC)
+    async with db_session_maker() as session:
+        br_id = await _seed_br(session)  # friendly=2 (10,11), enemy=3 (20,21,30)
+        fid = (await session.execute(
+            select(BrFight.fight_id).where(BrFight.br_id == br_id)
+        )).scalar_one()
+        # Off-BR log-only friendly (our alliance) + one whose stored alliance is enemy.
+        session.add(Character(character_id=40, name="LogFriendly", alliance_id=OUR_ALLI, last_seen_at=now))
+        session.add(Character(character_id=41, name="LogStale", alliance_id=ENEMY_BIG, last_seen_at=now))
+        gf = GamelogFile(uploaded_by_user="u", claimed_character_id=None, listener_name=None,
+                         character_name=None, original_filename="x", resolved_via="unresolved",
+                         session_started_at=None, log_start_at=None, log_end_at=None,
+                         stored_path="/tmp/x", sha256="tl" + "0" * 62, mime="text/plain",
+                         size=1, parse_status="parsed", event_count=2, uploaded_at=now)
+        session.add(gf)
+        await session.flush()
+        for c in (40, 41):
+            session.add(LogEvent(file_id=gf.file_id, character_id=c, ts=now,
+                                 effect_type="rep_armor", direction="out", fight_id=fid))
+        await session.commit()
+
+    async def counts():  # type: ignore[no-untyped-def]
+        async with db_session_maker() as session:
+            extras = await enrich_br_rows(
+                session, get_settings(), [br_id], user_name="nobody",
+                baseline_alliances={OUR_ALLI}, baseline_corps=set(),
+            )
+        return extras[br_id].friendly_pilots, extras[br_id].enemy_pilots
+
+    # Log friendly (40) joins friendly; stale-enemy (41) lands in enemy by affiliation.
+    assert await counts() == (3, 4)
+
+    # FC overrides 41 to friendly per-character → it moves sides.
+    async with db_session_maker() as session:
+        session.add(BrCharSide(br_id=br_id, character_id=41, side="friendly",
+                               set_by_user="fc", set_at=now))
+        await session.commit()
+    assert await counts() == (4, 3)
