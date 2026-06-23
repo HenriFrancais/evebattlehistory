@@ -81,8 +81,10 @@ function CompositionView({ side }: { side: CompositionSide }) {
   )
 }
 
-function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onChanged }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
+function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onChanged, sideKind }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void; sideKind: string }) {
   const weapons = p.weapons ?? []
+  const setSide = (side: 'friendly' | 'hostile') =>
+    api.setParticipantSide(brId, p.character_id, sideKind === side ? null : side).then(onChanged)
   return (
     <div className={p.from_logs ? 'comp-from-logs' : undefined}>
       <div className="comp-prow">
@@ -135,6 +137,14 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onCha
             <ShipPicker brId={brId} characterId={p.character_id}
               currentShipTypeId={p.ship_type_id} onChanged={onChanged} />
           )}
+          {p.from_logs && canEdit && (
+            <span className="comp-side-set" data-testid={`side-set-${p.character_id}`} title="set side for this character">
+              <button className={`btn-mini side-f${sideKind === 'friendly' ? ' on' : ''}`}
+                aria-pressed={sideKind === 'friendly'} onClick={() => setSide('friendly')}>F</button>
+              <button className={`btn-mini side-h${sideKind === 'hostile' ? ' on' : ''}`}
+                aria-pressed={sideKind === 'hostile'} onClick={() => setSide('hostile')}>H</button>
+            </span>
+          )}
         </span>
         {p.reps_out > 0 ? (
           <span className="comp-stat comp-stat-rep"
@@ -173,6 +183,7 @@ function CharacterView({ side, onSelectKill, showWeapons, brId, canEdit, onChang
           brId={brId}
           canEdit={canEdit}
           onChanged={onChanged}
+          sideKind={side.side_kind}
         />
       ))}
     </div>
@@ -206,6 +217,7 @@ function UserView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }:
               brId={brId}
               canEdit={canEdit}
               onChanged={onChanged}
+              sideKind={side.side_kind}
             />
           ))}
         </div>

@@ -24,6 +24,7 @@ from app.analytics.weapon_roles import WeaponTypeInfo, weapon_role
 from app.config import Settings
 from app.db.models import (
     BrCharShip,
+    BrCharSide,
     BrFight,
     FightKill,
     InventoryType,
@@ -292,6 +293,22 @@ async def fleet_composition(
         ship = ship_overrides.get(oc.character_id) or oc.detected_ship_type_id
         if ship is not None:
             a.hulls[ship] = (False, None)
+
+    # Per-character side override (FC/HC): wins over entity classification — needed
+    # when stored corp/alliance is stale/wrong or the corp is a shared NPC default.
+    char_side_overrides: dict[int, str] = {
+        int(cid): side
+        for cid, side in (
+            await session.execute(
+                select(BrCharSide.character_id, BrCharSide.side).where(
+                    BrCharSide.br_id == br_id
+                )
+            )
+        ).all()
+    }
+    for cid, side in char_side_overrides.items():
+        if cid in acc:
+            acc[cid].side = side
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}

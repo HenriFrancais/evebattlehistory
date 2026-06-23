@@ -80,3 +80,55 @@ async def test_participant_ship_override_and_search(tmp_path, monkeypatch) -> No
         assert gone is None
 
     reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_participant_side_override(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+    from app.db.models import BrCharSide
+    from app.main import create_app
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_SOURCE", "demo")
+    monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    get_settings.cache_clear(); get_app_config.cache_clear(); reset_engine_for_tests()
+    settings = get_settings()
+    await init_models(settings)
+    sm = get_sessionmaker(settings)
+    async with sm() as session:
+        br_id = await _seed(session)
+        await session.commit()
+
+    app = create_app()
+    with TestClient(app) as client:
+        # Member cannot set a side.
+        rm = client.put(f"/api/brs/{br_id}/participants/7/side", headers=MEMBER_HEADERS,
+                        json={"side": "friendly"})
+        assert rm.status_code == 403
+        # Invalid side rejected.
+        rb = client.put(f"/api/brs/{br_id}/participants/7/side", headers=CREATOR_HEADERS,
+                        json={"side": "banana"})
+        assert rb.status_code == 400
+        # FC sets it.
+        rp = client.put(f"/api/brs/{br_id}/participants/7/side", headers=CREATOR_HEADERS,
+                        json={"side": "hostile"})
+        assert rp.status_code == 200
+
+    async with sm() as session:
+        row = (await session.execute(
+            select(BrCharSide).where(BrCharSide.br_id == br_id, BrCharSide.character_id == 7)
+        )).scalar_one()
+        assert row.side == "hostile"
+
+    with TestClient(app) as client:
+        rc = client.put(f"/api/brs/{br_id}/participants/7/side", headers=CREATOR_HEADERS,
+                        json={"side": None})
+        assert rc.status_code == 200
+    async with sm() as session:
+        gone = (await session.execute(
+            select(BrCharSide).where(BrCharSide.br_id == br_id, BrCharSide.character_id == 7)
+        )).scalar_one_or_none()
+        assert gone is None
+
+    reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()

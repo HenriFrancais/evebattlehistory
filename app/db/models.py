@@ -394,6 +394,28 @@ class BrCharShip(Base):
     set_at: Mapped[dt.datetime] = mapped_column(DateTime)
 
 
+class BrCharSide(Base):
+    """FC/HC manual side assignment for a single character within one battle report.
+
+    Entity-level overrides (BrSideOverride) can't always place a pilot: stored
+    corp/alliance may be stale or wrong, and NPC/default corps are shared by both
+    sides. A per-character override wins over entity classification, letting FC/HC
+    place a specific (often log-derived) character on the correct side.
+    """
+
+    __tablename__ = "br_char_side"
+
+    br_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("battle_report.br_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+        primary_key=True,
+    )
+    character_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    side: Mapped[str] = mapped_column(String(16))  # 'friendly' | 'hostile'
+    set_by_user: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    set_at: Mapped[dt.datetime] = mapped_column(DateTime)
+
+
 # ---------------------------------------------------------------------------
 # Gamelog tables (Task 2.2)
 # ---------------------------------------------------------------------------
@@ -445,6 +467,11 @@ class GamelogFile(Base):
 #   CREATE TABLE br_char_ship (
 #     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
 #     character_id BIGINT NOT NULL, ship_type_id BIGINT NOT NULL,
+#     set_by_user VARCHAR(128), set_at DATETIME NOT NULL,
+#     PRIMARY KEY (br_id, character_id));
+#   CREATE TABLE br_char_side (
+#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
+#     character_id BIGINT NOT NULL, side VARCHAR(16) NOT NULL,
 #     set_by_user VARCHAR(128), set_at DATETIME NOT NULL,
 #     PRIMARY KEY (br_id, character_id));
 class LogEvent(Base):
