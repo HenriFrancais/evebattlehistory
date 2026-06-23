@@ -2,7 +2,7 @@
 #
 # Deploy / update NV Battle Reports on the VM.
 #
-#   ./deploy/deploy.sh [--reparse] [--skip-backfill] [--no-pull]
+#   ./deploy/deploy.sh [--reparse] [--recompute] [--skip-backfill] [--no-pull]
 #
 # Default: pull latest code, rebuild the image (incl. the SPA) and restart the
 # container, wait until it's healthy, then run the off-BR counterparty backfill.
@@ -12,11 +12,16 @@
 #   --reparse         also re-parse all stored gamelogs first (one-time, after the
 #                     custom-ship-name fix; cleans stored names so the backfill
 #                     matches more counterparties). Slow on large datasets.
+#   --recompute       re-derive every BR's stored win/tie/loss + ISK rollups from
+#                     current side allocation (one-time, after a win/tie threshold
+#                     change). Idempotent.
 #   --skip-backfill   don't run the ESI counterparty backfill (code-only deploy).
 #   --no-pull         don't run `git pull` (deploy whatever is checked out).
 #
 # First deploy of the log-identified-participants feature:
 #   ./deploy/deploy.sh --reparse
+# After a win/tie threshold change:
+#   ./deploy/deploy.sh --recompute
 # Routine code deploy afterwards:
 #   ./deploy/deploy.sh
 #
@@ -28,13 +33,15 @@ SERVICE=nvbr
 
 PULL=1
 REPARSE=0
+RECOMPUTE=0
 BACKFILL=1
 for arg in "$@"; do
   case "$arg" in
     --no-pull) PULL=0 ;;
     --reparse) REPARSE=1 ;;
+    --recompute) RECOMPUTE=1 ;;
     --skip-backfill) BACKFILL=0 ;;
-    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -78,6 +85,11 @@ fi
 if [ "$REPARSE" = 1 ]; then
   echo "==> re-parsing gamelogs (cleans stored names)"
   $DC exec -T "$SERVICE" python -m app.logs.reparse
+fi
+
+if [ "$RECOMPUTE" = 1 ]; then
+  echo "==> recomputing BR outcomes (win/tie/loss + ISK rollups)"
+  $DC exec -T "$SERVICE" python -m app.analytics.recompute
 fi
 
 if [ "$BACKFILL" = 1 ]; then

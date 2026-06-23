@@ -1,9 +1,9 @@
 """ISK-based outcome computation and BR-level win/tie/loss classification.
 
 Win metric for the BR: ISK efficiency = our_destroyed / (our_destroyed + our_lost)
-  win  if efficiency >= 0.60
-  tie  if 0.40 <= efficiency < 0.60
-  loss if efficiency < 0.40
+  win  if efficiency >= 0.52
+  tie  if 0.48 <= efficiency < 0.52
+  loss if efficiency < 0.48
   None if denominator is 0
 """
 
@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-WIN_THRESHOLD = 0.60
-TIE_THRESHOLD = 0.40  # lower boundary of tie band
+WIN_THRESHOLD = 0.52
+TIE_THRESHOLD = 0.48  # lower boundary of tie band
 
 
 class _AttackerProto(Protocol):
@@ -152,9 +152,9 @@ def classify_br_result(our_destroyed: float, our_lost: float) -> str | None:
     """Classify a BR as win/tie/loss based on ISK efficiency.
 
     ISK efficiency = our_destroyed / (our_destroyed + our_lost)
-    win  if efficiency >= 0.60
-    tie  if 0.40 <= efficiency < 0.60
-    loss if efficiency < 0.40
+    win  if efficiency >= 0.52
+    tie  if 0.48 <= efficiency < 0.52
+    loss if efficiency < 0.48
     None if denominator is 0
     """
     denom = our_destroyed + our_lost
