@@ -126,6 +126,59 @@ class EsiClient:
         except Exception as exc:
             log.warning("esi.names_failed", error=str(exc))
 
+    async def resolve_ids(self, names: list[str]) -> dict[str, int]:
+        """Resolve character names → character_ids via POST /universe/ids/.
+
+        Best-effort: returns only names that resolve to a *character* (other
+        categories — corp/alliance/system — are ignored). Errors log and yield
+        an empty result rather than raising, so write paths never fail on ESI.
+        """
+        out: dict[str, int] = {}
+        url = f"{ESI_BASE}/universe/ids/"
+        # /universe/ids/ accepts up to 1000 names per call.
+        for start in range(0, len(names), 1000):
+            chunk = [n for n in names[start : start + 1000] if n and n.strip()]
+            if not chunk:
+                continue
+            try:
+                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp.raise_for_status()
+                data: dict[str, object] = resp.json()
+                for ch in data.get("characters", []) or []:  # type: ignore[union-attr]
+                    name = str(ch["name"])  # type: ignore[index]
+                    out[name] = int(str(ch["id"]))  # type: ignore[index]
+            except Exception as exc:
+                log.warning("esi.resolve_ids_failed", error=str(exc), n=len(chunk))
+        return out
+
+    async def resolve_affiliations(
+        self, char_ids: list[int]
+    ) -> dict[int, tuple[int | None, int | None]]:
+        """Resolve character_ids → (corporation_id, alliance_id) via
+        POST /characters/affiliation/. Best-effort (errors → omitted)."""
+        out: dict[int, tuple[int | None, int | None]] = {}
+        url = f"{ESI_BASE}/characters/affiliation/"
+        ids = [int(c) for c in char_ids]
+        for start in range(0, len(ids), 1000):
+            chunk = ids[start : start + 1000]
+            if not chunk:
+                continue
+            try:
+                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp.raise_for_status()
+                rows: list[dict[str, object]] = resp.json()
+                for r in rows:
+                    cid = int(str(r["character_id"]))  # type: ignore[index]
+                    corp = r.get("corporation_id")
+                    alli = r.get("alliance_id")
+                    out[cid] = (
+                        int(str(corp)) if corp is not None else None,
+                        int(str(alli)) if alli is not None else None,
+                    )
+            except Exception as exc:
+                log.warning("esi.resolve_affiliations_failed", error=str(exc), n=len(chunk))
+        return out
+
 
 _esi_client: EsiClient | None = None
 
