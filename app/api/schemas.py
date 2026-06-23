@@ -443,6 +443,18 @@ class CompositionPilotOut(BaseModel):
     kill_count: int = 0
     reps_out: float = 0.0
     has_logs: bool = False
+    from_logs: bool = False
+
+
+class ShipOverrideIn(BaseModel):
+    """FC/HC per-character ship assignment; null clears it."""
+
+    ship_type_id: int | None = None
+
+
+class ShipTypeOut(BaseModel):
+    type_id: int
+    name: str
 
 
 class CompositionSideOut(BaseModel):

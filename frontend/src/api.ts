@@ -422,6 +422,13 @@ export interface CompositionPilot {
   reps_out: number
   /** True when this character has uploaded gamelogs for the BR (friendly side only in UI). */
   has_logs: boolean
+  /** True when this pilot is NOT on any killmail and was identified from logs. */
+  from_logs?: boolean
+}
+
+export interface ShipType {
+  type_id: number
+  name: string
 }
 
 export interface CompositionSide {
@@ -690,6 +697,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  searchShipTypes: (q: string) =>
+    jsonFetch<ShipType[]>(`${API}/ship-types?q=${encodeURIComponent(q)}`),
+  setParticipantShip: (brId: string, characterId: number, shipTypeId: number | null) =>
+    jsonFetch<{ ok: boolean }>(
+      `${API}/brs/${brId}/participants/${characterId}/ship`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ship_type_id: shipTypeId }),
+      },
+    ),
   lossDamage: (brId: string, kmId: number) =>
     jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/losses/${kmId}/damage`),
   lossItems: (brId: string, kmId: number) =>

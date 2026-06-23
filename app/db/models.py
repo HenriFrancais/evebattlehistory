@@ -372,6 +372,28 @@ class BrSideOverride(Base):
     side: Mapped[str] = mapped_column(String(16))
 
 
+class BrCharShip(Base):
+    """FC/HC manual ship assignment for an off-BR (log-identified) participant.
+
+    Off-BR participants have no killmail, so their hull is often unknown. FC/HC
+    can assign a ship type per-character within one battle report; this overrides
+    any log-detected hull. (Side allocation stays entity-level via BrSideOverride;
+    ship allocation is per-character.)
+    """
+
+    __tablename__ = "br_char_ship"
+
+    br_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("battle_report.br_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+        primary_key=True,
+    )
+    character_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ship_type_id: Mapped[int] = mapped_column(BigInteger)
+    set_by_user: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    set_at: Mapped[dt.datetime] = mapped_column(DateTime)
+
+
 # ---------------------------------------------------------------------------
 # Gamelog tables (Task 2.2)
 # ---------------------------------------------------------------------------
@@ -419,6 +441,12 @@ class GamelogFile(Base):
 #   ALTER TABLE log_event ADD COLUMN authoritative BOOLEAN DEFAULT 0;
 #   ALTER TABLE log_event ADD COLUMN dedupe_suppressed BOOLEAN DEFAULT 0;
 # Then reparse: python -m app.logs.reparse
+# For log-identified off-BR participants, an existing DB also needs:
+#   CREATE TABLE br_char_ship (
+#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
+#     character_id BIGINT NOT NULL, ship_type_id BIGINT NOT NULL,
+#     set_by_user VARCHAR(128), set_at DATETIME NOT NULL,
+#     PRIMARY KEY (br_id, character_id));
 class LogEvent(Base):
     __tablename__ = "log_event"
 

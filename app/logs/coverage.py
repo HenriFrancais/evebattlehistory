@@ -179,7 +179,15 @@ async def br_coverage(
         )
         user_map.setdefault(uname, []).append(cc)
 
-    return [UserCoverage(user_name=un, characters=chars) for un, chars in user_map.items()]
+    # Sort by user (alphabetical, case-insensitive), then characters within each
+    # user by name — so the FC/HC logs list reads predictably.
+    return [
+        UserCoverage(
+            user_name=un,
+            characters=sorted(chars, key=lambda c: (c.character_name or "").lower()),
+        )
+        for un, chars in sorted(user_map.items(), key=lambda kv: kv[0].lower())
+    ]
 
 
 async def my_coverage(

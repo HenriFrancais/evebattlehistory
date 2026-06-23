@@ -713,3 +713,66 @@ def test_api_br_participants_404(make_client, tmp_path) -> None:  # type: ignore
         headers={"Authorization": f"Bearer {TEST_TOKEN}"},
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Coverage list ordering (Part 2): by user, then character, alphabetically.
+# ---------------------------------------------------------------------------
+
+
+async def test_br_coverage_sorted_by_user_then_character(db_session_maker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """br_coverage returns users alphabetically, characters alphabetical within each user."""
+    import app.logs.coverage as coverage_module
+    from app.config import get_settings
+    from app.logs.associate import associate_file
+    from app.logs.coverage import br_coverage
+    from app.roster.models import RosterCharacter, RosterUser
+    from app.roster.snapshot import build_roster_snapshot, reset_roster_store_for_tests
+
+    # Two users out of order; characters within each user out of order.
+    Z_YARA, Z_ABE, A_TOM, A_BO = 4100000001, 4100000002, 4100000003, 4100000004
+    snap = build_roster_snapshot(
+        users=[
+            RosterUser(
+                user_name="Zeb", main_character_id=Z_YARA,
+                characters=[
+                    RosterCharacter(character_id=Z_YARA, character_name="Yara"),
+                    RosterCharacter(character_id=Z_ABE, character_name="Abe"),
+                ],
+            ),
+            RosterUser(
+                user_name="Amy", main_character_id=A_TOM,
+                characters=[
+                    RosterCharacter(character_id=A_TOM, character_name="Tom"),
+                    RosterCharacter(character_id=A_BO, character_name="Bo"),
+                ],
+            ),
+        ],
+        version=1, fetched_at=0.0,
+    )
+    reset_roster_store_for_tests()
+    settings = get_settings()
+
+    class _FakeStore:
+        async def get(self):  # type: ignore[no-untyped-def]
+            return snap
+
+    monkeypatch.setattr(coverage_module, "get_roster_store", lambda s: _FakeStore())
+
+    async with db_session_maker() as session:
+        _fight_id, br_id = await _insert_fight_with_killmail(session)
+        for cid, name in ((Z_YARA, "Yara"), (Z_ABE, "Abe"), (A_TOM, "Tom"), (A_BO, "Bo")):
+            await _insert_character(session, cid, name)
+            fid = await _insert_gamelog_file(session, character_id=cid)
+            await _insert_log_events(session, fid, cid, [TS_INSIDE])
+            await associate_file(session, fid)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        coverage = await br_coverage(session, settings, br_id)
+
+    assert [u.user_name for u in coverage] == ["Amy", "Zeb"]
+    amy = next(u for u in coverage if u.user_name == "Amy")
+    zeb = next(u for u in coverage if u.user_name == "Zeb")
+    assert [c.character_name for c in amy.characters] == ["Bo", "Tom"]
+    assert [c.character_name for c in zeb.characters] == ["Abe", "Yara"]

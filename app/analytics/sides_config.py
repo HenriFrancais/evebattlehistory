@@ -15,6 +15,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
 from app.db.models import (
     Alliance,
     BattleReport,
@@ -218,13 +219,16 @@ async def br_entities(
     baseline_alliances: set[int],
     baseline_corps: set[int],
     overrides: dict[EntityKey, str],
+    settings: Settings,
 ) -> list[dict]:
     """Enumerate the entities (alliances, and corps without an alliance) seen on
-    the BR's killmails (victims + attackers), each with its resolved name,
-    current side classification, and whether it is overridden.
+    the BR's killmails (victims + attackers) PLUS those of log-identified off-BR
+    participants, each with its resolved name, current side classification, and
+    whether it is overridden.
 
     Alliances are the primary unit; a corp is listed only when it has no
-    alliance (so each pilot maps to exactly one assignable entity).
+    alliance (so each pilot maps to exactly one assignable entity). Surfacing
+    off-BR participants' entities lets FC/HC allocate them in the sides editor.
     """
     fk_ids = list(
         (
@@ -256,6 +260,14 @@ async def br_entities(
         )
     ).all():
         pairs.add((at_alli, at_corp))
+
+    # Off-BR log-identified participants: surface their entities too, so FC/HC can
+    # allocate any alliance/corp that exists only off the killboard. (Local import
+    # avoids a sides_config ↔ composition ↔ offbr import cycle.)
+    from app.fights.offbr_participants import offbr_log_characters
+
+    for oc in await offbr_log_characters(session, settings, br_id):
+        pairs.add((oc.alliance_id, oc.corporation_id))
 
     alliance_ids: set[int] = {a for a, _ in pairs if a is not None}
     # Corps that never appear under an alliance → assignable corp-only entities.

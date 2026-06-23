@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CompositionPilot, CompositionResponse, CompositionSide } from '../api'
 import { api } from '../api'
 import { fmtCompact } from '../format'
+import { ShipPicker } from './ShipPicker'
 
 type Mode = 'composition' | 'character' | 'user'
 
@@ -66,14 +67,24 @@ function CompositionView({ side }: { side: CompositionSide }) {
           </span>
         </div>
       ))}
+      {(() => {
+        const unknown = side.pilots.filter((p) => p.from_logs && p.ship_type_id == null).length
+        return unknown > 0 ? (
+          <div className="comp-row comp-unknown-row" data-testid="from-logs-unknown">
+            {shipIcon(null, 34)}
+            <span className="comp-count">{unknown}×</span>
+            <span className="comp-name dim">Unknown <span className="comp-from-logs-badge">from logs</span></span>
+          </div>
+        ) : null
+      })()}
     </div>
   )
 }
 
-function PilotRow({ p, onSelectKill, showWeapons, showLogs }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean }) {
+function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onChanged }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
   const weapons = p.weapons ?? []
   return (
-    <div>
+    <div className={p.from_logs ? 'comp-from-logs' : undefined}>
       <div className="comp-prow">
         {shipIcon(p.ship_type_id, 34)}
         <span className="comp-name" title={p.character_name}>
@@ -116,6 +127,14 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs }: { p: CompositionPi
         <span className="comp-line2">
           <span className="dim comp-ship-sub">{p.ship_name}</span>
           {p.reship && <span className="comp-reship" title="reshipped during the battle">↻ reship</span>}
+          {p.from_logs && (
+            <span className="comp-from-logs-badge" data-testid="from-logs-badge"
+              title="identified from logs — not on the killboard">📋 from logs</span>
+          )}
+          {p.from_logs && canEdit && (
+            <ShipPicker brId={brId} characterId={p.character_id}
+              currentShipTypeId={p.ship_type_id} onChanged={onChanged} />
+          )}
         </span>
         {p.reps_out > 0 ? (
           <span className="comp-stat comp-stat-rep"
@@ -139,7 +158,7 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs }: { p: CompositionPi
   )
 }
 
-function CharacterView({ side, onSelectKill, showWeapons }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean }) {
+function CharacterView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
   const showLogs = side.side_kind === 'friendly'
   return (
     <div>
@@ -151,13 +170,16 @@ function CharacterView({ side, onSelectKill, showWeapons }: { side: CompositionS
           onSelectKill={onSelectKill}
           showWeapons={showWeapons}
           showLogs={showLogs}
+          brId={brId}
+          canEdit={canEdit}
+          onChanged={onChanged}
         />
       ))}
     </div>
   )
 }
 
-function UserView({ side, onSelectKill, showWeapons }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean }) {
+function UserView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
   const groups = useMemo(() => {
     const m = new Map<string, CompositionPilot[]>()
     for (const p of side.pilots) {
@@ -181,6 +203,9 @@ function UserView({ side, onSelectKill, showWeapons }: { side: CompositionSide; 
               onSelectKill={onSelectKill}
               showWeapons={showWeapons}
               showLogs={showLogs}
+              brId={brId}
+              canEdit={canEdit}
+              onChanged={onChanged}
             />
           ))}
         </div>
@@ -194,6 +219,7 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('composition')
   const [showWeapons, setShowWeapons] = useState(false)
+  const [localReload, setLocalReload] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -203,7 +229,7 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
       (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
     )
     return () => { cancelled = true }
-  }, [brId, reloadKey])
+  }, [brId, reloadKey, localReload])
 
   // If By-user becomes unavailable while selected, fall back to composition.
   useEffect(() => {
@@ -248,8 +274,8 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
         {data.sides.map((side) => (
           <div key={side.side_kind}>
             {mode === 'composition' && <CompositionView side={side} />}
-            {mode === 'character' && <CharacterView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} />}
-            {mode === 'user' && <UserView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} />}
+            {mode === 'character' && <CharacterView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
+            {mode === 'user' && <UserView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
           </div>
         ))}
       </div>
