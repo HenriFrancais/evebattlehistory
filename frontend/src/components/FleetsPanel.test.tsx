@@ -6,7 +6,10 @@ import { FleetsPanel } from './FleetsPanel'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
-  return { ...actual, api: { ...actual.api, composition: vi.fn() } }
+  return {
+    ...actual,
+    api: { ...actual.api, composition: vi.fn(), searchShipTypes: vi.fn(), setParticipantShip: vi.fn() },
+  }
 })
 import { api } from '../api'
 
@@ -176,5 +179,43 @@ describe('FleetsPanel', () => {
     await user.click(screen.getByRole('button', { name: /By character/i }))
     const link = screen.getByRole('link', { name: /lost/i })
     expect(link).toHaveAttribute('href', 'https://zkillboard.com/kill/12345/')
+  })
+
+  const withFromLogs: CompositionResponse = {
+    by_user_available: true,
+    sides: [
+      { side_kind: 'friendly', pilot_count: 2,
+        ships: [{ ship_type_id: 11987, ship_name: 'Guardian', count: 1, top_modules: [] }],
+        pilots: [
+          { character_id: 10, character_name: 'KnownLogi', ship_type_id: 11987, ship_name: 'Guardian', lost: false, reship: false, killmail_id: null, user_name: null, weapons: [], damage_done: 0, kill_count: 0, reps_out: 5000, has_logs: true, from_logs: true },
+          { character_id: 11, character_name: 'NoHull', ship_type_id: null, ship_name: 'Unknown', lost: false, reship: false, killmail_id: null, user_name: null, weapons: [], damage_done: 0, kill_count: 0, reps_out: 0, has_logs: true, from_logs: true },
+        ] },
+    ],
+  }
+
+  it('marks from-logs pilots and shows the By-ship Unknown row', async () => {
+    vi.mocked(api.composition).mockResolvedValue(withFromLogs)
+    const user = userEvent.setup()
+    render(<FleetsPanel brId="br1" />)
+    // By-ship (composition) mode: the Unknown-from-logs count row.
+    await waitFor(() => expect(screen.getByTestId('from-logs-unknown')).toBeInTheDocument())
+    // By-character: the from-logs badge appears.
+    await user.click(screen.getByRole('button', { name: /By character/i }))
+    expect(screen.getAllByTestId('from-logs-badge').length).toBeGreaterThan(0)
+  })
+
+  it('lets an FC assign a ship to an Unknown from-logs pilot', async () => {
+    vi.mocked(api.composition).mockResolvedValue(withFromLogs)
+    vi.mocked(api.searchShipTypes).mockResolvedValue([{ type_id: 620, name: 'Osprey' }])
+    vi.mocked(api.setParticipantShip).mockResolvedValue({ ok: true })
+    const user = userEvent.setup()
+    render(<FleetsPanel brId="br1" />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /By character/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /By character/i }))
+    // The Unknown pilot (character 11) shows a ship picker.
+    await user.click(screen.getByTestId('ship-picker-11'))
+    await user.type(screen.getByPlaceholderText('Search ship…'), 'osp')
+    await user.click(await screen.findByText('Osprey'))
+    expect(api.setParticipantShip).toHaveBeenCalledWith('br1', 11, 620)
   })
 })
