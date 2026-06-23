@@ -236,6 +236,62 @@ async def test_composition_ship_top_modules(db_session_maker) -> None:  # type: 
     assert any(m.type_id == RAILGUN_ID and m.name == RAILGUN_NAME for m in absol.top_modules)
 
 
+REMOTE_REP_ID = 16487
+REMOTE_REP_NAME = "Large Remote Armor Repairer I"
+
+
+@pytest.mark.asyncio
+async def test_composition_reship_weapons_attributed_to_correct_hull(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A reship's weapons stay with the hull they were used from, not the other hull.
+
+    ATTACKER flies an Absolution (using a railgun) then reships into a Guardian (using a
+    remote repper). Each hull's pilot row — and that hull's top_modules — must list only
+    the module used while flying that hull, never the other hull's module.
+    """
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER in Absolution (attacker_idx 0)
+        km_id = (await session.execute(
+            select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+        )).scalar_one()
+        session.add(InventoryType(type_id=GUARDIAN, name="Guardian"))
+        session.add(InventoryType(
+            type_id=RAILGUN_ID, name=RAILGUN_NAME, group_name="Hybrid Weapon", category_id=6,
+        ))
+        session.add(InventoryType(
+            type_id=REMOTE_REP_ID, name=REMOTE_REP_NAME, group_name="Remote Armor Repairer",
+            category_id=7,
+        ))
+        # Absolution row: used the railgun.
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=RAILGUN_ID)
+        )
+        # Reship row: same ATTACKER in a Guardian, using the remote repper.
+        session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=1, character_id=ATTACKER,
+                                     ship_type_id=GUARDIAN, weapon_type_id=REMOTE_REP_ID,
+                                     damage_done=0, final_blow=False))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.ship_name: p for s in result.sides for p in s.pilots if p.character_id == ATTACKER}
+    assert {p.type_id for p in pilots["Absolution"].weapons} == {RAILGUN_ID}
+    assert {p.type_id for p in pilots["Guardian"].weapons} == {REMOTE_REP_ID}
+    # The per-hull summary modules must be just as cleanly separated.
+    absol = next(sh for s in result.sides for sh in s.ships if sh.ship_name == "Absolution")
+    guard = next(sh for s in result.sides for sh in s.ships if sh.ship_name == "Guardian")
+    assert {m.type_id for m in absol.top_modules} == {RAILGUN_ID}
+    assert {m.type_id for m in guard.top_modules} == {REMOTE_REP_ID}
+
+
 @pytest.mark.asyncio
 async def test_composition_pilot_weapons_none_weapon_type_id(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     """Pilot with no weapon_type_id has an empty weapons list (no crash)."""
