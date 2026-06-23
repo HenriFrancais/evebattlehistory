@@ -7,7 +7,7 @@ import uuid
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import fight_side_losses, load_overrides
@@ -50,6 +50,7 @@ from app.db.models import (
     LogEventBucket,
     SolarSystem,
 )
+from app.esi.demo import DemoEsiClient
 from app.fights.participants import ParticipantInfo, br_participants
 from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
@@ -66,15 +67,19 @@ def _validate_sources(sources: list[BrSourceIn]) -> None:
 
     For link sources: require a url.  Host validation is intentionally relaxed
     here — unsupported hosts will error-isolate at resolve time (per-source).
-    For window sources: require system_id, window_start < window_end.
+    For window sources: require system_name or system_id, and
+    window_start < window_end.
     """
     for src in sources:
         if src.kind == "link":
             if not src.url:
                 raise HTTPException(status_code=400, detail="link source requires url")
         elif src.kind == "window":
-            if src.system_id is None:
-                raise HTTPException(status_code=400, detail="window source requires system_id")
+            if src.system_id is None and not (src.system_name and src.system_name.strip()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="window source requires system_name or system_id",
+                )
             if src.window_start is None or src.window_end is None:
                 raise HTTPException(
                     status_code=400,
@@ -87,6 +92,64 @@ def _validate_sources(sources: list[BrSourceIn]) -> None:
                 )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown source kind: {src.kind!r}")
+
+
+async def _resolve_window_system_names(
+    session: AsyncSession,
+    sources: list[BrSourceIn],
+) -> None:
+    """Resolve window sources given a ``system_name`` to a concrete ``system_id``.
+
+    Mutates each affected source in place. Resolution order: the local
+    ``solar_system`` table (case-insensitive) first, then ESI ``/universe/ids/``
+    for anything not seen yet. Raises HTTPException 400 if a name can't be
+    resolved. Sources that already carry a ``system_id`` are left untouched.
+    """
+    pending = [
+        s
+        for s in sources
+        if s.kind == "window"
+        and s.system_id is None
+        and s.system_name
+        and s.system_name.strip()
+    ]
+    if not pending:
+        return
+
+    wanted = {s.system_name.strip() for s in pending if s.system_name}
+
+    # 1) Local solar_system table (already-ingested systems), case-insensitive.
+    rows = (
+        await session.execute(
+            select(SolarSystem.system_id, SolarSystem.name).where(
+                func.lower(SolarSystem.name).in_([n.lower() for n in wanted])
+            )
+        )
+    ).all()
+    resolved: dict[str, int] = {name.lower(): sid for sid, name in rows}
+
+    # 2) ESI fallback for names not in the local table.
+    missing = [n for n in wanted if n.lower() not in resolved]
+    if missing:
+        settings = get_settings()
+        if settings.data_source == "demo":
+            esi = DemoEsiClient(settings.demo_data_dir)
+        else:
+            from app.esi.client import get_esi_client
+
+            esi = get_esi_client(settings)  # type: ignore[assignment]
+        esi_map = await esi.resolve_system_ids(missing)
+        for name, sid in esi_map.items():
+            resolved[name.lower()] = sid
+
+    for s in pending:
+        name = (s.system_name or "").strip()
+        sys_id = resolved.get(name.lower())
+        if sys_id is None:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown solar system name: {name!r}"
+            )
+        s.system_id = sys_id
 
 
 def _add_br_sources(
@@ -135,6 +198,7 @@ async def create_br(
     if body.sources is not None:
         sources = body.sources
         _validate_sources(sources)
+        await _resolve_window_system_names(session, sources)
     elif body.url is not None:
         # Back-compat single-URL path: still validate the host eagerly
         host = urlparse(body.url).netloc.removeprefix("www.")
@@ -244,6 +308,7 @@ async def add_br_source(
         raise HTTPException(status_code=404, detail="Battle report not found")
 
     _validate_sources([body])
+    await _resolve_window_system_names(session, [body])
     _add_br_sources(session, br_id, [body])
     await session.commit()
 

@@ -44,6 +44,12 @@ class DemoEsiClient:
         table: dict[str, int] = json.loads(p.read_text()) if p.exists() else {}
         return {n: int(table[n]) for n in names if n in table}
 
+    async def resolve_system_ids(self, names: list[str]) -> dict[str, int]:
+        """name -> system_id, from data_demo/system_ids.json (missing names omitted)."""
+        p = self._dir / "system_ids.json"
+        table: dict[str, int] = json.loads(p.read_text()) if p.exists() else {}
+        return {n: int(table[n]) for n in names if n in table}
+
     async def resolve_affiliations(
         self, char_ids: list[int]
     ) -> dict[int, tuple[int | None, int | None]]:

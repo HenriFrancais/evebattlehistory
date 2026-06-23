@@ -98,6 +98,7 @@ export interface BrCreated {
 export interface BrSourceIn {
   kind: 'link' | 'window'
   url?: string
+  system_name?: string   // preferred for window sources; resolved server-side
   system_id?: number
   window_start?: string  // ISO UTC string
   window_end?: string    // ISO UTC string

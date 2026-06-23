@@ -146,6 +146,111 @@ async def test_fetch_window_killmails_non200_empty():
     assert refs == []
 
 
+def _dttm(ms: int) -> dict:
+    """Build a zKB-style dttm object from a unix-millis timestamp."""
+    return {"$date": {"$numberLong": str(ms)}}
+
+
+def _kill(km_id: int, hash_: str, when_ms: int | None) -> dict:
+    obj: dict = {"zkb": {"hash": hash_, "totalValue": 1.0}}
+    if when_ms is not None:
+        obj["dttm"] = _dttm(when_ms)
+    return obj
+
+
+@pytest.mark.asyncio
+async def test_fetch_window_killmails_queries_all_hourly_anchors():
+    """A multi-hour window queries every hourly anchor and unions the kills.
+
+    zKB /related/ buckets kills into ~1-hour battles, so a single anchor at
+    window_start misses kills later in the window. Regression for the
+    'middle systems resolve to 0 kills' bug.
+    """
+    import datetime as dt
+
+    from app.ingest.sources.zkillboard import fetch_window_killmails
+
+    # Each hourly anchor returns a DIFFERENT kill. window_start has none.
+    ts_2000 = 1739995200_000  # 2025-02-19 20:00:00Z
+    ts_2100 = 1739998800_000  # 2025-02-19 21:00:00Z
+    by_anchor = {
+        "202502191900": {"summary": {"teamA": {"kills": {}}, "teamB": {"kills": {}}}},
+        "202502192000": {
+            "summary": {
+                "teamA": {"kills": {"500001": _kill(500001, "h1", ts_2000)}},
+                "teamB": {"kills": {}},
+            }
+        },
+        "202502192100": {
+            "summary": {
+                "teamA": {"kills": {"500002": _kill(500002, "h2", ts_2100)}},
+                "teamB": {"kills": {}},
+            }
+        },
+    }
+    seen_anchors: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        anchor = request.url.path.rstrip("/").split("/")[-1]
+        seen_anchors.append(anchor)
+        return httpx.Response(200, json=by_anchor.get(anchor, {"summary": {}}))
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        refs, _values = await fetch_window_killmails(
+            client,
+            31002285,
+            dt.datetime(2025, 2, 19, 19, 0, tzinfo=dt.UTC),
+            dt.datetime(2025, 2, 19, 21, 0, tzinfo=dt.UTC),
+        )
+
+    # All three hourly anchors queried, and both later kills captured.
+    assert "202502191900" in seen_anchors
+    assert "202502192000" in seen_anchors
+    assert "202502192100" in seen_anchors
+    assert set(refs) == {(500001, "h1"), (500002, "h2")}
+
+
+@pytest.mark.asyncio
+async def test_fetch_window_killmails_filters_by_kill_time():
+    """Kills whose dttm falls outside [window_start, window_end] are dropped.
+
+    zKB's hourly buckets bleed past the window edges; the precise window must
+    still be honoured.
+    """
+    import datetime as dt
+
+    from app.ingest.sources.zkillboard import fetch_window_killmails
+
+    in_window = 1739995200_000   # 2025-02-19 20:00:00Z (inside)
+    out_window = 1740002400_000  # 2025-02-19 22:00:00Z (after window_end 21:00)
+    payload = {
+        "summary": {
+            "teamA": {
+                "kills": {
+                    "600001": _kill(600001, "keep", in_window),
+                    "600002": _kill(600002, "drop", out_window),
+                }
+            },
+            "teamB": {"kills": {}},
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        refs, _values = await fetch_window_killmails(
+            client,
+            31002285,
+            dt.datetime(2025, 2, 19, 20, 0, tzinfo=dt.UTC),
+            dt.datetime(2025, 2, 19, 21, 0, tzinfo=dt.UTC),
+        )
+
+    assert set(refs) == {(600001, "keep")}
+
+
 # ---------------------------------------------------------------------------
 # _extract_refs_from_related - unit tests for defensiveness
 # ---------------------------------------------------------------------------

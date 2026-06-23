@@ -13,14 +13,14 @@ interface SourceRow {
   // link fields
   url: string
   // window fields
-  system_id: string
+  system_name: string
   window_start: string   // datetime-local string "YYYY-MM-DDTHH:mm"
   window_end: string
   label: string
 }
 
 function makeRow(id: number): SourceRow {
-  return { id, kind: 'link', url: '', system_id: '', window_start: '', window_end: '', label: '' }
+  return { id, kind: 'link', url: '', system_name: '', window_start: '', window_end: '', label: '' }
 }
 
 /** Convert a datetime-local string (UTC semantics) to ISO 8601 UTC string. */
@@ -43,8 +43,7 @@ function validateRow(row: SourceRow): string | null {
       return 'Invalid URL'
     }
   } else {
-    if (!row.system_id.trim()) return 'System ID is required'
-    if (isNaN(Number(row.system_id))) return 'System ID must be a number'
+    if (!row.system_name.trim()) return 'System name is required'
     if (!row.window_start) return 'Window start is required'
     if (!row.window_end) return 'Window end is required'
     const start = new Date(row.window_start + (row.window_start.length === 16 ? ':00Z' : 'Z'))
@@ -96,7 +95,7 @@ export function SourceComposer({ onCreated }: Props) {
       } else {
         return {
           kind: 'window',
-          system_id: Number(row.system_id),
+          system_name: row.system_name.trim(),
           window_start: toUtcIso(row.window_start),
           window_end: toUtcIso(row.window_end),
           ...(row.label.trim() ? { label: row.label.trim() } : {}),
@@ -203,7 +202,7 @@ function SourceRowEditor({ row, error, canRemove, onChange, onRemove }: RowEdito
           id={`type-${row.id}`}
           aria-label="Source type"
           value={row.kind}
-          onChange={(e) => onChange({ kind: e.target.value as SourceKind, url: '', system_id: '', window_start: '', window_end: '', label: '' })}
+          onChange={(e) => onChange({ kind: e.target.value as SourceKind, url: '', system_name: '', window_start: '', window_end: '', label: '' })}
           style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '0.25rem', padding: '0.25rem 0.5rem' }}
         >
           <option value="link">Link (zKB / Aurora)</option>
@@ -234,11 +233,12 @@ function SourceRowEditor({ row, error, canRemove, onChange, onRemove }: RowEdito
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div className="form-group">
             <input
-              type="number"
-              value={row.system_id}
-              onChange={(e) => onChange({ system_id: e.target.value })}
-              placeholder="System ID"
-              style={{ width: '8rem' }}
+              type="text"
+              value={row.system_name}
+              onChange={(e) => onChange({ system_name: e.target.value })}
+              placeholder="System name (e.g. J125122)"
+              aria-label="System name"
+              style={{ width: '12rem' }}
             />
           </div>
           <div className="form-group" style={{ display: 'flex', flexDirection: 'column' }}>

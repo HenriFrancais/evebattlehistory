@@ -151,6 +151,35 @@ class EsiClient:
                 log.warning("esi.resolve_ids_failed", error=str(exc), n=len(chunk))
         return out
 
+    async def resolve_system_ids(self, names: list[str]) -> dict[str, int]:
+        """Resolve solar-system names → system_ids via POST /universe/ids/.
+
+        Reads the ``systems`` category (ignores characters/corps/alliances).
+        Keys are the canonical names returned by ESI. Best-effort: errors log
+        and yield an empty result rather than raising.
+        """
+        out: dict[str, int] = {}
+        url = f"{ESI_BASE}/universe/ids/"
+        for start in range(0, len(names), 1000):
+            chunk = [n for n in names[start : start + 1000] if n and n.strip()]
+            if not chunk:
+                continue
+            try:
+                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp.raise_for_status()
+                data = resp.json()
+                systems = data.get("systems", []) if isinstance(data, dict) else []
+                for sysobj in systems:
+                    if not isinstance(sysobj, dict):
+                        continue
+                    name = sysobj.get("name")
+                    sid = sysobj.get("id")
+                    if isinstance(name, str) and isinstance(sid, int):
+                        out[name] = sid
+            except Exception as exc:
+                log.warning("esi.resolve_system_ids_failed", error=str(exc), n=len(chunk))
+        return out
+
     async def resolve_affiliations(
         self, char_ids: list[int]
     ) -> dict[int, tuple[int | None, int | None]]:
