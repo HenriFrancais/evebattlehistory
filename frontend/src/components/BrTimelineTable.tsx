@@ -7,6 +7,7 @@
 import { Fragment } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { BrSummary } from '../api'
+import { prefetchBr } from '../cache'
 import { fmtIsk, fmtDateTime } from '../format'
 
 function ResultBadge({ result }: { result: string | null }) {
@@ -111,6 +112,10 @@ export function BrTimelineTable({ brs }: { brs: BrSummary[] }) {
                 key={br.br_id}
                 data-testid="timeline-row"
                 className="tl-row-link"
+                // Warm the BR's heavy panels while the cursor/focus is on the row,
+                // so the click opens an already-loading (often loaded) detail page.
+                onPointerEnter={() => prefetchBr(br.br_id)}
+                onFocusCapture={() => prefetchBr(br.br_id)}
                 onClick={(e) => {
                   // Let inner links/buttons (system zkill link, title) handle their own clicks.
                   if ((e.target as HTMLElement).closest('a, button')) return

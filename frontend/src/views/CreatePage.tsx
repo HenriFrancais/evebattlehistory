@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { MeResponse } from '../api'
-import { api } from '../api'
+import { loadMe } from '../cache'
 import { SourceComposer } from '../components/SourceComposer'
 
 export function CreatePage() {
@@ -11,7 +11,7 @@ export function CreatePage() {
 
   useEffect(() => {
     let cancelled = false
-    api.me().then(
+    loadMe().then(
       (m) => { if (!cancelled) setMe(m) },
       (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
     )

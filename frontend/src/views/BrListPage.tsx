@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type BrListResponse, type FilteredBrResponse, type FilterGroup, type MeResponse, api } from '../api'
+import { loadMe } from '../cache'
 import { BrTimelineTable } from '../components/BrTimelineTable'
 import { FilterBuilder } from '../components/FilterBuilder'
 import { WinRateSummary } from '../components/WinRateSummary'
@@ -15,7 +16,7 @@ export function BrListPage() {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.me(), api.listBrs()]).then(
+    Promise.all([loadMe(), api.listBrs()]).then(
       ([m, d]) => { if (!cancelled) { setMe(m); setData(d) } },
       (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
     )

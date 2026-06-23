@@ -1,7 +1,8 @@
 // Fleet composition summary with Composition / By-character / By-user modes.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CompositionPilot, CompositionResponse, CompositionSide } from '../api'
 import { api } from '../api'
+import { loadComposition } from '../cache'
 import { fmtCompact } from '../format'
 import { ShipPicker } from './ShipPicker'
 
@@ -232,11 +233,16 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
   const [mode, setMode] = useState<Mode>('composition')
   const [showWeapons, setShowWeapons] = useState(false)
   const [localReload, setLocalReload] = useState(0)
+  // Same brId re-run ⇒ only a reload signal changed (sides / participant edit) ⇒
+  // force a fresh fetch; a new brId (or first mount) reads the prefetch cache.
+  const fetchedBrId = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setError(null)
-    api.composition(brId).then(
+    const force = fetchedBrId.current === brId
+    fetchedBrId.current = brId
+    loadComposition(brId, force).then(
       (d) => { if (!cancelled) setData(d) },
       (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
     )

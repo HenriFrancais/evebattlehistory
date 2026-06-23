@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { FleetTimeline, KillEvent, Leaders, TimelineFightInfo } from '../api'
-import { api } from '../api'
+import { loadFleetTimeline } from '../cache'
 import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
 import type { FleetPanel, FleetView, PanelSeries } from '../fleet'
 import { toFleetView } from '../fleet'
@@ -864,12 +864,20 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange, heig
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Tracks the brId the last fetch ran for. When the effect re-runs for the SAME
+  // brId, only `reloadKey` changed (sides edit / refresh) → force a fresh fetch.
+  // A new brId (or first mount) reads the prefetch cache so the graph can open
+  // already-loaded.
+  const fetchedBrId = useRef<string | null>(null)
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     onSelectRange(null)
-    api.fleetTimeline(brId).then(
+    const force = fetchedBrId.current === brId
+    fetchedBrId.current = brId
+    loadFleetTimeline(brId, force).then(
       (data) => {
         if (!cancelled) {
           setFleet(data)
