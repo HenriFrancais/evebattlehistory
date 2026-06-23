@@ -14,7 +14,8 @@ from sqlalchemy import select
 from app.api.auth import current_user
 from app.api.deps import SessionDep, SessionMakerDep
 from app.config import get_settings
-from app.db.models import GamelogFile
+from app.db.models import GamelogFile, LogEvent
+from app.fights.offbr_resolve import resolve_log_characters
 from app.logs.associate import associate_file_to_all
 from app.logs.ingest import GamelogFileResult, ingest_log
 from app.observability.logging import log
@@ -64,6 +65,23 @@ async def upload_logs(
                 # associate_file_to_all is guarded; failure is logged, not raised.
                 if not result.duplicate and result.parse_status == "parsed":
                     await associate_file_to_all(session, result.file_id)
+                    # Resolve this file's counterparty names to characters (ESI),
+                    # persisting them so off-BR participants are identifiable on
+                    # read. Best-effort: never fail an upload on ESI.
+                    try:
+                        rows = (
+                            await session.execute(
+                                select(
+                                    LogEvent.other_name,
+                                    LogEvent.source_name,
+                                    LogEvent.target_name,
+                                ).where(LogEvent.file_id == result.file_id)
+                            )
+                        ).all()
+                        names = {v for row in rows for v in row if v}
+                        await resolve_log_characters(session, settings, names)
+                    except Exception as exc:
+                        log.warning("logs.upload.resolve_failed", error=str(exc))
                 await session.commit()
 
             status = "duplicate" if result.duplicate else result.parse_status
