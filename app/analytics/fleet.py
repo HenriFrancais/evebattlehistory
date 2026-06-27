@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,6 +126,89 @@ async def _resolve_char_names(
     return names
 
 
+def _accumulate_reps(
+    rows: Sequence[Any],
+    rep_names: dict[int, str],
+) -> list[Contribution]:
+    """Collapse remote-rep log rows into one Contribution per repper→recipient.
+
+    A single physical rep tick is logged by BOTH the repper (direction="out",
+    other_name=recipient) and the recipient (direction="in", other_name=repper).
+    We dedupe per tick — counting every "out" tick (the repper's authoritative
+    record) and adding an "in" tick only when the repper never logged it — then
+    collapse the surviving out/in ticks of each (repper, recipient) pair into a
+    single source→target row. This mirrors composition._reps_applied_by_char and
+    stops a logi being shown twice (with a doubled family total) in the snapshot.
+
+    *rows* are the generic-path tuples
+    ``(cid, other, oship, eff, direction, amount, module, quality, ts)``.
+    Names on the log-owner side use the resolved Character name; the counterparty
+    side is taken verbatim from the log, so out/in collapse to the same key.
+    """
+    # Index every "out" tick so a recipient's duplicate "in" tick can be matched
+    # and dropped. Key mirrors composition: (repper, recipient, effect, second,
+    # amount) — both clients stamp the same server-second for one physical tick.
+    out_ticks: Counter[tuple[str, str, str, object, float]] = Counter()
+    for cid, other, _os, eff, direction, amount, _m, _q, ts in rows:
+        if eff in _REP_EFFECTS and direction == "out" and cid is not None and other is not None:
+            repper = rep_names.get(cid)
+            if repper is not None:
+                out_ticks[(repper, other, eff, ts, float(amount or 0.0))] += 1
+
+    RepKey = tuple[str, str, str]  # (repper_name, recipient_name, effect)
+    rep_value: dict[RepKey, float] = {}
+    rep_cid: dict[RepKey, int | None] = {}
+    rep_ship: dict[RepKey, str] = {}
+    for cid, other, oship, eff, direction, amount, _m, _q, ts in rows:
+        if eff not in _REP_EFFECTS or cid is None:
+            continue
+        if direction == "out":
+            repper = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
+            recipient = _clean_target_name(other)
+            rkey = (repper, recipient, eff)
+            rep_cid[rkey] = cid  # repper id is authoritative on the out side
+            cleaned_ship = _clean_target_name(oship)
+            if cleaned_ship != "?":
+                rep_ship.setdefault(rkey, cleaned_ship)
+        elif direction == "in":
+            recipient_raw = rep_names.get(cid)
+            if other is not None and recipient_raw is not None:
+                dkey = (other, recipient_raw, eff, ts, float(amount or 0.0))
+                if out_ticks.get(dkey, 0) > 0:
+                    out_ticks[dkey] -= 1
+                    continue  # duplicate of the repper's authoritative out tick
+            repper = _clean_target_name(other)
+            recipient = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
+            rkey = (repper, recipient, eff)
+            rep_cid.setdefault(rkey, None)
+        else:
+            continue
+        rep_value[rkey] = rep_value.get(rkey, 0.0) + abs(amount or 0.0)
+
+    # Resolve repper ids for in-only pairs (repper never uploaded, so no out row
+    # supplied a cid) by inverting the resolved-name map.
+    name_to_cid = {_clean_target_name(nm): cid for cid, nm in rep_names.items() if nm}
+    contributions: list[Contribution] = []
+    for (repper, recipient, eff), val in rep_value.items():
+        rkey = (repper, recipient, eff)
+        src_cid = rep_cid.get(rkey)
+        if src_cid is None:
+            src_cid = name_to_cid.get(repper)
+        contributions.append(
+            Contribution(
+                source_character_id=src_cid,
+                source_name=repper,
+                target_name=recipient,
+                target_ship=rep_ship.get(rkey),
+                effect_type=eff,
+                direction="out",  # canonical repper→recipient
+                group=_EFFECT_GROUP.get(eff, "other"),
+                value=val,
+            )
+        )
+    return contributions
+
+
 async def fleet_snapshot(
     session: AsyncSession,
     br_id: str,
@@ -177,15 +263,32 @@ async def fleet_snapshot(
                 LogEvent.amount,
                 LogEvent.module_name,
                 LogEvent.quality,
+                LogEvent.ts,
             ).where(*conditions)
         )
     ).all()
+
+    # ------------------------------------------------------------------
+    # Reps are handled on a dedicated path (see _accumulate_reps): a single
+    # physical rep tick is logged by BOTH the repper (out) and the recipient
+    # (in), so reps are deduped per tick AND collapsed across direction into one
+    # canonical repper→recipient row. Without this a logi shows twice per
+    # recipient (once from each log) and the family total double-counts.
+    # ------------------------------------------------------------------
+    rep_owner_ids = {
+        cid
+        for cid, _o, _os, eff, _d, _a, _m, _q, _ts in rows
+        if eff in _REP_EFFECTS and cid is not None
+    }
+    rep_names = await _resolve_char_names(session, settings, rep_owner_ids)
 
     Key = tuple[int | None, str, str, str, str]  # (cid, target, ship, eff, dir)
     agg: dict[Key, float] = {}
     module_dmg: dict[Key, dict[str, float]] = {}
     quality_ct: dict[Key, dict[str, int]] = {}
-    for cid, other, oship, eff, direction, amount, module, quality in rows:
+    for cid, other, oship, eff, direction, amount, module, quality, _ts in rows:
+        if eff in _REP_EFFECTS:
+            continue  # reps aggregated separately below
         key = (
             cid, _clean_target_name(other), _clean_target_name(oship), eff or "", direction or "",
         )
@@ -248,6 +351,8 @@ async def fleet_snapshot(
                 quality=quality_label,
             )
         )
+
+    out.extend(_accumulate_reps(rows, rep_names))
 
     # ------------------------------------------------------------------
     # Deduped tackle path (scram / disrupt): use pilot-resolved
@@ -336,6 +441,9 @@ async def fleet_snapshot(
 _AMOUNT_EFFECTS = frozenset(
     {"damage", "rep_armor", "rep_shield", "neut", "nos", "cap_transfer"}
 )
+#: Remote-rep effects: logged by both repper (out) and recipient (in). Deduped per
+#: physical tick in fleet_snapshot so a logi is counted once per recipient.
+_REP_EFFECTS = frozenset({"rep_armor", "rep_shield"})
 #: Effects measured by number of applications per bucket (EWAR). Plotted from
 #: ``event_count`` (their sum_amount is meaningless / zero).
 _COUNT_EFFECTS = frozenset({"scram", "disrupt", "jam"})

@@ -62,6 +62,23 @@ async def offbr_log_characters(
         )
     ).all()
     cp_names = {v for row in name_rows for v in row if v}
+    # Drop counterparty tokens that are actually SDE inventory types (ships, drones,
+    # missiles, charges). EVE players sometimes share a name with an item, so a log
+    # token like "Hobgoblin II" or "Caldari Navy Warden" can resolve to a
+    # coincidentally named character — but in a combat log it is overwhelmingly the
+    # item, not a participant. Only real characters may appear in the fleets
+    # "By character" / "By user" lists. (Log-owners are unaffected: a real pilot who
+    # uploaded a gamelog is still identified via br_logged_char_ids above.)
+    if cp_names:
+        inv_lower = {
+            (nm or "").lower()
+            for (nm,) in (
+                await session.execute(
+                    select(InventoryType.name).where(InventoryType.name.in_(cp_names))
+                )
+            ).all()
+        }
+        cp_names = {n for n in cp_names if n.lower() not in inv_lower}
     name_to_cid: dict[str, int] = {}
     if cp_names:
         lowered = {n.lower() for n in cp_names}
