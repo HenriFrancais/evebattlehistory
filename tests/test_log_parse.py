@@ -856,7 +856,9 @@ def test_jam_target_locks_broken_combat_variant() -> None:
 
 def test_npc_damage_without_module_parses() -> None:
     """Sleeper/NPC/sentry damage has no module — just name and quality."""
-    evt = parse_line("[ 2026.06.26 20:51:10 ] (combat) <b>27</b> from Awakened Sentinel - Penetrates")
+    evt = parse_line(
+        "[ 2026.06.26 20:51:10 ] (combat) <b>27</b> from Awakened Sentinel - Penetrates"
+    )
     assert evt is not None
     assert evt.effect_type == "damage"
     assert evt.direction == "in"
@@ -917,3 +919,39 @@ def test_incoming_jam_not_confused_with_outgoing_burst() -> None:
     assert evt is not None
     assert evt.effect_type == "jam"
     assert evt.direction == "in"
+
+
+def test_rep_recovers_italic_pilot_label_with_ship_overview() -> None:
+    """Some overviews log the recipient by ship with the pilot in an <i> label that
+    strip_eve_markup deletes. _match_rep recovers the pilot from the raw line; the hull
+    moves to other_ship_name. (Real line from Kyra Venalia's log.)"""
+    line = (
+        "[ 2026.06.26 20:42:41 ] (combat) <color=0xffccff66><b>1022</b><color=0x77ffffff>"
+        "<font size=10> remote armor repaired to </font><b><color=0xffffffff><b>"
+        "<i>Body Cam Off</b></i><b><color=0xFF07dffc>Heretic<color=0xFF2261d6>(NV)</color>"
+        "<u></b><color=0x77ffffff><font size=10> - Perun Heavy Mutadaptive Remote Armor "
+        "Repairer</font>"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.direction == "out"
+    assert evt.other_name == "Body Cam Off"      # pilot recovered, not "Heretic(NV)"
+    assert evt.other_ship_name == "Heretic(NV)"  # hull preserved
+
+
+def test_rep_cosmetic_custom_ship_name_is_not_taken_as_pilot() -> None:
+    """A cosmetic custom SHIP name in italics (closed by ']') must NOT be taken as the
+    pilot — the real pilot is in the [bracket] and is parsed normally. (Real line.)"""
+    line = (
+        "[ 2026.06.26 20:53:12 ] (combat) <color=0xffccff66><b>1024</b><color=0x77ffffff>"
+        "<font size=10> remote armor repaired by </font><b><color=0xffffffff><fontsize=12>"
+        "<color=0xFFFEBB64><b> <u>Zarmazd</u></b></color></fontsize> <i>✖ DXa Zarming</i>]"
+        "</b></fontsize><fontsize=10> [Deringston Xa'thon]</fontsize><color=0xFFFFFFFF><b> -"
+        "<fontsize=12><color=0xFFFEFF6F> [NV]</color></fontsize></b><color=0x77ffffff>"
+        "<font size=10> - Perun Heavy Mutadaptive Remote Armor Repairer</font>"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.other_name != "✖ DXa Zarming"   # the cosmetic ship name is not the pilot

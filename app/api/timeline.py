@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics.fleet import build_kill_events
+from app.analytics.sides_config import load_overrides
 from app.analytics.timeline import (
     character_timeline,
     character_timeline_events,
@@ -14,12 +16,14 @@ from app.api.access import acting_user, can_view_character
 from app.api.deps import SessionDep
 from app.api.schemas import (
     CharacterTimelineOut,
+    KillEventOut,
     TimelineEventListOut,
     TimelineEventOut,
     TimelineFightInfo,
     TimelineSeriesOut,
 )
-from app.db.models import BattleReport
+from app.config import get_app_config
+from app.db.models import BattleReport, BrFight
 
 router = APIRouter()
 
@@ -52,6 +56,16 @@ async def get_character_timeline(
     await _require_br(br_id, session)
     tl = await character_timeline(session, br_id, character_id)
 
+    # Same BR-wide kill marks as the fleet view (overlay, not character-scoped).
+    cfg = get_app_config()
+    overrides = await load_overrides(session, br_id)
+    fight_ids = list(
+        (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
+    )
+    kills = await build_kill_events(
+        session, fight_ids, set(cfg.our_alliance_ids), set(cfg.our_corp_ids), overrides
+    )
+
     return CharacterTimelineOut(
         x=tl.x,
         series=[
@@ -63,6 +77,19 @@ async def get_character_timeline(
                 event_count=s.event_count,
             )
             for s in tl.series
+        ],
+        kills=[
+            KillEventOut(
+                ts=k.ts,
+                killmail_id=k.killmail_id,
+                victim_character_id=k.victim_character_id,
+                victim_character_name=k.victim_character_name,
+                victim_ship_name=k.victim_ship_name,
+                victim_ship_type_id=k.victim_ship_type_id,
+                side_kind=k.side_kind,
+                isk=k.isk,
+            )
+            for k in kills
         ],
         fights=[
             TimelineFightInfo(

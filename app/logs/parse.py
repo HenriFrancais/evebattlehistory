@@ -41,6 +41,34 @@ def strip_eve_markup(s: str) -> str:
     return s.strip()
 
 
+# Italics do double duty in EVE combat logs:
+#   (a) PILOT-name label — some overviews render the counterparty's pilot in italics,
+#       e.g. "<b><i>Body Cam Off</b></i>Heretic(NV)" — followed by the ship type;
+#   (b) cosmetic custom SHIP name — closed by ']' (the ship-label bracket), e.g.
+#       "<u>Zarmazd</u> <i>✖ DXa Zarming</i>] [Deringston Xa'thon]", or trailing after
+#       " - ".
+# strip_eve_markup deletes BOTH; to recover a pilot we remove only the cosmetic forms
+# (closed by ']' or introduced by " - ") and keep a remaining free-standing label.
+_COSMETIC_CLOSED_RE = re.compile(r"(?:\[[^\[\]<]*)?<i>.*?</i>\]", re.DOTALL)
+_COSMETIC_SUFFIX_RE = re.compile(r"\s-\s*(?:<[^>]*>\s*)*<i>.*?</i>", re.DOTALL)
+_ITALIC_RE = re.compile(r"<i>(.*?)</i>", re.DOTALL)
+
+
+def _italic_pilot_label(raw: str) -> str | None:
+    """Return the pilot name from a standalone <i>..</i> overview label in *raw*, or None.
+
+    Cosmetic custom-ship-name italics (closed by ']' or trailing after ' - ') are
+    excluded; only a free-standing pilot-name label is returned (inner markup stripped).
+    """
+    without = _COSMETIC_CLOSED_RE.sub("", raw)
+    without = _COSMETIC_SUFFIX_RE.sub("", without)
+    m = _ITALIC_RE.search(without)
+    if not m:
+        return None
+    pilot = strip_eve_markup(m.group(1)).strip()
+    return pilot or None
+
+
 # --------------------------------------------------------------------------- #
 #  Line-envelope parsing
 # --------------------------------------------------------------------------- #
@@ -408,7 +436,7 @@ _REP_RE = re.compile(
 )
 
 
-def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
+def _match_rep(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     m = _REP_RE.match(rest_stripped)
     if not m:
         return None
@@ -429,6 +457,18 @@ def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
         # "to" (armor out, new format) or "by shield" (new format)
         std = _parse_new_encoding(party_part)
     name, corp, alli, ship = _parse_counterparty(party_part, std, terse=module_name is None)
+
+    # When the counterparty's overview logs them by ship (pilot name in an <i> label
+    # that strip_eve_markup would delete), recover the pilot name from the raw line so
+    # the recipient is a character, not a hull. Only when the standard parse found NO
+    # structure — no [brackets] or tickers, i.e. a bare "Ship(Ticker)" — is a standalone
+    # <i> the recipient pilot. When a [CharName] bracket was parsed, THAT is the pilot
+    # and the <i> is a cosmetic custom SHIP name, so it must be left alone.
+    if ship is None and corp is None and alli is None:
+        pilot = _italic_pilot_label(rest_raw)
+        if pilot is not None:
+            ship = name  # the bare token we had is the hull
+            name = pilot
 
     return {
         "effect_type": effect_type,
@@ -640,7 +680,7 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         if effect is None:
             effect = _match_nos(rest_stripped)
         if effect is None:
-            effect = _match_rep(rest_stripped)
+            effect = _match_rep(rest_stripped, rest_raw)
         if effect is None:
             effect = _match_cap(rest_stripped)
         if effect is None:

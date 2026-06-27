@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -132,34 +131,38 @@ def _accumulate_reps(
 ) -> list[Contribution]:
     """Collapse remote-rep log rows into one Contribution per repper→recipient.
 
-    A single physical rep tick is logged by BOTH the repper (direction="out",
-    other_name=recipient) and the recipient (direction="in", other_name=repper).
-    We dedupe per tick — counting every "out" tick (the repper's authoritative
-    record) and adding an "in" tick only when the repper never logged it — then
-    collapse the surviving out/in ticks of each (repper, recipient) pair into a
-    single source→target row. This mirrors composition._reps_applied_by_char and
-    stops a logi being shown twice (with a doubled family total) in the snapshot.
+    A physical rep tick is logged by BOTH the repper (direction="out",
+    other_name=recipient) and the recipient (direction="in", other_name=repper). A
+    repper's own outgoing log is the complete authoritative record of their reps, so:
+
+      * a repper who logged ANY rep out is summed from their own out rows only — every
+        recipient-logged copy of their reps is dropped (this keeps the family TOTAL
+        honest: clocks skew a second or two, overheal makes the recipient's amount
+        differ, so per-tick matching would double count);
+      * recipient "in" rows are used ONLY to reconstruct reps from reppers who never
+        uploaded a log.
+
+    The recipient on each out row is taken from the repper's own log. Clients whose
+    overview logs the recipient by ship still carry the pilot name (in an <i> label the
+    parser now recovers — see parse._italic_pilot_label), so "who was repaired" is
+    preserved without any cross-log matching.
 
     *rows* are the generic-path tuples
     ``(cid, other, oship, eff, direction, amount, module, quality, ts)``.
-    Names on the log-owner side use the resolved Character name; the counterparty
-    side is taken verbatim from the log, so out/in collapse to the same key.
     """
-    # Index every "out" tick so a recipient's duplicate "in" tick can be matched
-    # and dropped. Key mirrors composition: (repper, recipient, effect, second,
-    # amount) — both clients stamp the same server-second for one physical tick.
-    out_ticks: Counter[tuple[str, str, str, object, float]] = Counter()
-    for cid, other, _os, eff, direction, amount, _m, _q, ts in rows:
-        if eff in _REP_EFFECTS and direction == "out" and cid is not None and other is not None:
-            repper = rep_names.get(cid)
-            if repper is not None:
-                out_ticks[(repper, other, eff, ts, float(amount or 0.0))] += 1
+    # Reppers who logged at least one rep out tick — their own log is authoritative.
+    out_repper_names: set[str] = set()
+    for cid, _other, _os, eff, direction, _amount, _m, _q, _ts in rows:
+        if eff in _REP_EFFECTS and direction == "out" and cid is not None:
+            nm = rep_names.get(cid)
+            if nm is not None:
+                out_repper_names.add(nm)
 
     RepKey = tuple[str, str, str]  # (repper_name, recipient_name, effect)
     rep_value: dict[RepKey, float] = {}
     rep_cid: dict[RepKey, int | None] = {}
     rep_ship: dict[RepKey, str] = {}
-    for cid, other, oship, eff, direction, amount, _m, _q, ts in rows:
+    for cid, other, oship, eff, direction, amount, _m, _q, _ts in rows:
         if eff not in _REP_EFFECTS or cid is None:
             continue
         if direction == "out":
@@ -171,12 +174,8 @@ def _accumulate_reps(
             if cleaned_ship != "?":
                 rep_ship.setdefault(rkey, cleaned_ship)
         elif direction == "in":
-            recipient_raw = rep_names.get(cid)
-            if other is not None and recipient_raw is not None:
-                dkey = (other, recipient_raw, eff, ts, float(amount or 0.0))
-                if out_ticks.get(dkey, 0) > 0:
-                    out_ticks[dkey] -= 1
-                    continue  # duplicate of the repper's authoritative out tick
+            if other is not None and other in out_repper_names:
+                continue  # repper's own out log is authoritative — drop the copy
             repper = _clean_target_name(other)
             recipient = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
             rkey = (repper, recipient, eff)
@@ -554,6 +553,18 @@ class Leaders:
     """Hostile (or unknown-side) character receiving the most incoming damage this bucket."""
     top_friendly_rep_recv: LeaderEntry | None
     """Friendly character receiving the most incoming reps this bucket."""
+    # Cap panel — "cap pressure" = neut + nos summed (GJ).
+    top_hostile_cap_pressure: LeaderEntry | None = None
+    """Hostile character under the most friendly cap pressure (neut+nos) this bucket."""
+    top_friendly_cap_pressure: LeaderEntry | None = None
+    """Friendly character applying the most cap pressure (neut+nos) this bucket (by source)."""
+    top_friendly_cap_recv: LeaderEntry | None = None
+    """Friendly character receiving the most remote cap transfer this bucket (GJ)."""
+    # Tackle / EWAR panel (amount = number of tackle applications)
+    top_hostile_tackle_taken: LeaderEntry | None = None
+    """Hostile character receiving the most tackle (scram/disrupt) this bucket."""
+    top_friendly_tackle_taken: LeaderEntry | None = None
+    """Friendly character receiving the most tackle (scram/disrupt) this bucket."""
 
 
 @dataclass
@@ -847,41 +858,51 @@ async def _compute_leaders(
     BucketAcc = dict[str, dict[int, float]]
     bucket_acc: dict[int, BucketAcc] = {}
 
-    # Friendly receivers come from their OWN incoming events (owner-keyed buckets):
-    #   FRIENDLY target, damage/in → friendly_dmg_taken
-    #   FRIENDLY target, rep*/in   → friendly_rep_recv
+    # Friendly metrics from OWN owner-keyed buckets:
+    #   FRIENDLY, damage/in       → friendly_dmg_taken   (receiver)
+    #   FRIENDLY, rep*/in         → friendly_rep_recv     (receiver)
+    #   FRIENDLY, cap_transfer/in    → friendly_cap_recv     (receiver)
+    #   FRIENDLY, (neut|nos)/out     → friendly_cap_pressure (source: pressure applied)
     for bucket_ts, char_id, effect_type, direction, total in rows:
-        if direction != "in":
-            continue
         idx = x_index.get(_epoch(bucket_ts))
         if idx is None:
             continue
         if char_side_map.get(char_id, "hostile") != "friendly":
             continue
-        if effect_type == "damage":
-            metric = "friendly_dmg_taken"
-        elif effect_type.startswith("rep"):
-            metric = "friendly_rep_recv"
+        if direction == "in":
+            if effect_type == "damage":
+                metric = "friendly_dmg_taken"
+            elif effect_type.startswith("rep"):
+                metric = "friendly_rep_recv"
+            elif effect_type == "cap_transfer":
+                metric = "friendly_cap_recv"
+            else:
+                continue
+        elif direction == "out" and effect_type in ("neut", "nos"):
+            metric = "friendly_cap_pressure"
         else:
             continue
         acc = bucket_acc.setdefault(idx, {})
         per_char = acc.setdefault(metric, {})
         per_char[char_id] = per_char.get(char_id, 0.0) + float(total or 0.0)
 
-    # Hostile receivers (hostile target taking the most FRIENDLY damage) cannot come
-    # from incoming events — we have no hostile logs. They live in friendly OUTGOING
-    # damage aggregated by TARGET (LogEvent.other_name), resolved to a hostile pilot.
+    # Hostile receivers (hostile taking the most FRIENDLY damage / cap pressure) cannot
+    # come from incoming events — we have no hostile logs. They live in friendly
+    # OUTGOING damage / neut / nos aggregated by TARGET (LogEvent.other_name),
+    # resolved to a hostile. neut + nos are summed into one "cap pressure" metric.
     out_rows = (
         await session.execute(
-            select(LogEvent.ts, LogEvent.other_name, LogEvent.amount).where(
+            select(
+                LogEvent.ts, LogEvent.other_name, LogEvent.effect_type, LogEvent.amount
+            ).where(
                 LogEvent.fight_id.in_(fight_ids),
-                LogEvent.effect_type == "damage",
+                LogEvent.effect_type.in_(("damage", "neut", "nos")),
                 LogEvent.direction == "out",
                 LogEvent.other_name.is_not(None),
             )
         )
     ).all()
-    for ts, other_name, amount in out_rows:
+    for ts, other_name, eff, amount in out_rows:
         tgt_cid = name_to_cid.get((other_name or "").lower())
         if tgt_cid is None or char_side_map.get(tgt_cid) != "hostile":
             continue
@@ -889,9 +910,40 @@ async def _compute_leaders(
         idx = x_index.get(floored)
         if idx is None:
             continue
+        metric = "hostile_dmg_taken" if eff == "damage" else "hostile_cap_pressure"
         acc = bucket_acc.setdefault(idx, {})
-        per_char = acc.setdefault("hostile_dmg_taken", {})
+        per_char = acc.setdefault(metric, {})
         per_char[tgt_cid] = per_char.get(tgt_cid, 0.0) + abs(float(amount or 0.0))
+
+    # Tackle (scram/disrupt) leaders — count applications on each TARGET pilot, using
+    # the deduped pilot-resolved rows (target_name, dedupe_suppressed=False) so each
+    # physical tackle is counted once. Split friendly/hostile by the target's side.
+    tackle_rows = (
+        await session.execute(
+            select(LogEvent.ts, LogEvent.target_name).where(
+                LogEvent.fight_id.in_(fight_ids),
+                LogEvent.effect_type.in_(list(_TACKLE_EFFECTS)),
+                LogEvent.dedupe_suppressed.is_(False),
+                LogEvent.target_name.is_not(None),
+            )
+        )
+    ).all()
+    for ts, target_name in tackle_rows:
+        tgt_cid = name_to_cid.get((target_name or "").lower())
+        if tgt_cid is None:
+            continue
+        floored = (_epoch(ts) // BUCKET_SECONDS) * BUCKET_SECONDS
+        idx = x_index.get(floored)
+        if idx is None:
+            continue
+        metric = (
+            "friendly_tackle_taken"
+            if char_side_map.get(tgt_cid, "hostile") == "friendly"
+            else "hostile_tackle_taken"
+        )
+        acc = bucket_acc.setdefault(idx, {})
+        per_char = acc.setdefault(metric, {})
+        per_char[tgt_cid] = per_char.get(tgt_cid, 0.0) + 1.0
 
     def _best(per_char: dict[int, float] | None) -> LeaderEntry | None:
         if not per_char:
@@ -913,9 +965,104 @@ async def _compute_leaders(
                 top_friendly_dmg_taken=_best(acc.get("friendly_dmg_taken")),
                 top_hostile_dmg_taken=_best(acc.get("hostile_dmg_taken")),
                 top_friendly_rep_recv=_best(acc.get("friendly_rep_recv")),
+                top_hostile_cap_pressure=_best(acc.get("hostile_cap_pressure")),
+                top_friendly_cap_pressure=_best(acc.get("friendly_cap_pressure")),
+                top_friendly_cap_recv=_best(acc.get("friendly_cap_recv")),
+                top_hostile_tackle_taken=_best(acc.get("hostile_tackle_taken")),
+                top_friendly_tackle_taken=_best(acc.get("friendly_tackle_taken")),
             )
         )
     return leaders
+
+
+async def build_kill_events(
+    session: AsyncSession,
+    fight_ids: list[int],
+    friendly_alliances: set[int],
+    friendly_corps: set[int],
+    overrides: dict[tuple[str, int], str],
+) -> list[KillEvent]:
+    """Kill-marker overlay events for *fight_ids*, victim-side classified, ts-sorted.
+
+    Shared by the fleet timeline and the per-character timeline (the character view
+    shows the same BR-wide kill marks as the fleet view).
+    """
+    fk_rows = list(
+        (
+            await session.execute(select(FightKill).where(FightKill.fight_id.in_(fight_ids)))
+        ).scalars()
+    )
+    km_ids = [fk.killmail_id for fk in fk_rows]
+    kills: list[KillEvent] = []
+    if not km_ids:
+        return kills
+
+    km_rows: list[Killmail] = list(
+        (
+            await session.execute(select(Killmail).where(Killmail.killmail_id.in_(km_ids)))
+        ).scalars()
+    )
+    km_map: dict[int, Killmail] = {km.killmail_id: km for km in km_rows}
+
+    victim_ids = {
+        km.victim_character_id for km in km_map.values() if km.victim_character_id is not None
+    }
+    victim_names: dict[int, str] = {}
+    if victim_ids:
+        for ch in (
+            await session.execute(
+                select(Character).where(Character.character_id.in_(victim_ids))
+            )
+        ).scalars():
+            if ch.name:
+                victim_names[ch.character_id] = ch.name
+
+    ship_type_ids = {
+        km.victim_ship_type_id for km in km_map.values() if km.victim_ship_type_id is not None
+    }
+    ship_name_map: dict[int, str] = {}
+    if ship_type_ids:
+        for inv in (
+            await session.execute(
+                select(InventoryType).where(InventoryType.type_id.in_(ship_type_ids))
+            )
+        ).scalars():
+            ship_name_map[inv.type_id] = inv.name
+
+    for km_id in km_ids:
+        km = km_map.get(km_id)
+        if km is None:
+            continue
+        side_kind = classify_entity(
+            km.victim_alliance_id,
+            km.victim_corporation_id,
+            baseline_alliances=friendly_alliances,
+            baseline_corps=friendly_corps,
+            overrides=overrides,
+        )
+        ship_name = (
+            ship_name_map.get(km.victim_ship_type_id, "Unknown")
+            if km.victim_ship_type_id is not None
+            else "Unknown"
+        )
+        kills.append(
+            KillEvent(
+                ts=_epoch(km.killmail_time),
+                killmail_id=km_id,
+                victim_character_id=km.victim_character_id,
+                victim_character_name=(
+                    victim_names.get(km.victim_character_id)
+                    if km.victim_character_id is not None
+                    else None
+                ),
+                victim_ship_name=ship_name,
+                victim_ship_type_id=km.victim_ship_type_id,
+                side_kind=side_kind,
+                isk=km.total_value,
+            )
+        )
+    kills.sort(key=lambda k: k.ts)
+    return kills
 
 
 # ---------------------------------------------------------------------------
@@ -1034,85 +1181,10 @@ async def fleet_timeline(
             )
         )
 
-    # 5. Build kills from FightKill + Killmail + FightSide + InventoryType ---------
-    fk_rows = list(
-        (
-            await session.execute(
-                select(FightKill).where(FightKill.fight_id.in_(fight_ids))
-            )
-        ).scalars()
+    # 5. Build kills ----------------------------------------------------------------
+    kills = await build_kill_events(
+        session, fight_ids, friendly_alliances, friendly_corps, side_overrides
     )
-    km_ids = [fk.killmail_id for fk in fk_rows]
-
-    kills: list[KillEvent] = []
-    if km_ids:
-        km_rows: list[Killmail] = list(
-            (
-                await session.execute(
-                    select(Killmail).where(Killmail.killmail_id.in_(km_ids))
-                )
-            ).scalars()
-        )
-        km_map: dict[int, Killmail] = {km.killmail_id: km for km in km_rows}
-
-        victim_ids = {
-            km.victim_character_id for km in km_map.values() if km.victim_character_id is not None
-        }
-        victim_names: dict[int, str] = {}
-        if victim_ids:
-            for ch in (
-                await session.execute(
-                    select(Character).where(Character.character_id.in_(victim_ids))
-                )
-            ).scalars():
-                if ch.name:
-                    victim_names[ch.character_id] = ch.name
-
-        ship_type_ids = {
-            km.victim_ship_type_id for km in km_map.values() if km.victim_ship_type_id is not None
-        }
-        ship_name_map: dict[int, str] = {}
-        if ship_type_ids:
-            for inv in (
-                await session.execute(
-                    select(InventoryType).where(InventoryType.type_id.in_(ship_type_ids))
-                )
-            ).scalars():
-                ship_name_map[inv.type_id] = inv.name
-
-        for km_id in km_ids:
-            km = km_map.get(km_id)
-            if km is None:
-                continue
-            side_kind = classify_entity(
-                km.victim_alliance_id,
-                km.victim_corporation_id,
-                baseline_alliances=friendly_alliances,
-                baseline_corps=friendly_corps,
-                overrides=side_overrides,
-            )
-            ship_name = (
-                ship_name_map.get(km.victim_ship_type_id, "Unknown")
-                if km.victim_ship_type_id is not None
-                else "Unknown"
-            )
-            kills.append(
-                KillEvent(
-                    ts=_epoch(km.killmail_time),
-                    killmail_id=km_id,
-                    victim_character_id=km.victim_character_id,
-                    victim_character_name=(
-                        victim_names.get(km.victim_character_id)
-                        if km.victim_character_id is not None
-                        else None
-                    ),
-                    victim_ship_name=ship_name,
-                    victim_ship_type_id=km.victim_ship_type_id,
-                    side_kind=side_kind,
-                    isk=km.total_value,
-                )
-            )
-        kills.sort(key=lambda k: k.ts)
 
     leaders = await _compute_leaders(
         session, fight_ids, x, x_index, settings or get_settings(),

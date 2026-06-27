@@ -169,6 +169,8 @@ class CharacterTimelineOut(BaseModel):
     """Sorted, unique epoch-second timestamps of every bucket across all series."""
     series: list[TimelineSeriesOut]
     fights: list[TimelineFightInfo]
+    kills: list[KillEventOut] = []
+    """BR-wide kill marks (same overlay as the fleet view)."""
     t_start: int | None
     t_end: int | None
 
@@ -394,11 +396,19 @@ class LeaderEntryOut(BaseModel):
 
 
 class LeadersOut(BaseModel):
-    """Per-bucket leaders split by the target's side (3 fields)."""
+    """Per-bucket leaders split by the target's side, grouped by graph panel."""
 
+    # Damage panel
     top_friendly_dmg_taken: LeaderEntryOut | None
     top_hostile_dmg_taken: LeaderEntryOut | None
     top_friendly_rep_recv: LeaderEntryOut | None
+    # Cap panel — "cap pressure" = neut + nos summed
+    top_hostile_cap_pressure: LeaderEntryOut | None = None
+    top_friendly_cap_pressure: LeaderEntryOut | None = None
+    top_friendly_cap_recv: LeaderEntryOut | None = None
+    # Tackle / EWAR panel
+    top_hostile_tackle_taken: LeaderEntryOut | None = None
+    top_friendly_tackle_taken: LeaderEntryOut | None = None
 
 
 class FleetTimelineOut(BaseModel):

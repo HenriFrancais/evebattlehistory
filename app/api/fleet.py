@@ -118,6 +118,11 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
                 top_friendly_dmg_taken=_leader_out(ld.top_friendly_dmg_taken),
                 top_hostile_dmg_taken=_leader_out(ld.top_hostile_dmg_taken),
                 top_friendly_rep_recv=_leader_out(ld.top_friendly_rep_recv),
+                top_hostile_cap_pressure=_leader_out(ld.top_hostile_cap_pressure),
+                top_friendly_cap_pressure=_leader_out(ld.top_friendly_cap_pressure),
+                top_friendly_cap_recv=_leader_out(ld.top_friendly_cap_recv),
+                top_hostile_tackle_taken=_leader_out(ld.top_hostile_tackle_taken),
+                top_friendly_tackle_taken=_leader_out(ld.top_friendly_tackle_taken),
             )
             for ld in tl.leaders
         ],
