@@ -955,3 +955,25 @@ def test_rep_cosmetic_custom_ship_name_is_not_taken_as_pilot() -> None:
     assert evt is not None
     assert evt.effect_type == "rep_armor"
     assert evt.other_name != "✖ DXa Zarming"   # the cosmetic ship name is not the pilot
+
+
+def test_resolve_counterparty_layouts() -> None:
+    """The unified resolver attributes the pilot across every overview layout."""
+    from app.logs.parse import _resolve_counterparty
+
+    # NEW: pilot first
+    assert _resolve_counterparty("Liberty Tokila [NV][NVACA] Guardian")[0] == "Liberty Tokila"
+    # OLD: pilot in trailing bracket after ship + 2 tickers
+    assert _resolve_counterparty("Eris [NV] [NVACA] [Zweige Teufel]")[0] == "Zweige Teufel"
+    # Trailing [pilot] bracket with only a ship before it (custom-name layout, stripped)
+    name, _c, _a, ship = _resolve_counterparty("Zarmazd [Deringston Xa'thon]")
+    assert name == "Deringston Xa'thon"
+    assert ship == "Zarmazd"
+    # Italic pilot label in raw, ship-only stripped form (overview pilot-name in <i>)
+    name, _c, _a, ship = _resolve_counterparty("Heretic(NV)", raw="<i>Body Cam Off</i>Heretic(NV)")
+    assert name == "Body Cam Off"
+    # Terse ship + tickers, no pilot present
+    name, _c, _a, ship = _resolve_counterparty("Zarmazd [NV] [NVACA]")
+    assert name is None and ship == "Zarmazd"
+    # Bare NPC / unknown — fallback keeps the token
+    assert _resolve_counterparty("Sleepless Sentinel")[0] == "Sleepless Sentinel"
