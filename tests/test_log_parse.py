@@ -891,3 +891,29 @@ def test_standard_rep_with_module_still_has_pilot_and_module() -> None:
     assert evt.other_name == "Mr Jesterman"
     assert evt.other_ship_name == "Zarmazd"
     assert evt.module_name == "Perun Heavy Mutadaptive Remote Armor Repairer"
+
+
+def test_outgoing_burst_jammer_is_jam_out() -> None:
+    """Outgoing ECM ('<victim> target locks broken - <module>'), standard + terse."""
+    for line in (
+        "[ 2026.06.26 20:51:10 ] (combat) Berserker II [LOST.] [.ANOM] [Berserker II] "
+        "- target locks broken - Rash Compact Burst Jammer",
+        "[ 2026.06.26 20:51:10 ] (combat) Ogre II [MSF.][DDOG.] Ogre II target locks "
+        "broken - Unit P-343554's Modified Burst Jammer",
+    ):
+        evt = parse_line(line)
+        assert evt is not None
+        assert evt.effect_type == "jam"
+        assert evt.direction == "out"
+        assert evt.other_name is None  # victim never attributed (avoids fake participants)
+        assert evt.module_name
+
+
+def test_incoming_jam_not_confused_with_outgoing_burst() -> None:
+    evt = parse_line(
+        "[ 2026.06.26 20:51:21 ] (combat) Your target locks broken by "
+        "Tempest Fleet Issue [MSF.] [DDOG.]"
+    )
+    assert evt is not None
+    assert evt.effect_type == "jam"
+    assert evt.direction == "in"

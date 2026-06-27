@@ -514,6 +514,30 @@ def _match_jam_broken(rest_stripped: str) -> dict[str, Any] | None:
     }
 
 
+# Outgoing ECM (burst) jammer: the listener breaks a target's locks, logged as
+# "<victim> ... target locks broken - <module>" (standard and terse clients). The
+# victim is typically a drone/fighter and is never a reliable pilot counterparty,
+# so other_name is left None (the jam is counted, not attributed).
+_JAM_OUT_RE = re.compile(r"^.+?\s+(?:-\s+)?target locks broken\s+-\s+(.+)$", re.DOTALL)
+
+
+def _match_jam_out(rest_stripped: str) -> dict[str, Any] | None:
+    m = _JAM_OUT_RE.match(rest_stripped)
+    if not m:
+        return None
+    return {
+        "effect_type": "jam",
+        "direction": "out",
+        "amount": None,
+        "other_name": None,
+        "other_corp_ticker": None,
+        "other_alliance_ticker": None,
+        "other_ship_name": None,
+        "module_name": m.group(1).strip(),
+        "quality": None,
+    }
+
+
 def _match_jam(tag: str, rest_stripped: str) -> dict[str, Any] | None:
     if tag != "notify":
         return None
@@ -621,6 +645,8 @@ def parse_line(line: str) -> ParsedLogEvent | None:
             effect = _match_cap(rest_stripped)
         if effect is None:
             effect = _match_jam_broken(rest_stripped)
+        if effect is None:
+            effect = _match_jam_out(rest_stripped)
     elif tag == "notify":
         effect = _match_jam(tag, rest_stripped)
 
