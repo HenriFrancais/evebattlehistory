@@ -585,3 +585,80 @@ async def test_api_events_400_from_greater_than_to(tmp_path, monkeypatch) -> Non
     reset_engine_for_tests()
     get_settings.cache_clear()
     get_app_config.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Cross-log reconstruction: a character's remote reps / cap are reconstructed
+# from OTHER friendly logs that name them (deduped against their own log), so a
+# logi whose own log is missing/incomplete still gets a timeline.
+# ---------------------------------------------------------------------------
+
+_LOGI = 2300000001
+
+
+async def _logfile(session, char_id, sha):  # type: ignore[no-untyped-def]
+    from app.db.models import GamelogFile
+    gf = GamelogFile(uploaded_by_user="u", claimed_character_id=char_id, resolved_via="filename",
+                     stored_path=f"/{sha}", sha256=sha, mime="text/plain", size=1,
+                     parse_status="parsed", event_count=1, uploaded_at=dt.datetime.now(dt.UTC))
+    session.add(gf)
+    await session.flush()
+    return gf
+
+
+async def test_character_timeline_reconstructs_reps_from_other_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A logi with NO usable own log still shows outgoing reps, reconstructed from
+    the recipients' logs that recorded 'repaired by <logi>'."""
+    from app.analytics.timeline import character_timeline
+    from app.db.models import Character
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await session.merge(Character(character_id=_LOGI, name="Logi Covin",
+                                      last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+        # Recipient CHAR_A logs reps received from the logi, in CHAR_A's own log.
+        gf = await _logfile(session, CHAR_A, "recip")
+        for amt in (600.0, 400.0):
+            session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_A, ts=BUCKET_TS_1,
+                                 direction="in", effect_type="rep_armor", amount=amt,
+                                 other_name="Logi Covin", fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await character_timeline(session, br_id, _LOGI)
+
+    s = next((s for s in tl.series if s.effect_type == "rep_armor" and s.direction == "out"), None)
+    assert s is not None, "logi's outgoing reps should be reconstructed from recipients' logs"
+    assert sum(v for v in s.values if v is not None) == pytest.approx(1000.0)
+
+
+async def test_character_timeline_reps_not_double_counted_across_logs(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """When the logi AND the recipient both logged the same rep tick, it counts once."""
+    from app.analytics.timeline import character_timeline
+    from app.db.models import Character
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await session.merge(Character(character_id=_LOGI, name="Logi Covin",
+                                      last_seen_at=dt.datetime.now(dt.UTC)))
+        await session.flush()
+        recip_name = f"Char{CHAR_A}"  # _insert_fight names characters "Char<id>"
+        # Logi's own log: outgoing rep to CHAR_A.
+        gf_logi = await _logfile(session, _LOGI, "logi")
+        session.add(LogEvent(file_id=gf_logi.file_id, character_id=_LOGI, ts=BUCKET_TS_1,
+                             direction="out", effect_type="rep_armor", amount=1000.0,
+                             other_name=recip_name, fight_id=fight_id))
+        # Recipient's own log: the SAME physical tick, incoming from the logi.
+        gf_recip = await _logfile(session, CHAR_A, "recip")
+        session.add(LogEvent(file_id=gf_recip.file_id, character_id=CHAR_A, ts=BUCKET_TS_1,
+                             direction="in", effect_type="rep_armor", amount=1000.0,
+                             other_name="Logi Covin", fight_id=fight_id))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await character_timeline(session, br_id, _LOGI)
+
+    s = next((s for s in tl.series if s.effect_type == "rep_armor" and s.direction == "out"), None)
+    assert s is not None
+    assert sum(v for v in s.values if v is not None) == pytest.approx(1000.0)  # once, not 2000

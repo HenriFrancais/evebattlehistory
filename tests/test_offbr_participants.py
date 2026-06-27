@@ -153,3 +153,53 @@ async def test_offbr_excludes_inventory_type_named_counterparties(db_session_mak
     assert DRONE_NAMED_CHAR not in by_id, "drone-named inventory type leaked in as a participant"
     assert REAL_ENEMY in by_id, "genuine counterparty pilot must still be identified"
     assert by_id[OFFBR_LOGI].source == "log_owner"
+
+
+@pytest.mark.asyncio
+async def test_offbr_excludes_jam_and_munition_counterparties(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Jam tokens (the jammer's custom ship-name) and munition tokens (a generic
+    label whose logged 'ship' is an SDE charge) must never become participants,
+    even when they coincidentally match a real character name."""
+    from app.config import get_settings
+    from app.db.models import Character, InventoryType, LogEvent
+    from app.fights.offbr_participants import offbr_log_characters
+    from app.logs.associate import associate_file
+
+    JAM_CHAR = 5100000021   # real player named like a custom ship ("butter")
+    MUNI_CHAR = 5100000022  # real player coincidentally named "Torpedo"
+    REAL = 5100000023       # a genuine counterparty
+    settings = get_settings()
+
+    async with db_session_maker() as session:
+        now = dt.datetime.now(dt.UTC)
+        _fid, br_id = await _insert_fight_with_killmail(session)
+        session.add(InventoryType(type_id=27351, name="Caldari Navy Mjolnir Torpedo",
+                                  category_id=8))  # Charge
+        session.add(Character(character_id=OFFBR_LOGI, name="OffbrLogi", last_seen_at=now))
+        session.add(Character(character_id=JAM_CHAR, name="butter", last_seen_at=now))
+        session.add(Character(character_id=MUNI_CHAR, name="Torpedo", last_seen_at=now))
+        session.add(Character(character_id=REAL, name="RealEnemy", last_seen_at=now))
+        await session.flush()
+
+        fid = await _insert_gamelog_file(session, character_id=OFFBR_LOGI)
+        # jam line names the jammer's ship "butter"
+        session.add(LogEvent(file_id=fid, character_id=OFFBR_LOGI, ts=TS_INSIDE,
+                             direction="in", effect_type="jam", other_name="butter"))
+        # damage shot at an incoming torpedo: label "Torpedo", ship is the charge type
+        session.add(LogEvent(file_id=fid, character_id=OFFBR_LOGI, ts=TS_INSIDE,
+                             direction="out", effect_type="damage", amount=100.0,
+                             other_name="Torpedo", other_ship_name="Caldari Navy Mjolnir Torpedo"))
+        # a genuine enemy via neut
+        session.add(LogEvent(file_id=fid, character_id=OFFBR_LOGI, ts=TS_INSIDE,
+                             direction="out", effect_type="neut", amount=0.0,
+                             other_name="RealEnemy"))
+        await associate_file(session, fid)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await offbr_log_characters(session, settings, br_id)
+
+    by_id = {p.character_id: p for p in result}
+    assert JAM_CHAR not in by_id, "jam token (custom ship-name) leaked as a participant"
+    assert MUNI_CHAR not in by_id, "munition token (charge) leaked as a participant"
+    assert REAL in by_id, "genuine counterparty must still be identified"

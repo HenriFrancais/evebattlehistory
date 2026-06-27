@@ -24,6 +24,12 @@ from app.fights.participants import br_logged_char_ids, fight_participant_char_i
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
+#: SDE category ids of things a counterparty can carry as a "ship" that are NOT a
+#: pilotable hull — i.e. munitions a defender shoots down (torpedoes, missiles,
+#: bombs, probes are all category 8, Charge). A token logged with one of these as
+#: its ship is the munition, not a participant.
+_MUNITION_CATEGORY_IDS = (8,)
+
 
 @dataclass
 class OffBrChar:
@@ -56,12 +62,23 @@ async def offbr_log_characters(
     # Source B: counterparty names in the BR's fight logs, exact-matched to a Character.
     name_rows = (
         await session.execute(
-            select(LogEvent.other_name, LogEvent.source_name, LogEvent.target_name).where(
-                LogEvent.fight_id.in_(fight_ids)
-            )
+            select(
+                LogEvent.other_name,
+                LogEvent.source_name,
+                LogEvent.target_name,
+                LogEvent.effect_type,
+            ).where(LogEvent.fight_id.in_(fight_ids))
         )
     ).all()
-    cp_names = {v for row in name_rows for v in row if v}
+    # Jam lines name the *jammer's ship* (frequently a custom ship-name like "butter"),
+    # never a pilot, so they must never seed a participant.
+    cp_names = {
+        v
+        for other, src, tgt, eff in name_rows
+        if eff != "jam"
+        for v in (other, src, tgt)
+        if v
+    }
     # Drop counterparty tokens that are actually SDE inventory types (ships, drones,
     # missiles, charges). EVE players sometimes share a name with an item, so a log
     # token like "Hobgoblin II" or "Caldari Navy Warden" can resolve to a
@@ -79,6 +96,29 @@ async def offbr_log_characters(
             ).all()
         }
         cp_names = {n for n in cp_names if n.lower() not in inv_lower}
+    # Drop munition counterparties: a defender shooting an incoming torpedo / bubble
+    # logs "<generic label>[CORP](<charge type>)" — the label ("Torpedo",
+    # "Interdiction Probe") is not itself an SDE name so it slips the filter above, but
+    # the type it carries IS a non-pilot SDE charge. Exclude any token whose logged
+    # ship is such a type. (Pilots fly ships — category 6 — never charges.)
+    if cp_names:
+        munition_tokens = {
+            (nm or "").lower()
+            for (nm,) in (
+                await session.execute(
+                    select(LogEvent.other_name)
+                    .join(InventoryType, InventoryType.name == LogEvent.other_ship_name)
+                    .where(
+                        LogEvent.fight_id.in_(fight_ids),
+                        LogEvent.other_name.in_(cp_names),
+                        InventoryType.category_id.in_(_MUNITION_CATEGORY_IDS),
+                    )
+                    .distinct()
+                )
+            ).all()
+            if nm
+        }
+        cp_names = {n for n in cp_names if n.lower() not in munition_tokens}
     name_to_cid: dict[str, int] = {}
     if cp_names:
         lowered = {n.lower() for n in cp_names}
