@@ -1,7 +1,7 @@
 // Fleet composition summary with Composition / By-character / By-user modes.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CompositionPilot, CompositionResponse, CompositionSide } from '../api'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { loadComposition } from '../cache'
 import { fmtCompact } from '../format'
 import { ShipPicker } from './ShipPicker'
@@ -84,8 +84,29 @@ function CompositionView({ side }: { side: CompositionSide }) {
 
 function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onChanged, sideKind }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void; sideKind: string }) {
   const weapons = p.weapons ?? []
+  const [logBusy, setLogBusy] = useState(false)
+  const [logErr, setLogErr] = useState<string | null>(null)
   const setSide = (side: 'friendly' | 'hostile') =>
     api.setParticipantSide(brId, p.character_id, sideKind === side ? null : side).then(onChanged)
+  const downloadLog = async () => {
+    setLogBusy(true)
+    setLogErr(null)
+    try {
+      const { blob, filename } = await api.downloadCharacterLog(brId, p.character_id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setLogErr(e instanceof ApiError ? e.message : 'download failed')
+    } finally {
+      setLogBusy(false)
+    }
+  }
   return (
     <div className={p.from_logs ? 'comp-from-logs' : undefined}>
       <div className="comp-prow">
@@ -118,6 +139,17 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onCha
           ) : p.lost ? (
             <span className="comp-lost" title="lost ship"> ✗</span>
           ) : null}
+          {showLogs && p.has_logs && (
+            <button
+              className="btn-mini"
+              style={{ marginLeft: '0.3rem', fontSize: '0.72rem', padding: '0.05rem 0.3rem' }}
+              title={logErr ?? "Download this character's gamelog for the battle (cleaned)"}
+              disabled={logBusy}
+              onClick={downloadLog}
+            >
+              {logBusy ? '…' : 'log'}
+            </button>
+          )}
         </span>
         {p.kill_count > 0 ? (
           <span className="comp-stat comp-stat-dmg"

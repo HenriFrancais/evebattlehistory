@@ -654,6 +654,29 @@ export const api = {
     return res.json() as Promise<LogUploadResult[]>
   },
   myLogs: () => jsonFetch<MyLogFile[]>(`${API}/logs/mine`),
+  /** Download a character's gamelog for a battle (sliced to the battle window,
+   * markup stripped). Returns the file blob + server-supplied filename. */
+  downloadCharacterLog: async (
+    brId: string,
+    characterId: number,
+  ): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(`${API}/brs/${brId}/logs/${characterId}/download`, {
+      headers: _impersonateHeaders(),
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        if (typeof body?.detail === 'string') detail = body.detail
+      } catch {
+        // non-JSON error body; keep statusText
+      }
+      throw new ApiError(res.status, detail)
+    }
+    const cd = res.headers.get('Content-Disposition') ?? ''
+    const m = /filename="?([^"]+)"?/.exec(cd)
+    return { blob: await res.blob(), filename: m ? m[1] : `${characterId}-${brId}.txt` }
+  },
   brCoverage: (id: string) => jsonFetch<UserCoverage[]>(`${API}/brs/${id}/coverage`),
   myBrCoverage: (id: string) => jsonFetch<UserCoverage>(`${API}/brs/${id}/my-coverage`),
   brParticipants: (id: string) => jsonFetch<ParticipantInfo[]>(`${API}/brs/${id}/participants`),
