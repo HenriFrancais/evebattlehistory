@@ -8,15 +8,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
 
+from app.api.access import acting_user, can_view_character
 from app.api.auth import current_user
 from app.api.deps import SessionDep, SessionMakerDep
 from app.config import get_settings
 from app.db.models import GamelogFile, LogEvent
 from app.fights.offbr_resolve import resolve_log_characters
 from app.logs.associate import associate_file_to_all
+from app.logs.extract import build_battle_log
 from app.logs.ingest import GamelogFileResult, ingest_log
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
@@ -138,3 +140,25 @@ async def get_my_logs(request: Request, session: SessionDep) -> list[dict[str, A
         }
         for f in files
     ]
+
+
+@router.get("/api/brs/{br_id}/logs/{character_id}/download")
+async def download_character_battle_log(
+    br_id: str, character_id: int, request: Request, session: SessionDep
+) -> Response:
+    """Download a character's gamelog for this battle, sliced to the battle window
+    and stripped of EVE/HTML markup. Concatenates if the character has >1 file."""
+    user = await acting_user(request)
+    if not await can_view_character(user, character_id):
+        raise HTTPException(status_code=403, detail="not allowed to view this character")
+
+    result = await build_battle_log(session, br_id, character_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="no logs for this character in this battle")
+
+    text, filename = result
+    return Response(
+        content=text,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
