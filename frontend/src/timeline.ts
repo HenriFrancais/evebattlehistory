@@ -29,7 +29,7 @@ export function toFleetTimeline(ct: CharacterTimeline): FleetTimeline {
       metric: 'amount',
       values: s.values,
     })),
-    kills: [],
+    kills: ct.kills ?? [],
     fights: ct.fights,
     bucket_seconds: deriveBucketSeconds(ct.x),
     t_start: ct.t_start,

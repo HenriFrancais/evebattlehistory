@@ -86,7 +86,7 @@ export function CharacterTimelinePage() {
         <div className="br-detail-grid" data-testid="br-detail-grid">
           <div className="br-col-main" data-testid="br-col-main">
             <section className="panel">
-              <FleetGraphCore fleet={fleetLike} selectedRange={range} onSelectRange={setRange} />
+              <FleetGraphCore fleet={fleetLike} selectedRange={range} onSelectRange={setRange} showHoverSummary={false} />
             </section>
           </div>
           <div className="br-col-side" data-testid="br-col-side">

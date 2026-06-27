@@ -6,7 +6,6 @@ import { invalidateBr, loadBr, loadMe } from '../cache'
 import { CoverageMatrix } from '../components/CoverageMatrix'
 import { FleetGraph } from '../components/FleetGraph'
 import { FleetsPanel } from '../components/FleetsPanel'
-import { LossDetailPanel } from '../components/LossDetailPanel'
 import { SnapshotPanel } from '../components/SnapshotPanel'
 import { SidesEditor } from '../components/SidesEditor'
 import { IngestProgress } from '../components/IngestProgress'
@@ -443,7 +442,6 @@ export function BrDetailPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [sidesVersion, setSidesVersion] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
-  const [selectedKillmailId, setSelectedKillmailId] = useState<number | null>(null)
   const [graphFullscreen, setGraphFullscreen] = useState(false)
 
   // `force` bypasses the prefetch cache and refreshes it — used after an ingest
@@ -671,7 +669,7 @@ export function BrDetailPage() {
 
       {/* Fleets spans the full page width; the snapshot/graph grid begins below it. */}
       <section className="panel" data-testid="fleets-section">
-        {id && <FleetsPanel brId={id} reloadKey={sidesVersion} onSelectKill={setSelectedKillmailId} />}
+        {id && <FleetsPanel brId={id} reloadKey={sidesVersion} />}
       </section>
 
       <div className="br-detail-grid" data-testid="br-detail-grid">
@@ -697,22 +695,6 @@ export function BrDetailPage() {
           </section>
         </div>
         <div className="br-col-side" data-testid="br-col-side">
-          {selectedKillmailId != null && id && (
-            <section className="panel">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                <h3 style={{ margin: 0 }}>Loss Detail</h3>
-                <button
-                  type="button"
-                  className="btn-mini"
-                  aria-label="Close loss detail"
-                  onClick={() => setSelectedKillmailId(null)}
-                >
-                  ×
-                </button>
-              </div>
-              <LossDetailPanel brId={id} killmailId={selectedKillmailId} />
-            </section>
-          )}
           <section className="panel">
             <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
             {id && <SnapshotPanel brId={id} range={range} onClearRange={() => setRange(null)} />}
