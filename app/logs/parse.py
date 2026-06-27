@@ -86,8 +86,32 @@ _OLD_ENC_RE = re.compile(
     r"^([\w' \-]+?)\s+\[([^\]]*)\]\s+\[?([^\]]*?)\]?\s+\[([^\]]+)\]$"
 )
 
+# TERSE form (a client variant seen in real logs renders combat counterparties with
+# NO pilot name — just the ship and 1-2 [ALLI] [CORP] tickers, e.g.
+# "Zarmazd [NV] [NVACA]" or "Leshak [SHORK]"). No inner [pilot] bracket and no
+# trailing module. We can't recover the pilot, so name is None and we keep the ship.
+_SHIP_TICKERS_RE = re.compile(
+    r"^([\w' \-]+?)\s+\[([^\]]+)\](?:\s+\[([^\]]+)\])?$"
+)
 
-def _parse_new_encoding(text: str) -> tuple[str, str | None, str | None, str | None]:
+
+def _parse_ship_tickers(text: str) -> tuple[str | None, str | None, str | None, str] | None:
+    """Parse the terse 'Ship [ALLI] [CORP]' counterparty form (no pilot name).
+
+    Returns (name=None, corp, alli, ship) or None if *text* isn't that shape.
+    First ticker is treated as alliance, second (if any) as corp — mirroring the
+    OLD encoding's '[ALLI] [CORP]' order.
+    """
+    m = _SHIP_TICKERS_RE.match(text.strip())
+    if not m:
+        return None
+    ship = m.group(1).strip()
+    alli = m.group(2).strip() or None
+    corp = (m.group(3).strip() or None) if m.group(3) else None
+    return None, corp, alli, ship
+
+
+def _parse_new_encoding(text: str) -> tuple[str | None, str | None, str | None, str | None]:
     """Return (name, corp_ticker, alliance_ticker, ship)."""
     text = text.strip()
     m = _NEW_ENC_RE.match(text)
@@ -101,7 +125,7 @@ def _parse_new_encoding(text: str) -> tuple[str, str | None, str | None, str | N
     return text, None, None, None
 
 
-def _parse_old_encoding(text: str) -> tuple[str, str | None, str | None, str | None]:
+def _parse_old_encoding(text: str) -> tuple[str | None, str | None, str | None, str | None]:
     """Return (name, corp_ticker, alli_ticker, ship) — OLD format has Ship first, CharName last."""
     text = text.strip()
     m = _OLD_ENC_RE.match(text)
@@ -112,6 +136,23 @@ def _parse_old_encoding(text: str) -> tuple[str, str | None, str | None, str | N
         char_name = m.group(4).strip()
         return char_name, corp, alli, ship
     return text, None, None, None
+
+
+def _parse_counterparty(
+    party: str, std: tuple[str | None, str | None, str | None, str | None], *, terse: bool
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Resolve a counterparty identity, only falling back to the terse
+    ``Ship [ALLI] [CORP]`` (no-pilot) form when *terse* is True — i.e. the line
+    omitted its trailing module/target, the signal of the terse client variant.
+
+    This keeps every already-parsing (module-bearing) line byte-identical: it is
+    applied solely to lines the strict regexes previously dropped entirely.
+    """
+    if terse:
+        st = _parse_ship_tickers(party)
+        if st is not None:
+            return st
+    return std
 
 
 # --------------------------------------------------------------------------- #
@@ -125,32 +166,82 @@ _DAMAGE_RE = re.compile(
     r"^(\d+)\s+(from|to)\s+([\w' \-\.]+)\[([^\]]*)\]\(([^)]+)\)\s+-\s+(.+?)\s+-\s+(\w[\w ]+\w)$"
 )
 
+# A client variant logs damage with NO "[CORP](Ship)" decoration — just the bare
+# pilot name, then module and quality, e.g.
+#   "319 from Kyren Fumimasa - Veles Supratidal Entropic Disintegrator - Hits"
+# Tried only after the full-decoration form fails, so it never weakens the rich case.
+_DAMAGE_BARE_RE = re.compile(
+    r"^(\d+)\s+(from|to)\s+(.+?)\s+-\s+(.+?)\s+-\s+(\w[\w ]+\w)$"
+)
+
+# NPC / Sleeper / sentry damage carries no module at all — just name and quality,
+# e.g. "27 from Awakened Sentinel - Penetrates". Anchored on the closed set of
+# EVE damage qualities so it can only ever match a genuine damage line.
+_DAMAGE_QUALITIES = (
+    "Hits", "Penetrates", "Grazes", "Smashes", "Glances Off", "Wrecks", "Barely Scratches",
+)
+_DAMAGE_NOMOD_RE = re.compile(
+    r"^(\d+)\s+(from|to)\s+(.+?)\s+-\s+(" + "|".join(_DAMAGE_QUALITIES) + r")$"
+)
+
 
 def _match_damage(rest: str) -> dict[str, Any] | None:
     """Match damage in/out line on the already-stripped *rest*."""
     m = _DAMAGE_RE.match(rest.strip())
-    if not m:
-        return None
-    direction: Literal["in", "out"] = "in" if m.group(2) == "from" else "out"
-    return {
-        "effect_type": "damage",
-        "direction": direction,
-        "amount": float(m.group(1)),
-        "other_name": m.group(3).strip(),
-        "other_corp_ticker": m.group(4).strip() or None,
-        "other_alliance_ticker": None,
-        "other_ship_name": m.group(5).strip(),
-        "module_name": m.group(6).strip(),
-        "quality": m.group(7).strip(),
-    }
+    if m:
+        direction: Literal["in", "out"] = "in" if m.group(2) == "from" else "out"
+        return {
+            "effect_type": "damage",
+            "direction": direction,
+            "amount": float(m.group(1)),
+            "other_name": m.group(3).strip(),
+            "other_corp_ticker": m.group(4).strip() or None,
+            "other_alliance_ticker": None,
+            "other_ship_name": m.group(5).strip(),
+            "module_name": m.group(6).strip(),
+            "quality": m.group(7).strip(),
+        }
+    mb = _DAMAGE_BARE_RE.match(rest.strip())
+    if mb:
+        direction = "in" if mb.group(2) == "from" else "out"
+        return {
+            "effect_type": "damage",
+            "direction": direction,
+            "amount": float(mb.group(1)),
+            "other_name": mb.group(3).strip(),
+            "other_corp_ticker": None,
+            "other_alliance_ticker": None,
+            "other_ship_name": None,
+            "module_name": mb.group(4).strip(),
+            "quality": mb.group(5).strip(),
+        }
+    mn = _DAMAGE_NOMOD_RE.match(rest.strip())
+    if mn:
+        direction = "in" if mn.group(2) == "from" else "out"
+        return {
+            "effect_type": "damage",
+            "direction": direction,
+            "amount": float(mn.group(1)),
+            "other_name": mn.group(3).strip(),
+            "other_corp_ticker": None,
+            "other_alliance_ticker": None,
+            "other_ship_name": None,
+            "module_name": None,
+            "quality": mn.group(4).strip(),
+        }
+    return None
 
 
 # --------------------------------------------------------------------------- #
 #  Warp disrupt / scram
 # --------------------------------------------------------------------------- #
 
+# Standard form names both parties ("from <src> to <tgt>"). A client variant logs
+# only the initiator on an incoming attempt ("Warp scramble attempt from <enemy>"),
+# omitting "to you" — so the " to <tgt>" tail is optional; absent ⇒ target is the
+# listener ("you").
 _EWAR_RE = re.compile(
-    r"^Warp (disruption|scramble) attempt from (.+?) to (.+)$",
+    r"^Warp (disruption|scramble) attempt from (.+?)(?: to (.+))?$",
     re.DOTALL,
 )
 
@@ -168,11 +259,15 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
         return None
     ewar_type = "disrupt" if m.group(1) == "disruption" else "scram"
     src_raw = m.group(2).strip()
-    tgt_raw = m.group(3).strip()
+    tgt_raw = (m.group(3) or "").strip()
     src_is_you = src_raw == "you"
-    tgt_is_you = tgt_raw.rstrip("!") == "you"
+    # Target omitted (terse incoming form) ⇒ the listener is the implicit target,
+    # and the source is rendered as the terse "Ship [ALLI] [CORP]" (no pilot name).
+    terse = m.group(3) is None
+    tgt_is_you = terse or tgt_raw.rstrip("!") == "you"
 
-    source_name: str | None = None if src_is_you else _parse_new_encoding(src_raw)[0]
+    src_id = _parse_counterparty(src_raw, _parse_new_encoding(src_raw), terse=terse)
+    source_name: str | None = None if src_is_you else src_id[0]
     target_name: str | None = None if tgt_is_you else _parse_new_encoding(tgt_raw)[0]
     authoritative = src_is_you or tgt_is_you
 
@@ -181,11 +276,11 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
         name, corp, alli, ship = _parse_new_encoding(tgt_raw)
     elif tgt_is_you:
         direction = "in"
-        name, corp, alli, ship = _parse_new_encoding(src_raw)
+        name, corp, alli, ship = src_id
     else:
         # Third-party: record the REAL initiator (source), never the log owner.
         direction = "in"
-        name, corp, alli, ship = _parse_new_encoding(src_raw)
+        name, corp, alli, ship = src_id
 
     return {
         "effect_type": ewar_type,
@@ -208,8 +303,10 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 
 # Stripped form: "234 GJ energy neutralized Target [ALLI][CORP] Ship - Module"
+# Trailing " - <module>" omitted by the terse variant (e.g.
+# "168 GJ energy neutralized Leshak [MSF.] [DDOG.]"), so it is optional.
 _NEUT_OUT_RE = re.compile(
-    r"^(\d+)\s+GJ energy neutralized\s+(.+?)\s+-\s+(.+)$",
+    r"^(\d+)\s+GJ energy neutralized\s+(.+?)(?:\s+-\s+(.+))?$",
     re.DOTALL,
 )
 
@@ -219,7 +316,10 @@ def _match_neut_out(rest_stripped: str) -> dict[str, Any] | None:
     if not m:
         return None
     target_part = m.group(2).strip()
-    name, corp, alli, ship = _parse_new_encoding(target_part)
+    module_name = m.group(3).strip() if m.group(3) else None
+    name, corp, alli, ship = _parse_counterparty(
+        target_part, _parse_new_encoding(target_part), terse=module_name is None
+    )
     return {
         "effect_type": "neut",
         "direction": "out",
@@ -228,7 +328,7 @@ def _match_neut_out(rest_stripped: str) -> dict[str, Any] | None:
         "other_corp_ticker": corp,
         "other_alliance_ticker": alli,
         "other_ship_name": ship,
-        "module_name": m.group(3).strip(),
+        "module_name": module_name,
         "quality": None,
     }
 
@@ -253,7 +353,7 @@ def _match_neut_out(rest_stripped: str) -> dict[str, Any] | None:
 # The module is always the LISTENER's own nosferatu.
 # The other party uses OLD encoding when brackets are present; bare name for NPCs.
 _NOS_RE = re.compile(
-    r"^([+-]?\d+)\s+GJ energy drained (from|to)\s+(.+?)\s+-\s+-?\s*(.+)$",
+    r"^([+-]?\d+)\s+GJ energy drained (from|to)\s+(.+?)(?:\s+-\s+-?\s*(.+))?$",
     re.DOTALL,
 )
 
@@ -272,11 +372,13 @@ def _match_nos(rest_stripped: str) -> dict[str, Any] | None:
     amount_str = m.group(1)
     drain_word = m.group(2)  # "from" or "to"
     party_part = m.group(3).strip()
-    module_name = m.group(4).strip()
+    module_name = m.group(4).strip() if m.group(4) else None
 
     direction: Literal["in", "out"] = "out" if drain_word == "from" else "in"
     # OLD encoding for player targets; bare name falls back gracefully
-    name, corp, alli, ship = _parse_old_encoding(party_part)
+    name, corp, alli, ship = _parse_counterparty(
+        party_part, _parse_old_encoding(party_part), terse=module_name is None
+    )
 
     return {
         "effect_type": "nos",
@@ -298,8 +400,10 @@ def _match_nos(rest_stripped: str) -> dict[str, Any] | None:
 # "remote armor repaired to" — NEW format: CharName [CORP][ALLI] Ship - Module
 # "remote armor repaired by" — OLD format: Ship [ALLI][CORP] [CharName] - Module
 
+# Trailing " - <module>" is omitted by a terse client variant (e.g.
+# "1024 remote armor repaired by Zarmazd [NV] [NVACA]"), so it is optional.
 _REP_RE = re.compile(
-    r"^(\d+)\s+remote (armor repaired|shield boosted) (to|by)\s+(.+?)\s+-\s+-?\s*(.+)$",
+    r"^(\d+)\s+remote (armor repaired|shield boosted) (to|by)\s+(.+?)(?:\s+-\s+-?\s*(.+))?$",
     re.DOTALL,
 )
 
@@ -312,7 +416,7 @@ def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
     rep_kind = m.group(2)  # "armor repaired" or "shield boosted"
     direction_word = m.group(3)  # "to" or "by"
     party_part = m.group(4).strip()
-    module_name = m.group(5).strip()
+    module_name = m.group(5).strip() if m.group(5) else None
 
     effect_type = "rep_armor" if "armor" in rep_kind else "rep_shield"
     direction: Literal["in", "out"] = "out" if direction_word == "to" else "in"
@@ -320,10 +424,11 @@ def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
     # OLD format uses "by" for armor, NEW format uses "by" for shield (confirmed in logs)
     # Shield "boosted by" uses NEW format; armor "repaired by" uses OLD format
     if direction_word == "by" and "armor" in rep_kind:
-        name, corp, alli, ship = _parse_old_encoding(party_part)
+        std = _parse_old_encoding(party_part)
     else:
         # "to" (armor out, new format) or "by shield" (new format)
-        name, corp, alli, ship = _parse_new_encoding(party_part)
+        std = _parse_new_encoding(party_part)
+    name, corp, alli, ship = _parse_counterparty(party_part, std, terse=module_name is None)
 
     return {
         "effect_type": effect_type,
@@ -344,7 +449,7 @@ def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
 
 # OLD format for both "to" and "by": Ship [ALLI][CORP] [CharName] - Module
 _CAP_RE = re.compile(
-    r"^(\d+)\s+remote capacitor transmitted (to|by)\s+(.+?)\s+-\s+-?\s*(.+)$",
+    r"^(\d+)\s+remote capacitor transmitted (to|by)\s+(.+?)(?:\s+-\s+-?\s*(.+))?$",
     re.DOTALL,
 )
 
@@ -356,10 +461,12 @@ def _match_cap(rest_stripped: str) -> dict[str, Any] | None:
     amount = float(m.group(1))
     direction_word = m.group(2)  # "to" or "by"
     party_part = m.group(3).strip()
-    module_name = m.group(4).strip()
+    module_name = m.group(4).strip() if m.group(4) else None
 
     direction: Literal["in", "out"] = "out" if direction_word == "to" else "in"
-    name, corp, alli, ship = _parse_old_encoding(party_part)
+    name, corp, alli, ship = _parse_counterparty(
+        party_part, _parse_old_encoding(party_part), terse=module_name is None
+    )
 
     return {
         "effect_type": "cap_transfer",
@@ -381,6 +488,30 @@ def _match_cap(rest_stripped: str) -> dict[str, Any] | None:
 _JAM_RE = re.compile(
     r"^Interference from (.+?)'s warp prevents your sensors from locking the target\.$"
 )
+
+# Classic ECM jam, logged on the (combat) channel as the listener's locks dropping.
+# The jammer is rendered in the NEW encoding or the terse "Ship [ALLI] [CORP]" form.
+_JAM_BROKEN_RE = re.compile(r"^Your target locks broken by (.+)$", re.DOTALL)
+
+
+def _match_jam_broken(rest_stripped: str) -> dict[str, Any] | None:
+    m = _JAM_BROKEN_RE.match(rest_stripped)
+    if not m:
+        return None
+    party = m.group(1).strip()
+    st = _parse_ship_tickers(party)
+    name, corp, alli, ship = st if st is not None else _parse_new_encoding(party)
+    return {
+        "effect_type": "jam",
+        "direction": "in",
+        "amount": None,
+        "other_name": name,
+        "other_corp_ticker": corp,
+        "other_alliance_ticker": alli,
+        "other_ship_name": ship,
+        "module_name": None,
+        "quality": None,
+    }
 
 
 def _match_jam(tag: str, rest_stripped: str) -> dict[str, Any] | None:
@@ -488,6 +619,8 @@ def parse_line(line: str) -> ParsedLogEvent | None:
             effect = _match_rep(rest_stripped)
         if effect is None:
             effect = _match_cap(rest_stripped)
+        if effect is None:
+            effect = _match_jam_broken(rest_stripped)
     elif tag == "notify":
         effect = _match_jam(tag, rest_stripped)
 
