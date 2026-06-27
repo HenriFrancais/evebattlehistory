@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.db.models import Alliance, Character, Corporation, LogEvent
+from app.db.models import Alliance, Character, Corporation, InventoryType, LogEvent
 from app.observability.logging import log
 
 
@@ -58,6 +58,23 @@ async def resolve_log_characters(
         ).all()
     }
     unresolved = sorted(n for n in candidates if n.lower() not in known_lower)
+    if not unresolved:
+        return 0
+
+    # Never treat SDE inventory-type names (ships/drones/missiles/charges) as
+    # characters. Some players share a name with an item, so resolving e.g.
+    # "Hobgoblin II" would persist a coincidentally named character that then
+    # pollutes the off-BR participant lists — in a combat log the token is the item.
+    inv_lower = {
+        (nm or "").lower()
+        for (nm,) in (
+            await session.execute(
+                select(InventoryType.name).where(InventoryType.name.in_(unresolved))
+            )
+        ).all()
+    }
+    if inv_lower:
+        unresolved = [n for n in unresolved if n.lower() not in inv_lower]
     if not unresolved:
         return 0
 

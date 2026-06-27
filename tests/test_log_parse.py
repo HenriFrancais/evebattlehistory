@@ -767,3 +767,127 @@ def test_parsed_ts_is_naive_utc() -> None:
         f"Expected naive datetime but got tzinfo={evt.ts.tzinfo!r}. "
         "Fix: remove tzinfo=UTC from _parse_ts in app/logs/parse.py"
     )
+
+
+# ---------------------------------------------------------------------------
+# Terse client variant (real lines from a no-space-markup client, e.g. OVO
+# Beast's log): incoming effects render as "<Ship> [ALLI] [CORP]" with NO pilot
+# name and NO trailing " - module"; EWAR omits " to you". These previously
+# parsed to effect_type=None, dropping a pilot's reps / tackle / cap-warfare.
+# ---------------------------------------------------------------------------
+
+# Real raw lines captured from the field.
+_T_REP_BY = (
+    "[ 2026.06.26 20:51:10 ] (combat) <color=0xffccff66><b>1024</b><color=0x77ffffff>"
+    "<font size=10> remote armor repaired by </font><b><color=0xffffffff><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Zarmazd</u></b></color></fontsize><fontsize=12>"
+    "<color=0xFFFEFF6F> [NV]</color></fontsize> <fontsize=10><b>[NVACA]</b></fontsize>"
+)
+_T_SCRAM = (
+    "[ 2026.06.26 20:32:43 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+    "<color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Outrider</u></b></color></fontsize><fontsize=12>"
+    "<color=0xFFFEFF6F> [MSF.]</color></fontsize> <fontsize=10><b>[DDOG.]</b></fontsize>"
+)
+_T_NEUT = (
+    "[ 2026.06.26 20:50:43 ] (combat) <color=0xffe57f7f><b>168 GJ</b><color=0x77ffffff>"
+    "<font size=10> energy neutralized </font><b><color=0xffffffff><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Leshak</u></b></color></fontsize><fontsize=12>"
+    "<color=0xFFFEFF6F> [MSF.]</color></fontsize> <fontsize=10><b>[DDOG.]</b></fontsize>"
+)
+_T_NOS = (
+    "[ 2026.06.26 20:38:27 ] (combat) <color=0xff7fffff><b>+0 GJ</b><color=0x77ffffff>"
+    "<font size=10> energy drained from </font><b><color=0xffffffff><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Rorqual</u></b></color></fontsize><fontsize=12>"
+    "<color=0xFFFEFF6F> [MSF.]</color></fontsize> <fontsize=10><b>[DDOG.]</b></fontsize>"
+)
+_T_JAM = (
+    "[ 2026.06.26 20:51:21 ] (combat) <color=0x77ffffff><font size=10>Your</font> "
+    "<color=0xffffffff><b>target locks broken</b> <color=0x77ffffff><font size=10>by</font> "
+    "<color=0xffffffff><b><fontsize=12><color=0xFFFEBB64><b> <u>Tempest Fleet Issue</u></b>"
+    "</color></fontsize><fontsize=12><color=0xFFFEFF6F> [MSF.]</color></fontsize> "
+    "<fontsize=10><b>[DDOG.]</b></fontsize>"
+)
+
+
+def test_terse_rep_armor_by_no_module_no_pilot() -> None:
+    evt = parse_line(_T_REP_BY)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.direction == "in"
+    assert evt.amount == 1024.0
+    assert evt.other_ship_name == "Zarmazd"   # ship recovered
+    assert evt.other_name is None             # client did not log the pilot
+    assert evt.module_name is None
+
+
+def test_terse_scram_without_to_you() -> None:
+    evt = parse_line(_T_SCRAM)
+    assert evt is not None
+    assert evt.effect_type == "scram"
+    assert evt.direction == "in"              # target omitted ⇒ the listener
+    assert evt.other_ship_name == "Outrider"
+
+
+def test_terse_neut_without_module() -> None:
+    evt = parse_line(_T_NEUT)
+    assert evt is not None
+    assert evt.effect_type == "neut"
+    assert evt.direction == "out"
+    assert evt.amount == 168.0
+    assert evt.other_ship_name == "Leshak"
+
+
+def test_terse_nos_without_module() -> None:
+    evt = parse_line(_T_NOS)
+    assert evt is not None
+    assert evt.effect_type == "nos"
+    assert evt.direction == "out"             # "drained from" ⇒ listener drains
+    assert evt.other_ship_name == "Rorqual"
+
+
+def test_jam_target_locks_broken_combat_variant() -> None:
+    evt = parse_line(_T_JAM)
+    assert evt is not None
+    assert evt.effect_type == "jam"
+    assert evt.direction == "in"
+    assert evt.other_ship_name == "Tempest Fleet Issue"
+
+
+def test_npc_damage_without_module_parses() -> None:
+    """Sleeper/NPC/sentry damage has no module — just name and quality."""
+    evt = parse_line("[ 2026.06.26 20:51:10 ] (combat) <b>27</b> from Awakened Sentinel - Penetrates")
+    assert evt is not None
+    assert evt.effect_type == "damage"
+    assert evt.direction == "in"
+    assert evt.amount == 27.0
+    assert evt.other_name == "Awakened Sentinel"
+    assert evt.module_name is None
+    assert evt.quality == "Penetrates"
+
+
+def test_no_module_damage_requires_known_quality() -> None:
+    """The no-module damage fallback must not match a non-quality tail."""
+    evt = parse_line("[ 2026.06.26 20:51:10 ] (combat) 5 from Some Module - Online")
+    assert evt is not None
+    assert evt.effect_type is None            # 'Online' is not a damage quality
+
+
+def test_standard_rep_with_module_still_has_pilot_and_module() -> None:
+    """Regression guard: the rich (module-bearing) rep form — the same Zarmazd repair
+    as the terse case above but from a standard client — still yields pilot + module."""
+    line = (
+        "[ 2026.06.22 16:25:17 ] (combat) <color=0xffccff66><b>1024</b><color=0x77ffffff>"
+        "<font size=10> remote armor repaired by </font><b><color=0xffffffff>"
+        "<font size=12><color=0xFFFFB300> <u><b>Zarmazd</b></u></color></font>"
+        "<font size=12><color=0xFFFFFF66> [<b>NV</b>]</color></font> [<b>NVACA</b>]  "
+        "[Mr Jesterman]<color=0xFFFFFFFF><b> -</b><color=0x77ffffff>"
+        "<font size=10> - Perun Heavy Mutadaptive Remote Armor Repairer</font>"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.direction == "in"
+    assert evt.other_name == "Mr Jesterman"
+    assert evt.other_ship_name == "Zarmazd"
+    assert evt.module_name == "Perun Heavy Mutadaptive Remote Armor Repairer"

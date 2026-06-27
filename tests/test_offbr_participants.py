@@ -101,3 +101,55 @@ async def test_br_entities_includes_offbr_entity_and_respects_override(db_sessio
         )
     hostile_ent = next(e for e in ents if e["entity_type"] == "alliance" and e["entity_id"] == HOSTILE_ALLI)
     assert hostile_ent["side"] == "hostile"
+
+
+@pytest.mark.asyncio
+async def test_offbr_excludes_inventory_type_named_counterparties(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Counterparty tokens that are SDE inventory types (drones/missiles/charges/
+    ships) must NOT surface as off-BR participants, even when a coincidentally
+    named character exists. Only real characters may appear in the fleets lists."""
+    from app.config import get_settings
+    from app.db.models import Alliance, Character, Corporation, InventoryType, LogEvent
+    from app.fights.offbr_participants import offbr_log_characters
+    from app.logs.associate import associate_file
+
+    # A drone type from the SDE, plus a player who shares its name (real in EVE).
+    DRONE_TYPE_ID = 2456  # "Hobgoblin II"
+    DRONE_NAMED_CHAR = 95212855   # a real char that happens to be named after a drone
+    REAL_ENEMY = 5100000009       # a genuine counterparty pilot
+    settings = get_settings()
+
+    async with db_session_maker() as session:
+        now = dt.datetime.now(dt.UTC)
+        _fight_id, br_id = await _insert_fight_with_killmail(session)
+        session.add(InventoryType(type_id=DRONE_TYPE_ID, name="Hobgoblin II", category_id=18))
+        session.add(Alliance(alliance_id=LOGI_ALLI, name="Alli", last_seen_at=now))
+        session.add(Corporation(corporation_id=LOGI_CORP, name="Corp", alliance_id=LOGI_ALLI,
+                                last_seen_at=now))
+        session.add(Character(character_id=OFFBR_LOGI, name="OffbrLogi",
+                              corporation_id=LOGI_CORP, alliance_id=LOGI_ALLI, last_seen_at=now))
+        # The drone-named character and a genuine enemy both resolve to characters.
+        session.add(Character(character_id=DRONE_NAMED_CHAR, name="Hobgoblin II",
+                              last_seen_at=now))
+        session.add(Character(character_id=REAL_ENEMY, name="RealEnemy", last_seen_at=now))
+        await session.flush()
+
+        fid = await _insert_gamelog_file(session, character_id=OFFBR_LOGI)
+        # Logi applies neut to a real enemy AND takes damage from a drone (the
+        # drone name appears as a counterparty token in the log).
+        session.add(LogEvent(file_id=fid, character_id=OFFBR_LOGI, ts=TS_INSIDE,
+                             direction="out", effect_type="neut", amount=0.0,
+                             other_name="RealEnemy"))
+        session.add(LogEvent(file_id=fid, character_id=OFFBR_LOGI, ts=TS_INSIDE,
+                             direction="in", effect_type="damage", amount=120.0,
+                             other_name="Hobgoblin II"))
+        await associate_file(session, fid)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await offbr_log_characters(session, settings, br_id)
+
+    by_id = {p.character_id: p for p in result}
+    assert DRONE_NAMED_CHAR not in by_id, "drone-named inventory type leaked in as a participant"
+    assert REAL_ENEMY in by_id, "genuine counterparty pilot must still be identified"
+    assert by_id[OFFBR_LOGI].source == "log_owner"

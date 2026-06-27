@@ -1235,3 +1235,156 @@ async def test_snapshot_damage_still_aggregates_by_owner(db_session_maker) -> No
     assert dmg_rows[0].source_name == "DmgPilot"
     assert dmg_rows[0].target_name == "Enemy1"
     assert dmg_rows[0].value == pytest.approx(500.0)
+
+
+# ---------------------------------------------------------------------------
+# Logistics dedup: a single physical rep tick is logged by BOTH the repper
+# (out) and the recipient (in). The snapshot must count it ONCE per
+# (repper -> recipient), not twice — mirroring composition._reps_applied_by_char.
+# ---------------------------------------------------------------------------
+
+
+async def test_snapshot_reps_deduped_across_in_out(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """When both the logi's outgoing log and the recipient's incoming log are
+    present, the same rep tick must produce ONE Contribution, not two, and the
+    total must not double-count."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import Character, LogEvent
+
+    REPPER = 2100000001   # CHAR_A
+    RECIP = 2200000001    # CHAR_B
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        # Give both pilots resolvable names (matching is by resolved name).
+        await session.merge(Character(character_id=REPPER, name="Logi Pilot",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.merge(Character(character_id=RECIP, name="Tackled Friend",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.flush()
+        ts = BUCKET_TS_1
+
+        # Two physical rep ticks the logi applied to the recipient. Each is
+        # logged twice: once by the repper (out, other_name=recipient) and once
+        # by the recipient (in, other_name=repper). Same server-second + amount.
+        gf_repper = await _make_gamelog_file(session, REPPER, "reps-out")
+        gf_recip = await _make_gamelog_file(session, RECIP, "reps-in")
+        for amt in (400.0, 600.0):
+            session.add(LogEvent(
+                file_id=gf_repper.file_id, character_id=REPPER, ts=ts,
+                effect_type="rep_armor", direction="out", amount=amt,
+                other_name="Tackled Friend", fight_id=fight_id))
+            session.add(LogEvent(
+                file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
+                effect_type="rep_armor", direction="in", amount=amt,
+                other_name="Logi Pilot", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    rep_rows = [r for r in rows if r.effect_type == "rep_armor"]
+    # Exactly one Contribution for the logi -> recipient rep, counted once.
+    assert len(rep_rows) == 1, (
+        f"expected 1 deduped rep row, got {len(rep_rows)}: "
+        f"{[(r.source_name, r.target_name, r.direction, r.value) for r in rep_rows]}"
+    )
+    c = rep_rows[0]
+    assert c.source_character_id == REPPER
+    assert c.source_name == "Logi Pilot"
+    assert c.target_name == "Tackled Friend"
+    assert c.value == pytest.approx(1000.0)  # 400 + 600, NOT doubled to 2000
+
+
+async def test_snapshot_reps_partial_coverage_single_row(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Real logs rarely overlap perfectly: the repper logs some ticks, the
+    recipient logs others. The snapshot must still show ONE row per
+    (repper -> recipient), summing the repper's own ticks + the recipient-logged
+    ticks the repper never logged (no double counting, no split out/in rows)."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import Character, LogEvent
+
+    REPPER = 2100000001
+    RECIP = 2200000001
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await session.merge(Character(character_id=REPPER, name="Logi Pilot",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.merge(Character(character_id=RECIP, name="Tackled Friend",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.flush()
+        ts = BUCKET_TS_1
+        gf_repper = await _make_gamelog_file(session, REPPER, "reps-out-p")
+        gf_recip = await _make_gamelog_file(session, RECIP, "reps-in-p")
+        # Tick #1 (amt=400) logged by BOTH parties -> one physical rep.
+        session.add(LogEvent(file_id=gf_repper.file_id, character_id=REPPER, ts=ts,
+                             effect_type="rep_armor", direction="out", amount=400.0,
+                             other_name="Tackled Friend", fight_id=fight_id))
+        session.add(LogEvent(file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
+                             effect_type="rep_armor", direction="in", amount=400.0,
+                             other_name="Logi Pilot", fight_id=fight_id))
+        # Tick #2 (amt=600) logged ONLY by the recipient (repper's log missed it).
+        session.add(LogEvent(file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
+                             effect_type="rep_armor", direction="in", amount=600.0,
+                             other_name="Logi Pilot", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    rep_rows = [r for r in rows if r.effect_type == "rep_armor"]
+    assert len(rep_rows) == 1, (
+        f"expected 1 collapsed rep row, got {len(rep_rows)}: "
+        f"{[(r.source_name, r.target_name, r.direction, r.value) for r in rep_rows]}"
+    )
+    c = rep_rows[0]
+    assert c.source_name == "Logi Pilot"
+    assert c.target_name == "Tackled Friend"
+    # 400 (matched, counted once) + 600 (recipient-only) = 1000.
+    assert c.value == pytest.approx(1000.0)
+
+
+async def test_snapshot_reps_in_only_kept_when_repper_did_not_log(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """An incoming rep tick with no matching outgoing tick (the repper never
+    uploaded a log) must still be counted — dedup suppresses duplicates only."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import Character, LogEvent
+
+    REPPER = 2100000001
+    RECIP = 2200000001
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await session.merge(Character(character_id=REPPER, name="Logi Pilot",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.merge(Character(character_id=RECIP, name="Tackled Friend",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.flush()
+        ts = BUCKET_TS_1
+        # Only the recipient's incoming log exists.
+        gf_recip = await _make_gamelog_file(session, RECIP, "reps-in-only")
+        session.add(LogEvent(
+            file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
+            effect_type="rep_armor", direction="in", amount=750.0,
+            other_name="Logi Pilot", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    rep_rows = [r for r in rows if r.effect_type == "rep_armor"]
+    assert len(rep_rows) == 1
+    assert rep_rows[0].value == pytest.approx(750.0)
