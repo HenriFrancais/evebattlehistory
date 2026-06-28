@@ -125,15 +125,16 @@ async def _resolve_char_names(
     return names
 
 
-def _accumulate_reps(
+def _accumulate_remote_assist(
     rows: Sequence[Any],
     rep_names: dict[int, str],
 ) -> list[Contribution]:
-    """Collapse remote-rep log rows into one Contribution per repper→recipient.
+    """Collapse bilaterally-logged remote-assist rows (reps + remote cap transfer)
+    into one Contribution per applier→recipient.
 
-    A physical rep tick is logged by BOTH the repper (direction="out",
-    other_name=recipient) and the recipient (direction="in", other_name=repper). A
-    repper's own outgoing log is the complete authoritative record of their reps, so:
+    A physical assist tick is logged by BOTH the applier (direction="out",
+    other_name=recipient) and the recipient (direction="in", other_name=applier). An
+    applier's own outgoing log is the complete authoritative record of what they did, so:
 
       * a repper who logged ANY rep out is summed from their own out rows only — every
         recipient-logged copy of their reps is dropped (this keeps the family TOTAL
@@ -150,20 +151,22 @@ def _accumulate_reps(
     *rows* are the generic-path tuples
     ``(cid, other, oship, eff, direction, amount, module, quality, ts)``.
     """
-    # Reppers who logged at least one rep out tick — their own log is authoritative.
-    out_repper_names: set[str] = set()
+    # Appliers who logged at least one out tick — their own log is authoritative.
+    # Keyed by (name, effect): a pilot may have uploaded reps but not cap (or vice
+    # versa), and only the effect they actually logged out is theirs to own.
+    out_repper_keys: set[tuple[str, str]] = set()
     for cid, _other, _os, eff, direction, _amount, _m, _q, _ts in rows:
-        if eff in _REP_EFFECTS and direction == "out" and cid is not None:
+        if eff in _REMOTE_ASSIST_EFFECTS and direction == "out" and cid is not None:
             nm = rep_names.get(cid)
             if nm is not None:
-                out_repper_names.add(nm)
+                out_repper_keys.add((nm, eff))
 
     RepKey = tuple[str, str, str]  # (repper_name, recipient_name, effect)
     rep_value: dict[RepKey, float] = {}
     rep_cid: dict[RepKey, int | None] = {}
     rep_ship: dict[RepKey, str] = {}
     for cid, other, oship, eff, direction, amount, _m, _q, _ts in rows:
-        if eff not in _REP_EFFECTS or cid is None:
+        if eff not in _REMOTE_ASSIST_EFFECTS or cid is None:
             continue
         if direction == "out":
             repper = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
@@ -174,7 +177,7 @@ def _accumulate_reps(
             if cleaned_ship != "?":
                 rep_ship.setdefault(rkey, cleaned_ship)
         elif direction == "in":
-            if other is not None and other in out_repper_names:
+            if other is not None and (other, eff) in out_repper_keys:
                 continue  # repper's own out log is authoritative — drop the copy
             repper = _clean_target_name(other)
             recipient = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
@@ -226,8 +229,10 @@ async def fleet_snapshot(
     scram/disrupt use a separate deduped path (source_name/target_name,
     dedupe_suppressed=False only) identical to fight_ewar, so every on-grid
     observer's duplicate observation of one physical tackle is collapsed to one
-    row.  All other effects (damage/reps/cap/jam) continue to aggregate by the
-    log owner (character_id) + other_name.
+    row.  Reps and remote cap transfer use the bilateral dedupe path
+    (_accumulate_remote_assist), collapsing each tick's out/in copies into one
+    applier→recipient row.  The remaining effects (damage/neut/nos/jam) aggregate by
+    the log owner (character_id) + other_name.
     """
     fight_ids = list(
         (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
@@ -268,16 +273,17 @@ async def fleet_snapshot(
     ).all()
 
     # ------------------------------------------------------------------
-    # Reps are handled on a dedicated path (see _accumulate_reps): a single
-    # physical rep tick is logged by BOTH the repper (out) and the recipient
-    # (in), so reps are deduped per tick AND collapsed across direction into one
-    # canonical repper→recipient row. Without this a logi shows twice per
-    # recipient (once from each log) and the family total double-counts.
+    # Reps and remote cap transfer are handled on a dedicated path (see
+    # _accumulate_remote_assist): a single physical tick is logged by BOTH the
+    # applier (out) and the recipient (in), so they are deduped per tick AND
+    # collapsed across direction into one canonical applier→recipient row. Without
+    # this a logi / cap chain shows twice per recipient (once from each log) and the
+    # family total double-counts.
     # ------------------------------------------------------------------
     rep_owner_ids = {
         cid
         for cid, _o, _os, eff, _d, _a, _m, _q, _ts in rows
-        if eff in _REP_EFFECTS and cid is not None
+        if eff in _REMOTE_ASSIST_EFFECTS and cid is not None
     }
     rep_names = await _resolve_char_names(session, settings, rep_owner_ids)
 
@@ -286,8 +292,8 @@ async def fleet_snapshot(
     module_dmg: dict[Key, dict[str, float]] = {}
     quality_ct: dict[Key, dict[str, int]] = {}
     for cid, other, oship, eff, direction, amount, module, quality, _ts in rows:
-        if eff in _REP_EFFECTS:
-            continue  # reps aggregated separately below
+        if eff in _REMOTE_ASSIST_EFFECTS:
+            continue  # reps + cap transfer aggregated separately below
         key = (
             cid, _clean_target_name(other), _clean_target_name(oship), eff or "", direction or "",
         )
@@ -351,7 +357,7 @@ async def fleet_snapshot(
             )
         )
 
-    out.extend(_accumulate_reps(rows, rep_names))
+    out.extend(_accumulate_remote_assist(rows, rep_names))
 
     # ------------------------------------------------------------------
     # Deduped tackle path (scram / disrupt): use pilot-resolved
@@ -443,6 +449,11 @@ _AMOUNT_EFFECTS = frozenset(
 #: Remote-rep effects: logged by both repper (out) and recipient (in). Deduped per
 #: physical tick in fleet_snapshot so a logi is counted once per recipient.
 _REP_EFFECTS = frozenset({"rep_armor", "rep_shield"})
+#: Bilaterally-logged remote-assist effects (reps + remote cap transfer): each
+#: physical tick is recorded by BOTH endpoints (applier "out", recipient "in"), so
+#: they share the dedupe path (_accumulate_remote_assist) in fleet_snapshot and are
+#: counted once per applier→recipient instead of twice. Mirrors timeline._REMOTE_ASSIST.
+_REMOTE_ASSIST_EFFECTS = _REP_EFFECTS | frozenset({"cap_transfer"})
 #: Effects measured by number of applications per bucket (EWAR). Plotted from
 #: ``event_count`` (their sum_amount is meaningless / zero).
 _COUNT_EFFECTS = frozenset({"scram", "disrupt", "jam"})
