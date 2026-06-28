@@ -1,16 +1,14 @@
 // Pure HTML builder for the cursor hover-summary tooltip.
 // No uPlot import — unit-tested in jsdom.
 //
-// Shows three side-aware per-bucket leaders (all by TARGET/receiver):
-//   1. Friendly target receiving the most hostile damage (top_friendly_dmg_taken)
-//   2. Hostile target receiving the most friendly damage (top_hostile_dmg_taken)
-//   3. Friendly target receiving the most friendly reps  (top_friendly_rep_recv)
-//
-// The `view` parameter is retained for API compatibility with the FleetGraph
-// plugin wiring, but is no longer used for side-total computation.
+// The leaders shown depend on WHICH panel is hovered:
+//   damage panel → friendly/hostile taking most damage, friendly receiving most reps
+//   cap panel    → hostile under / friendly applying most cap pressure (neut+nos), friendly receiving most cap
+//   ewar panel   → hostile most tackled, friendly most tackled
+// Each is the top character for that metric in the hovered time bucket.
 
 import type { LeaderEntry, Leaders } from './api'
-import type { FleetView } from './fleet'
+import type { PanelId } from './fleet'
 import { fmtCompact } from './format'
 
 function esc(s: string): string {
@@ -21,12 +19,22 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function allNull(l: Leaders): boolean {
-  return (
-    l.top_friendly_dmg_taken == null &&
-    l.top_hostile_dmg_taken == null &&
-    l.top_friendly_rep_recv == null
-  )
+// The leader fields shown for each panel, in display order, with their labels.
+const PANEL_LEADERS: Record<PanelId, { key: keyof Leaders; label: string }[]> = {
+  damage: [
+    { key: 'top_friendly_dmg_taken', label: 'Friendly taking most damage' },
+    { key: 'top_hostile_dmg_taken', label: 'Hostile taking most damage' },
+    { key: 'top_friendly_rep_recv', label: 'Friendly receiving most reps' },
+  ],
+  cap: [
+    { key: 'top_hostile_cap_pressure', label: 'Hostile under most cap pressure' },
+    { key: 'top_friendly_cap_pressure', label: 'Friendly applying most cap pressure' },
+    { key: 'top_friendly_cap_recv', label: 'Friendly receiving most cap' },
+  ],
+  ewar: [
+    { key: 'top_hostile_tackle_taken', label: 'Hostile most tackled' },
+    { key: 'top_friendly_tackle_taken', label: 'Friendly most tackled' },
+  ],
 }
 
 function leaderLine(label: string, e: LeaderEntry): string {
@@ -46,37 +54,24 @@ function leaderLine(label: string, e: LeaderEntry): string {
 }
 
 /**
- * Render an HTML string for the hover tooltip at `idx`.
- *
- * Shows only the 3 side-aware receiver leaders:
- *   - "Friendly taking most damage: <name> (<ship>) <amount>"
- *   - "Hostile taking most damage: <name> (<ship>) <amount>"
- *   - "Friendly receiving most reps: <name> (<ship>) <amount>"
- *
- * Returns a "no log data" line when the bucket has no leader data.
- * The `view` parameter is unused but kept for FleetGraph plugin compatibility.
+ * Render an HTML string for the hover tooltip at `idx`, showing the leaders
+ * relevant to `panelId`. Returns a "no log data" line when the bucket has no
+ * leader data for that panel.
  */
-export function renderHoverSummary(_view: FleetView, leaders: Leaders[], idx: number): string {
+export function renderHoverSummary(panelId: PanelId, leaders: Leaders[], idx: number): string {
   const entry = leaders[idx]
-  if (!entry || allNull(entry)) {
+  if (!entry) {
     return '<span class="hover-tip-no-data">no log data</span>'
   }
 
   let html = ''
-  if (entry.top_friendly_dmg_taken) {
-    html += leaderLine('Friendly taking most damage', entry.top_friendly_dmg_taken)
-  }
-  if (entry.top_hostile_dmg_taken) {
-    html += leaderLine('Hostile taking most damage', entry.top_hostile_dmg_taken)
-  }
-  if (entry.top_friendly_rep_recv) {
-    html += leaderLine('Friendly receiving most reps', entry.top_friendly_rep_recv)
+  for (const { key, label } of PANEL_LEADERS[panelId]) {
+    const e = entry[key]
+    if (e) html += leaderLine(label, e)
   }
 
-  // If all were non-null in entry but rendered nothing (defensive), show fallback.
   if (!html) {
     return '<span class="hover-tip-no-data">no log data</span>'
   }
-
   return html
 }

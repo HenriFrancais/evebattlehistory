@@ -196,6 +196,7 @@ export interface CharacterTimeline {
   x: number[]
   series: TimelineSeriesItem[]
   fights: TimelineFightInfo[]
+  kills?: KillEvent[]
   t_start: number | null
   t_end: number | null
 }
@@ -336,9 +337,17 @@ export interface LeaderEntry {
 }
 
 export interface Leaders {
+  // Damage panel
   top_friendly_dmg_taken: LeaderEntry | null
   top_hostile_dmg_taken: LeaderEntry | null
   top_friendly_rep_recv: LeaderEntry | null
+  // Cap panel — "cap pressure" = neut + nos summed
+  top_hostile_cap_pressure?: LeaderEntry | null
+  top_friendly_cap_pressure?: LeaderEntry | null
+  top_friendly_cap_recv?: LeaderEntry | null
+  // Tackle / EWAR panel (amount = number of tackle applications)
+  top_hostile_tackle_taken?: LeaderEntry | null
+  top_friendly_tackle_taken?: LeaderEntry | null
 }
 
 // Fleet timeline types (E3)

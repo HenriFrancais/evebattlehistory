@@ -18,7 +18,6 @@ Callers must never treat "" as a meaningful named effect type or direction.
 from __future__ import annotations
 
 import datetime as dt
-from collections import Counter
 from dataclasses import dataclass
 
 from sqlalchemy import or_, select
@@ -155,11 +154,17 @@ async def _remote_assist_series(
     sums, drawing on the character's OWN log AND every friendly log that names them.
 
     A physical remote-assist tick is logged by both endpoints (the applier as "out",
-    the receiver as "in", other_name=applier). We canonicalise each row to
-    (applier, receiver, effect, ts, amount), dedupe per tick preferring the applier's
-    own record (exactly as composition._reps_applied_by_char), then attribute each
-    surviving tick to this character's OUT (they are the applier) or IN (they are the
-    receiver). Returns ({(effect, direction): {bucket_epoch: [sum, count]}}, buckets).
+    the receiver as "in", other_name=the other party). A pilot's own log is the
+    authoritative record of their own perspective, so we never double count:
+
+      * reps this character APPLIED come from their own "out" rows when they uploaded
+        any; otherwise they are reconstructed from recipients' "in" rows naming them.
+      * reps this character RECEIVED come from their own "in" rows when they uploaded
+        any; otherwise from appliers' "out" rows naming them.
+
+    Per-tick matching is avoided (client clocks skew a second or two, overheal makes
+    the receiver's amount differ, some clients log the counterparty as a ship name).
+    Returns ({(effect, direction): {bucket_epoch: [sum, count]}}, buckets).
     """
     if char_name is None:
         return {}, set()
@@ -183,61 +188,32 @@ async def _remote_assist_series(
     if not rows:
         return {}, set()
 
-    owner_ids = {r[0] for r in rows if r[0] is not None}
-    names: dict[int, str] = {}
-    for cid, nm in (
-        await session.execute(
-            select(Character.character_id, Character.name).where(
-                Character.character_id.in_(owner_ids)
-            )
-        )
-    ).all():
-        if nm:
-            names[cid] = nm
-
-    # Index every applier-logged ("out") tick so a receiver's duplicate ("in") tick
-    # can be matched and dropped. Key mirrors composition: both clients stamp the
-    # same server-second for one physical tick.
-    out_index: Counter[tuple[str, str, str, dt.datetime, float]] = Counter()
-    for owner, direction, other, eff, amount, ts in rows:
-        if direction == "out":
-            applier = names.get(owner)
-            if applier is not None and other is not None:
-                out_index[(applier, other, eff, ts, float(amount))] += 1
-
-    kept: list[tuple[str, str, str, dt.datetime, float]] = []
-    for owner, direction, other, eff, amount, ts in rows:
-        if direction == "out":
-            applier = names.get(owner)
-            if applier is not None and other is not None:
-                kept.append((applier, other, eff, ts, abs(float(amount))))
-    consumed: Counter[tuple[str, str, str, dt.datetime, float]] = Counter()
-    for owner, direction, other, eff, amount, ts in rows:
-        if direction != "in" or other is None:
-            continue
-        receiver = names.get(owner)
-        if receiver is None:
-            continue
-        key = (other, receiver, eff, ts, float(amount))
-        if out_index.get(key, 0) - consumed.get(key, 0) > 0:
-            consumed[key] += 1  # duplicate of the applier's authoritative out tick
-            continue
-        kept.append((other, receiver, eff, ts, abs(float(amount))))
+    # Does this character's OWN log carry each direction? If so it is authoritative and
+    # the mirror rows from other logs are ignored (else we reconstruct from them).
+    c_has_own_out = any(o == character_id and d == "out" for o, d, *_ in rows)
+    c_has_own_in = any(o == character_id and d == "in" for o, d, *_ in rows)
 
     series: dict[tuple[str, str], dict[int, list[float]]] = {}
     buckets: set[int] = set()
-    for applier, receiver, eff, ts, amount in kept:
-        if applier == char_name:
-            direction = "out"
-        elif receiver == char_name:
-            direction = "in"
-        else:
-            continue
+
+    def _add(eff: str, direction: str, ts: dt.datetime, amount: float) -> None:
         bucket = (_epoch(ts) // BUCKET_SECONDS) * BUCKET_SECONDS
         cell = series.setdefault((eff, direction), {}).setdefault(bucket, [0.0, 0.0])
-        cell[0] += amount
+        cell[0] += abs(amount)
         cell[1] += 1
         buckets.add(bucket)
+
+    for owner, direction, other, eff, amount, ts in rows:
+        if owner == character_id:
+            # Own perspective is always authoritative for what we did/received.
+            _add(eff, direction, ts, float(amount))
+        elif other == char_name:
+            # A mirror row from the other party — use only to fill a direction this
+            # character did not log themselves.
+            if direction == "in" and not c_has_own_out:
+                _add(eff, "out", ts, float(amount))  # they received from us → we applied
+            elif direction == "out" and not c_has_own_in:
+                _add(eff, "in", ts, float(amount))  # they applied to us → we received
     return series, buckets
 
 

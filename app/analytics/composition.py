@@ -109,17 +109,19 @@ async def _reps_applied_by_char(
 ) -> dict[int, float]:
     """Total HP each character remote-repaired onto others across *fight_ids*.
 
-    A single physical rep tick can be logged twice — once by the repper
-    (direction="out") and once by the recipient (direction="in", other_name=repper).
-    We use *all* of that information without double counting:
+    A physical rep tick is logged by BOTH the repper (direction="out") and the
+    recipient (direction="in", other_name=repper). A repper's OWN outgoing log is the
+    complete, authoritative record of what they applied, so:
 
-      * every "out" tick is the repper's own authoritative record — counted in full;
-      * an "in" tick is added only when no matching "out" tick exists (i.e. the repper
-        never logged that tick), so reps from non-uploading logi are still captured.
+      * if a repper logged ANY rep out, we count ONLY their own out ticks and ignore
+        every recipient-logged copy of their reps;
+      * recipient "in" ticks are used ONLY to reconstruct reps from reppers who never
+        uploaded a log at all (e.g. a logi with combat logging off).
 
-    Ticks are matched on (repper_name, recipient_name, effect_type, ts, amount). EVE
-    stamps both clients with the same server-second timestamp, so the same physical tick
-    lines up across the two logs; a Counter handles ticks that repeat within a second.
+    Per-tick matching across the two logs is unreliable — client clocks skew by a
+    second or two, overheal makes the recipient's amount differ, and some clients log
+    the rep TARGET as a ship name rather than a pilot — so matching on the repper's
+    identity (did they upload their own out log?) is what prevents double counting.
     """
     reps: dict[int, float] = {}
     if not fight_ids:
@@ -154,34 +156,27 @@ async def _reps_applied_by_char(
         id_to_name.update(await _resolve_char_names(session, settings, missing))
     name_to_id = {name: cid for cid, name in char_names.items()}
 
-    # Pass 1: count every "out" tick for displayable reppers; index all out ticks.
-    out_ticks: Counter[tuple] = Counter()
-    for cid, direction, other_name, et, amount, ts in rows:
+    # Pass 1: sum every repper's OWN out ticks; record which reppers logged out.
+    out_repper_names: set[str] = set()
+    for cid, direction, _other_name, _et, amount, _ts in rows:
         if direction != "out":
             continue
         cid = int(cid)
-        amt = float(amount)
-        if cid in char_names:
-            reps[cid] = reps.get(cid, 0.0) + amt
         repper_name = id_to_name.get(cid)
-        if repper_name is not None and other_name is not None:
-            out_ticks[(repper_name, other_name, et, ts, amt)] += 1
+        if repper_name is not None:
+            out_repper_names.add(repper_name)
+        if cid in char_names:
+            reps[cid] = reps.get(cid, 0.0) + float(amount)
 
-    # Pass 2: add "in" ticks with no matching "out" tick (repper never logged them).
-    for cid, direction, other_name, et, amount, ts in rows:
+    # Pass 2: reconstruct reps only for reppers who never logged their own out ticks.
+    for _cid, direction, other_name, _et, amount, _ts in rows:
         if direction != "in" or other_name is None:
             continue
-        recipient_name = id_to_name.get(int(cid))
-        if recipient_name is None:
-            continue
-        amt = float(amount)
-        key = (other_name, recipient_name, et, ts, amt)
-        if out_ticks.get(key, 0) > 0:
-            out_ticks[key] -= 1  # consume the authoritative duplicate
-            continue
+        if other_name in out_repper_names:
+            continue  # repper's own out log is authoritative — skip the recipient copy
         repper_id = name_to_id.get(other_name)
         if repper_id is not None:
-            reps[repper_id] = reps.get(repper_id, 0.0) + amt
+            reps[repper_id] = reps.get(repper_id, 0.0) + float(amount)
 
     return reps
 

@@ -1,10 +1,11 @@
 """EVE gamelog combat-line parser — pure functions, no I/O, no DB.
 
-Two name encodings appear in real logs:
-  NEW (damage, neut-out, disrupt/scram targets, rep-armor-to, rep-shield-by):
-      CharName [CORP][ALLI] ShipType
-  OLD (rep-armor-by, cap-to, cap-by):
-      ShipType [ALLI][CORP] [CharName]
+A counterparty's rendering is governed by the *logging* player's overview ship-label
+settings, NOT by the message type — the same pilot may appear pilot-first, ship-first,
+in italics, or by ship only, with tickers in [brackets], <angles>, or (parens), in any
+order. So every effect resolves its counterparty through one ordered, overview-agnostic
+resolver (`_resolve_counterparty`) rather than a per-effect encoding guess; adding a new
+layout is a single new step there.
 
 ``parse_line`` never raises; malformed / truncated lines return None.
 """
@@ -39,6 +40,34 @@ def strip_eve_markup(s: str) -> str:
     # collapse runs of spaces to a single space
     s = re.sub(r"[ \t]{2,}", " ", s)
     return s.strip()
+
+
+# Italics do double duty in EVE combat logs:
+#   (a) PILOT-name label — some overviews render the counterparty's pilot in italics,
+#       e.g. "<b><i>Body Cam Off</b></i>Heretic(NV)" — followed by the ship type;
+#   (b) cosmetic custom SHIP name — closed by ']' (the ship-label bracket), e.g.
+#       "<u>Zarmazd</u> <i>✖ DXa Zarming</i>] [Deringston Xa'thon]", or trailing after
+#       " - ".
+# strip_eve_markup deletes BOTH; to recover a pilot we remove only the cosmetic forms
+# (closed by ']' or introduced by " - ") and keep a remaining free-standing label.
+_COSMETIC_CLOSED_RE = re.compile(r"(?:\[[^\[\]<]*)?<i>.*?</i>\]", re.DOTALL)
+_COSMETIC_SUFFIX_RE = re.compile(r"\s-\s*(?:<[^>]*>\s*)*<i>.*?</i>", re.DOTALL)
+_ITALIC_RE = re.compile(r"<i>(.*?)</i>", re.DOTALL)
+
+
+def _italic_pilot_label(raw: str) -> str | None:
+    """Return the pilot name from a standalone <i>..</i> overview label in *raw*, or None.
+
+    Cosmetic custom-ship-name italics (closed by ']' or trailing after ' - ') are
+    excluded; only a free-standing pilot-name label is returned (inner markup stripped).
+    """
+    without = _COSMETIC_CLOSED_RE.sub("", raw)
+    without = _COSMETIC_SUFFIX_RE.sub("", without)
+    m = _ITALIC_RE.search(without)
+    if not m:
+        return None
+    pilot = strip_eve_markup(m.group(1)).strip()
+    return pilot or None
 
 
 # --------------------------------------------------------------------------- #
@@ -138,21 +167,82 @@ def _parse_old_encoding(text: str) -> tuple[str | None, str | None, str | None, 
     return text, None, None, None
 
 
-def _parse_counterparty(
-    party: str, std: tuple[str | None, str | None, str | None, str | None], *, terse: bool
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Resolve a counterparty identity, only falling back to the terse
-    ``Ship [ALLI] [CORP]`` (no-pilot) form when *terse* is True — i.e. the line
-    omitted its trailing module/target, the signal of the terse client variant.
+# A bracket whose content contains a space is the PILOT, wherever it sits — tickers
+# never contain a space, so a multi-word bracket is a character. This covers every
+# layout that puts the pilot in a bracket: "Ship [ALLI] [CORP] [Pilot]",
+# "Ship [Pilot] - [ALLI]", "Eris [NV] [NVACA] [Zweige Teufel]", "Ship [Pilot]".
+_SPACED_PILOT_RE = re.compile(r"\[([^\[\]]+\s[^\[\]]+)\]")
 
-    This keeps every already-parsing (module-bearing) line byte-identical: it is
-    applied solely to lines the strict regexes previously dropped entirely.
+# Older overviews render the alliance ticker in literal angle brackets (HTML-encoded
+# "&lt;ALLI&gt;") and leave the pilot UN-bracketed, e.g.
+#   "Proteus &lt;NV&gt;[NVACA] Stephen King RDG"  ->  ship Proteus, pilot last
+#   "Devoter &lt;NV&gt;[NVACA] Jongul Zam"        ->  ship Devoter, pilot last
+# The angle ticker is the reliable signal for this layout (the NEW form uses only
+# square brackets). The pilot is the bare token TRAILING the ticker block; the leading
+# token is the ship. If nothing trails, the pilot is fused with the ship (e.g.
+# "Absolution Meneltir Falmaro [DDOG.] &lt;MSF.&gt;") and is unrecoverable after
+# stripping — we keep the ship and emit no pilot rather than guess.
+_ANGLE_TICKER = r"(?:\[[^\[\]\s]*\]|&lt;[^&]*?&gt;)"
+_ANGLE_LAYOUT_RE = re.compile(rf"^(.*?)\s*(?:{_ANGLE_TICKER}\s*)+(.*)$", re.DOTALL)
+
+
+def _ship_from_lead(lead: str) -> str | None:
+    """The ship type is the text before the first bracket/paren in *lead*."""
+    ship = re.split(r"\s*[\[(]", lead.strip(), maxsplit=1)[0].strip()
+    return ship or None
+
+
+def _resolve_counterparty(
+    party: str, raw: str = ""
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Resolve a combat-log counterparty to (name, corp, alli, ship), overview-agnostic.
+
+    EVE overview ship-label settings vary the layout independently of the message type
+    (which tokens, their order, brackets vs italics vs parens), so ONE ordered resolver
+    is tried for every effect instead of a per-effect encoding guess. Each step is
+    deterministic; the first that yields a pilot/structure wins:
+
+      1. NEW encoding — pilot first, NOT in a bracket: "Name [CORP][ALLI] Ship"
+      2. a spaced [Name] bracket anywhere is the pilot (covers OLD "Ship [ALLI] [CORP]
+         [Pilot]", "Ship [Pilot] - [ALLI]", "Eris [NV] [NVACA] [Zweige Teufel]", ...)
+      3. angle-ticker layout (only when "&lt;ALLI&gt;" is present): bare pilot trailing
+         the ticker block, e.g. "Proteus &lt;NV&gt;[NVACA] Stephen King RDG"
+      4. OLD encoding — for a single-word pilot in the trailing bracket
+      5. standalone <i>pilot</i> overview label in the raw line (no brackets at all)
+      6. terse "Ship [ALLI] [CORP]" (no pilot present in the log)
+      7. fallback — the bare token
+
+    Step 2 runs before OLD because the OLD regex is loose enough to mis-pick a trailing
+    ticker bracket (e.g. "Legion [Ra'zok Zateki] - [NV]" → would yield "NV"); a spaced
+    bracket is unambiguously a character. To support a future layout, insert a step.
     """
-    if terse:
-        st = _parse_ship_tickers(party)
-        if st is not None:
-            return st
-    return std
+    party = (party or "").strip()
+    name, corp, alli, ship = _parse_new_encoding(party)
+    if ship is not None:
+        return name, corp, alli, ship
+    m = _SPACED_PILOT_RE.search(party)
+    if m:
+        return m.group(1).strip(), None, None, _ship_from_lead(party[: m.start()])
+    if "&lt;" in party:
+        am = _ANGLE_LAYOUT_RE.match(party)
+        if am:
+            lead, trail = am.group(1).strip(), am.group(2).strip()
+            if trail:  # bare pilot trails the tickers; the leading token is the ship
+                return trail, None, None, (lead or None)
+            # No trailing pilot: the leading token is ship+pilot fused (no delimiter
+            # survives stripping). Hand the blob to `name` so split_entity can peel a
+            # known ship type off the front (recovers e.g. Guardian | Jennifer Hibra).
+            return (lead or None), None, None, None
+    name, corp, alli, ship = _parse_old_encoding(party)
+    if ship is not None:
+        return name, corp, alli, ship
+    pilot = _italic_pilot_label(raw)
+    if pilot is not None:
+        return pilot, None, None, (party or None)
+    st = _parse_ship_tickers(party)
+    if st is not None:
+        return st
+    return (party or None), None, None, None
 
 
 # --------------------------------------------------------------------------- #
@@ -182,6 +272,16 @@ _DAMAGE_QUALITIES = (
 )
 _DAMAGE_NOMOD_RE = re.compile(
     r"^(\d+)\s+(from|to)\s+(.+?)\s+-\s+(" + "|".join(_DAMAGE_QUALITIES) + r")$"
+)
+
+# Structure damage: a system prefix, the structure's "[CORP](StructureType)" decoration,
+# and a trailing "(N deflected)" with a doubled quality, e.g.
+#   "6438 to J151204 - 3D Triangle Scheme[BF-F](Fortizar) - Mjolnir Fury Cruise Missile
+#    - Hits - Hits (6438 deflected)"
+# The counterparty is a structure (never a character); parse it so the line is not
+# dropped, recording the structure name + type. Tried last, after the pilot-damage forms.
+_STRUCT_DAMAGE_RE = re.compile(
+    r"^(\d+)\s+(from|to)\s+.+?\s+-\s+([^\[]+?)\[([^\]]*)\]\(([^)]+)\)\s+-\s+.+?\s+\(\d+\s+deflected\)$"
 )
 
 
@@ -229,6 +329,20 @@ def _match_damage(rest: str) -> dict[str, Any] | None:
             "module_name": None,
             "quality": mn.group(4).strip(),
         }
+    ms = _STRUCT_DAMAGE_RE.match(rest.strip())
+    if ms:
+        direction = "in" if ms.group(2) == "from" else "out"
+        return {
+            "effect_type": "damage",
+            "direction": direction,
+            "amount": float(ms.group(1)),
+            "other_name": ms.group(3).strip(),
+            "other_corp_ticker": ms.group(4).strip() or None,
+            "other_alliance_ticker": None,
+            "other_ship_name": ms.group(5).strip(),  # structure type (e.g. Fortizar)
+            "module_name": None,
+            "quality": "Deflected",
+        }
     return None
 
 
@@ -244,6 +358,24 @@ _EWAR_RE = re.compile(
     r"^Warp (disruption|scramble) attempt from (.+?)(?: to (.+))?$",
     re.DOTALL,
 )
+
+
+_EWAR_RAW_SPLIT_RE = re.compile(
+    r"<font[^>]*>\s*from\s*</font>(.*?)<font[^>]*>\s*to[ <]", re.DOTALL
+)
+
+
+def _split_ewar_raw(raw: str) -> tuple[str, str]:
+    """Split a raw ewar line into (source_raw, target_raw) at the inter-party 'to'.
+
+    Lets the resolver recover a per-party standalone <i>pilot</i> label (some overviews
+    log an ewar counterparty by ship with the pilot only in italics). Falls back to
+    (raw, "") for the terse incoming form that omits the target.
+    """
+    m = _EWAR_RAW_SPLIT_RE.search(raw)
+    if not m:
+        return raw, ""
+    return m.group(1), raw[m.end():]
 
 
 def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
@@ -266,14 +398,15 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
     terse = m.group(3) is None
     tgt_is_you = terse or tgt_raw.rstrip("!") == "you"
 
-    src_id = _parse_counterparty(src_raw, _parse_new_encoding(src_raw), terse=terse)
+    src_seg, tgt_seg = _split_ewar_raw(rest_raw)
+    src_id = _resolve_counterparty(src_raw, src_seg)
     source_name: str | None = None if src_is_you else src_id[0]
-    target_name: str | None = None if tgt_is_you else _parse_new_encoding(tgt_raw)[0]
+    target_name: str | None = None if tgt_is_you else _resolve_counterparty(tgt_raw, tgt_seg)[0]
     authoritative = src_is_you or tgt_is_you
 
     if src_is_you:
         direction: Literal["in", "out"] = "out"
-        name, corp, alli, ship = _parse_new_encoding(tgt_raw)
+        name, corp, alli, ship = _resolve_counterparty(tgt_raw, tgt_seg)
     elif tgt_is_you:
         direction = "in"
         name, corp, alli, ship = src_id
@@ -311,15 +444,13 @@ _NEUT_OUT_RE = re.compile(
 )
 
 
-def _match_neut_out(rest_stripped: str) -> dict[str, Any] | None:
+def _match_neut_out(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     m = _NEUT_OUT_RE.match(rest_stripped)
     if not m:
         return None
     target_part = m.group(2).strip()
     module_name = m.group(3).strip() if m.group(3) else None
-    name, corp, alli, ship = _parse_counterparty(
-        target_part, _parse_new_encoding(target_part), terse=module_name is None
-    )
+    name, corp, alli, ship = _resolve_counterparty(target_part, rest_raw)
     return {
         "effect_type": "neut",
         "direction": "out",
@@ -358,7 +489,7 @@ _NOS_RE = re.compile(
 )
 
 
-def _match_nos(rest_stripped: str) -> dict[str, Any] | None:
+def _match_nos(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     """Match nosferatu (energy drained from/to) lines.
 
     Real-log finding: no incoming cap-warfare (energy neutralized <you>) lines were found
@@ -375,10 +506,7 @@ def _match_nos(rest_stripped: str) -> dict[str, Any] | None:
     module_name = m.group(4).strip() if m.group(4) else None
 
     direction: Literal["in", "out"] = "out" if drain_word == "from" else "in"
-    # OLD encoding for player targets; bare name falls back gracefully
-    name, corp, alli, ship = _parse_counterparty(
-        party_part, _parse_old_encoding(party_part), terse=module_name is None
-    )
+    name, corp, alli, ship = _resolve_counterparty(party_part, rest_raw)
 
     return {
         "effect_type": "nos",
@@ -408,7 +536,7 @@ _REP_RE = re.compile(
 )
 
 
-def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
+def _match_rep(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     m = _REP_RE.match(rest_stripped)
     if not m:
         return None
@@ -421,14 +549,7 @@ def _match_rep(rest_stripped: str) -> dict[str, Any] | None:
     effect_type = "rep_armor" if "armor" in rep_kind else "rep_shield"
     direction: Literal["in", "out"] = "out" if direction_word == "to" else "in"
 
-    # OLD format uses "by" for armor, NEW format uses "by" for shield (confirmed in logs)
-    # Shield "boosted by" uses NEW format; armor "repaired by" uses OLD format
-    if direction_word == "by" and "armor" in rep_kind:
-        std = _parse_old_encoding(party_part)
-    else:
-        # "to" (armor out, new format) or "by shield" (new format)
-        std = _parse_new_encoding(party_part)
-    name, corp, alli, ship = _parse_counterparty(party_part, std, terse=module_name is None)
+    name, corp, alli, ship = _resolve_counterparty(party_part, rest_raw)
 
     return {
         "effect_type": effect_type,
@@ -454,7 +575,7 @@ _CAP_RE = re.compile(
 )
 
 
-def _match_cap(rest_stripped: str) -> dict[str, Any] | None:
+def _match_cap(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     m = _CAP_RE.match(rest_stripped)
     if not m:
         return None
@@ -464,9 +585,7 @@ def _match_cap(rest_stripped: str) -> dict[str, Any] | None:
     module_name = m.group(4).strip() if m.group(4) else None
 
     direction: Literal["in", "out"] = "out" if direction_word == "to" else "in"
-    name, corp, alli, ship = _parse_counterparty(
-        party_part, _parse_old_encoding(party_part), terse=module_name is None
-    )
+    name, corp, alli, ship = _resolve_counterparty(party_part, rest_raw)
 
     return {
         "effect_type": "cap_transfer",
@@ -636,13 +755,13 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         if effect is None:
             effect = _match_ewar(rest_stripped, rest_raw)
         if effect is None:
-            effect = _match_neut_out(rest_stripped)
+            effect = _match_neut_out(rest_stripped, rest_raw)
         if effect is None:
-            effect = _match_nos(rest_stripped)
+            effect = _match_nos(rest_stripped, rest_raw)
         if effect is None:
-            effect = _match_rep(rest_stripped)
+            effect = _match_rep(rest_stripped, rest_raw)
         if effect is None:
-            effect = _match_cap(rest_stripped)
+            effect = _match_cap(rest_stripped, rest_raw)
         if effect is None:
             effect = _match_jam_broken(rest_stripped)
         if effect is None:

@@ -13,7 +13,7 @@ import 'uplot/dist/uPlot.min.css'
 import type { FleetTimeline, KillEvent, Leaders, TimelineFightInfo } from '../api'
 import { loadFleetTimeline } from '../cache'
 import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
-import type { FleetPanel, FleetView, PanelSeries } from '../fleet'
+import type { FleetPanel, FleetView, PanelId, PanelSeries } from '../fleet'
 import { toFleetView } from '../fleet'
 import { renderHoverSummary } from '../hoverSummary'
 
@@ -231,7 +231,7 @@ function fightEdgesPlugin(fights: TimelineFightInfo[]): uPlot.Plugin {
 
 // DOM-overlay hover-summary tooltip: side totals + top-receiver leaders at the
 // hovered bucket. Modelled on killMarkersPlugin (body-appended fixed tip).
-function hoverSummaryPlugin(view: FleetView, leaders: Leaders[]): uPlot.Plugin {
+function hoverSummaryPlugin(panelId: PanelId, leaders: Leaders[]): uPlot.Plugin {
   let tip: HTMLDivElement | null = null
 
   return {
@@ -253,7 +253,7 @@ function hoverSummaryPlugin(view: FleetView, leaders: Leaders[]): uPlot.Plugin {
           tip.style.display = 'none'
           return
         }
-        tip.innerHTML = renderHoverSummary(view, leaders, idx)
+        tip.innerHTML = renderHoverSummary(panelId, leaders, idx)
         tip.style.display = 'block'
         // Position near the cursor using uPlot's cursor left/top
         const left = u.cursor.left ?? 0
@@ -366,9 +366,10 @@ interface PanelChartProps {
   onRangeDrag: (r: { from: number; to: number }) => void
   registerPositioner: (fn: () => void) => () => void
   registerReset: (fn: () => void) => () => void
-  /** FleetView (all panels) and leaders for the hover-summary plugin. */
-  view: FleetView
+  /** Per-bucket leaders for the hover-summary plugin (panel-specific). */
   leaders: Leaders[]
+  /** Whether to attach the hover-summary tooltip (off for the per-character view). */
+  showHoverSummary: boolean
 }
 
 function PanelChart({
@@ -383,8 +384,8 @@ function PanelChart({
   onRangeDrag,
   registerPositioner,
   registerReset,
-  view,
   leaders,
+  showHoverSummary,
 }: PanelChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -511,7 +512,7 @@ function PanelChart({
         zeroBaselinePlugin(),
         killMarkersPlugin(kills),
         rangePlugin(() => rangeRef.current, onRangeDrag, registerPositioner),
-        hoverSummaryPlugin(view, leaders),
+        ...(showHoverSummary ? [hoverSummaryPlugin(panel.id, leaders)] : []),
       ],
     }
 
@@ -562,7 +563,7 @@ function PanelChart({
       unregisterReset()
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax, view, leaders])
+  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax, leaders, showHoverSummary])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -642,6 +643,8 @@ interface CoreProps {
   onSelectRange: (r: { from: number; to: number } | null) => void
   /** Panel height in px. */
   height?: number
+  /** Show the per-bucket leaders hover tooltip. Off for the per-character view. */
+  showHoverSummary?: boolean
 }
 
 /**
@@ -653,6 +656,7 @@ export function FleetGraphCore({
   selectedRange,
   onSelectRange,
   height = 165,
+  showHoverSummary = true,
 }: CoreProps) {
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set())
   const [smooth, setSmooth] = useState(true)
@@ -837,8 +841,8 @@ export function FleetGraphCore({
             onRangeDrag={handleRangeDrag}
             registerPositioner={registerPositioner}
             registerReset={registerReset}
-            view={view}
             leaders={fleet.leaders ?? []}
+            showHoverSummary={showHoverSummary}
           />
         </div>
       ))}

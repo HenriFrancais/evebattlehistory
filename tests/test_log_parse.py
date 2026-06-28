@@ -856,7 +856,9 @@ def test_jam_target_locks_broken_combat_variant() -> None:
 
 def test_npc_damage_without_module_parses() -> None:
     """Sleeper/NPC/sentry damage has no module — just name and quality."""
-    evt = parse_line("[ 2026.06.26 20:51:10 ] (combat) <b>27</b> from Awakened Sentinel - Penetrates")
+    evt = parse_line(
+        "[ 2026.06.26 20:51:10 ] (combat) <b>27</b> from Awakened Sentinel - Penetrates"
+    )
     assert evt is not None
     assert evt.effect_type == "damage"
     assert evt.direction == "in"
@@ -917,3 +919,108 @@ def test_incoming_jam_not_confused_with_outgoing_burst() -> None:
     assert evt is not None
     assert evt.effect_type == "jam"
     assert evt.direction == "in"
+
+
+def test_rep_recovers_italic_pilot_label_with_ship_overview() -> None:
+    """Some overviews log the recipient by ship with the pilot in an <i> label that
+    strip_eve_markup deletes. _match_rep recovers the pilot from the raw line; the hull
+    moves to other_ship_name. (Real line from Kyra Venalia's log.)"""
+    line = (
+        "[ 2026.06.26 20:42:41 ] (combat) <color=0xffccff66><b>1022</b><color=0x77ffffff>"
+        "<font size=10> remote armor repaired to </font><b><color=0xffffffff><b>"
+        "<i>Body Cam Off</b></i><b><color=0xFF07dffc>Heretic<color=0xFF2261d6>(NV)</color>"
+        "<u></b><color=0x77ffffff><font size=10> - Perun Heavy Mutadaptive Remote Armor "
+        "Repairer</font>"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.direction == "out"
+    assert evt.other_name == "Body Cam Off"      # pilot recovered, not "Heretic(NV)"
+    assert evt.other_ship_name == "Heretic(NV)"  # hull preserved
+
+
+def test_rep_cosmetic_custom_ship_name_is_not_taken_as_pilot() -> None:
+    """A cosmetic custom SHIP name in italics (closed by ']') must NOT be taken as the
+    pilot — the real pilot is in the [bracket] and is parsed normally. (Real line.)"""
+    line = (
+        "[ 2026.06.26 20:53:12 ] (combat) <color=0xffccff66><b>1024</b><color=0x77ffffff>"
+        "<font size=10> remote armor repaired by </font><b><color=0xffffffff><fontsize=12>"
+        "<color=0xFFFEBB64><b> <u>Zarmazd</u></b></color></fontsize> <i>✖ DXa Zarming</i>]"
+        "</b></fontsize><fontsize=10> [Deringston Xa'thon]</fontsize><color=0xFFFFFFFF><b> -"
+        "<fontsize=12><color=0xFFFEFF6F> [NV]</color></fontsize></b><color=0x77ffffff>"
+        "<font size=10> - Perun Heavy Mutadaptive Remote Armor Repairer</font>"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "rep_armor"
+    assert evt.other_name != "✖ DXa Zarming"   # the cosmetic ship name is not the pilot
+
+
+def test_resolve_counterparty_layouts() -> None:
+    """The unified resolver attributes the pilot across every overview layout."""
+    from app.logs.parse import _resolve_counterparty
+
+    # NEW: pilot first
+    assert _resolve_counterparty("Liberty Tokila [NV][NVACA] Guardian")[0] == "Liberty Tokila"
+    # OLD: pilot in trailing bracket after ship + 2 tickers
+    assert _resolve_counterparty("Eris [NV] [NVACA] [Zweige Teufel]")[0] == "Zweige Teufel"
+    # Trailing [pilot] bracket with only a ship before it (custom-name layout, stripped)
+    name, _c, _a, ship = _resolve_counterparty("Zarmazd [Deringston Xa'thon]")
+    assert name == "Deringston Xa'thon"
+    assert ship == "Zarmazd"
+    # Italic pilot label in raw, ship-only stripped form (overview pilot-name in <i>)
+    name, _c, _a, ship = _resolve_counterparty("Heretic(NV)", raw="<i>Body Cam Off</i>Heretic(NV)")
+    assert name == "Body Cam Off"
+    # Terse ship + tickers, no pilot present
+    name, _c, _a, ship = _resolve_counterparty("Zarmazd [NV] [NVACA]")
+    assert name is None and ship == "Zarmazd"
+    # Bare NPC / unknown — fallback keeps the token
+    assert _resolve_counterparty("Sleepless Sentinel")[0] == "Sleepless Sentinel"
+
+
+def test_structure_damage_deflected_parses() -> None:
+    """Structure damage ('… (N deflected)') parses to a damage event on the structure."""
+    line = (
+        "[ 2026.06.22 01:54:19 ] (combat) <color=0xff00ffff><b>6438</b> <color=0x77ffffff>"
+        "<font size=10>to</font> <b><color=0xffffffff>J151204 - 3D Triangle Scheme[BF-F]"
+        "(Fortizar)</b><font size=10><color=0x77ffffff> - Mjolnir Fury Cruise Missile - "
+        "Hits - Hits (<b>6438</b> deflected)"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "damage"
+    assert evt.direction == "out"
+    assert evt.amount == 6438.0
+    assert evt.other_name == "3D Triangle Scheme"
+    assert evt.other_ship_name == "Fortizar"
+
+
+def test_resolve_angle_ticker_layout() -> None:
+    """Older overviews render the alliance in literal angle brackets with the pilot
+    un-bracketed; the trailing bare token is the pilot, the leading token the ship."""
+    from app.logs.parse import _resolve_counterparty
+
+    name, _c, _a, ship = _resolve_counterparty("Proteus &lt;NV&gt;[NVACA] Stephen King RDG")
+    assert name == "Stephen King RDG"
+    assert ship == "Proteus"
+    # Fused ship+pilot (nothing trails the tickers): the blob goes to `name` (ship=None)
+    # so split_entity can peel a known ship type off the front at ingest.
+    name, _c, _a, ship = _resolve_counterparty("Absolution Meneltir Falmaro [DDOG.] &lt;MSF.&gt;")
+    assert name == "Absolution Meneltir Falmaro"
+    assert ship is None
+
+
+def test_ewar_recovers_per_party_italic_pilot() -> None:
+    """An ewar counterparty logged by ship with the pilot only in an <i> label is
+    recovered per-party from the raw line."""
+    line = (
+        "[ 2026.06.26 20:42:00 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+        "<color=0x77ffffff><font size=10>from</font> <b><i>Body Cam Off</b></i><b>"
+        "<color=0xFF07dffc>Heretic<color=0xFF2261d6>(NV)</color></b> <color=0x77ffffff>"
+        "<font size=10>to <b><color=0xffffffff></font>you"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "scram"
+    assert evt.source_name == "Body Cam Off"

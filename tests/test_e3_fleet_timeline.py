@@ -1300,11 +1300,11 @@ async def test_snapshot_reps_deduped_across_in_out(db_session_maker) -> None:  #
     assert c.value == pytest.approx(1000.0)  # 400 + 600, NOT doubled to 2000
 
 
-async def test_snapshot_reps_partial_coverage_single_row(db_session_maker) -> None:  # type: ignore[no-untyped-def]
-    """Real logs rarely overlap perfectly: the repper logs some ticks, the
-    recipient logs others. The snapshot must still show ONE row per
-    (repper -> recipient), summing the repper's own ticks + the recipient-logged
-    ticks the repper never logged (no double counting, no split out/in rows)."""
+async def test_snapshot_reps_uploading_repper_is_authoritative(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A repper who uploaded their own log is summed from THAT log only — recipient
+    copies are ignored, even when a recipient logged more ticks. This is what stops
+    the clock-skew / overheal double counting (a recipient's "repaired by X" lands a
+    second off and/or with a different effective amount, so per-tick matching fails)."""
     import datetime as _dt
 
     from app.analytics.fleet import fleet_snapshot
@@ -1324,14 +1324,15 @@ async def test_snapshot_reps_partial_coverage_single_row(db_session_maker) -> No
         ts = BUCKET_TS_1
         gf_repper = await _make_gamelog_file(session, REPPER, "reps-out-p")
         gf_recip = await _make_gamelog_file(session, RECIP, "reps-in-p")
-        # Tick #1 (amt=400) logged by BOTH parties -> one physical rep.
+        # Repper's OWN log: one rep of 400 (this is the authoritative record).
         session.add(LogEvent(file_id=gf_repper.file_id, character_id=REPPER, ts=ts,
                              effect_type="rep_armor", direction="out", amount=400.0,
                              other_name="Tackled Friend", fight_id=fight_id))
+        # Recipient's log: copies of the repper's reps, clock-skewed / extra (600).
+        # These must be ignored because the repper uploaded their own log.
         session.add(LogEvent(file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
                              effect_type="rep_armor", direction="in", amount=400.0,
                              other_name="Logi Pilot", fight_id=fight_id))
-        # Tick #2 (amt=600) logged ONLY by the recipient (repper's log missed it).
         session.add(LogEvent(file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
                              effect_type="rep_armor", direction="in", amount=600.0,
                              other_name="Logi Pilot", fight_id=fight_id))
@@ -1343,14 +1344,13 @@ async def test_snapshot_reps_partial_coverage_single_row(db_session_maker) -> No
 
     rep_rows = [r for r in rows if r.effect_type == "rep_armor"]
     assert len(rep_rows) == 1, (
-        f"expected 1 collapsed rep row, got {len(rep_rows)}: "
+        f"expected 1 rep row, got {len(rep_rows)}: "
         f"{[(r.source_name, r.target_name, r.direction, r.value) for r in rep_rows]}"
     )
     c = rep_rows[0]
     assert c.source_name == "Logi Pilot"
     assert c.target_name == "Tackled Friend"
-    # 400 (matched, counted once) + 600 (recipient-only) = 1000.
-    assert c.value == pytest.approx(1000.0)
+    assert c.value == pytest.approx(400.0)  # repper's own log only, not 400+600
 
 
 async def test_snapshot_reps_in_only_kept_when_repper_did_not_log(db_session_maker) -> None:  # type: ignore[no-untyped-def]
@@ -1388,3 +1388,95 @@ async def test_snapshot_reps_in_only_kept_when_repper_did_not_log(db_session_mak
     rep_rows = [r for r in rows if r.effect_type == "rep_armor"]
     assert len(rep_rows) == 1
     assert rep_rows[0].value == pytest.approx(750.0)
+
+
+async def test_cap_and_tackle_leaders(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """The cap panel exposes hostile-neut-taken / friendly-neut-dealt / friendly-cap-recv;
+    the ewar panel exposes hostile- and friendly-tackle-taken (counts)."""
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_settings
+    from app.db.models import (
+        Alliance,
+        Character,
+        FightKill,
+        Killmail,
+        KillmailAttacker,
+        LogEvent,
+    )
+
+    CHAR_F1 = 3100000011  # friendly — applies neut, lands tackle
+    CHAR_F2 = 3100000012  # friendly — receives cap + receives tackle
+    CHAR_H1 = 3200000011  # hostile  — takes neut + takes tackle
+    now = dt.datetime.now(dt.UTC)
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        session.add(Alliance(alliance_id=_FRIENDLY_ALLI, name="F", last_seen_at=now))
+        session.add(Alliance(alliance_id=_HOSTILE_ALLI, name="H", last_seen_at=now))
+        await session.flush()
+        for cid, name in ((CHAR_F1, "NeutBro"), (CHAR_F2, "CapMe"), (CHAR_H1, "HostileOne")):
+            await session.merge(Character(character_id=cid, name=name, last_seen_at=now))
+        await session.flush()
+        # Side classification via killmail attacker alliance.
+        for i, (cid, alli) in enumerate(
+            [(CHAR_F1, _FRIENDLY_ALLI), (CHAR_F2, _FRIENDLY_ALLI), (CHAR_H1, _HOSTILE_ALLI)]
+        ):
+            km_id = 9_100_000 + i
+            session.add(Killmail(killmail_id=km_id, killmail_time=FIGHT_START,
+                                 solar_system_id=31002222, victim_character_id=None,
+                                 victim_ship_type_id=_SHIP_TYPE_ID, total_value=0.0,
+                                 npc_kill=False, solo_kill=False))
+            await session.flush()
+            session.add(FightKill(fight_id=fight_id, killmail_id=km_id, side_idx=0))
+            await session.flush()
+            session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=0, character_id=cid,
+                                         corporation_id=None, alliance_id=alli,
+                                         ship_type_id=_SHIP_TYPE_ID, weapon_type_id=None,
+                                         damage_done=0, final_blow=False, security_status=0.0))
+        await session.flush()
+
+        # Friendly cap pressure applied (by source) = neut 4200 + nos 800 = 5000.
+        await _insert_bucket(session, fight_id, CHAR_F1, BUCKET_TS_1, "neut", "out", 4200.0, 1)
+        await _insert_bucket(session, fight_id, CHAR_F1, BUCKET_TS_1, "nos", "out", 800.0, 1)
+        # Friendly cap received (by receiver).
+        await _insert_bucket(
+            session, fight_id, CHAR_F2, BUCKET_TS_1, "cap_transfer", "in", 1500.0, 1
+        )
+        # Hostile under cap pressure: friendly neut + nos OUT aimed at the hostile
+        # (by other_name) = 3000 + 500 = 3500.
+        gf = await _make_gamelog_file(session, CHAR_F1, "neutout")
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_F1, ts=BUCKET_TS_1,
+                             effect_type="neut", direction="out", amount=3000.0,
+                             other_name="HostileOne", fight_id=fight_id))
+        session.add(LogEvent(file_id=gf.file_id, character_id=CHAR_F1, ts=BUCKET_TS_1,
+                             effect_type="nos", direction="out", amount=500.0,
+                             other_name="HostileOne", fight_id=fight_id))
+        # Tackle (deduped rows): CapMe tackled twice, HostileOne once.
+        gf2 = await _make_gamelog_file(session, CHAR_F1, "tackle")
+        for tgt in ("CapMe", "CapMe", "HostileOne"):
+            session.add(LogEvent(file_id=gf2.file_id, character_id=CHAR_F1, ts=BUCKET_TS_1,
+                                 effect_type="scram", direction="out", amount=0.0,
+                                 other_name=tgt, fight_id=fight_id,
+                                 source_name="NeutBro", target_name=tgt, dedupe_suppressed=False))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        tl = await fleet_timeline(session, br_id, our_alliance_ids=[_FRIENDLY_ALLI],
+                                  settings=get_settings())
+
+    ld = tl.leaders[tl.x.index(int(BUCKET_TS_1.timestamp()))]
+    assert ld.top_friendly_cap_pressure is not None
+    assert ld.top_friendly_cap_pressure.name == "NeutBro"
+    assert ld.top_friendly_cap_pressure.amount == pytest.approx(5000.0)  # neut 4200 + nos 800
+    assert ld.top_friendly_cap_recv is not None
+    assert ld.top_friendly_cap_recv.name == "CapMe"
+    assert ld.top_friendly_cap_recv.amount == pytest.approx(1500.0)
+    assert ld.top_hostile_cap_pressure is not None
+    assert ld.top_hostile_cap_pressure.name == "HostileOne"
+    assert ld.top_hostile_cap_pressure.amount == pytest.approx(3500.0)  # neut 3000 + nos 500
+    assert ld.top_friendly_tackle_taken is not None
+    assert ld.top_friendly_tackle_taken.name == "CapMe"
+    assert ld.top_friendly_tackle_taken.amount == pytest.approx(2.0)
+    assert ld.top_hostile_tackle_taken is not None
+    assert ld.top_hostile_tackle_taken.name == "HostileOne"
+    assert ld.top_hostile_tackle_taken.amount == pytest.approx(1.0)

@@ -426,6 +426,11 @@ async def test_api_timeline_returns_expected_shape(tmp_path, monkeypatch) -> Non
     s = data["series"][0]
     assert s["key"] == "damage:in"
     assert len(s["values"]) == len(data["x"])
+    # Character timeline carries the same BR-wide kill marks as the fleet view.
+    assert "kills" in data
+    assert isinstance(data["kills"], list)
+    assert len(data["kills"]) >= 1  # the fight's killmail (CHAR_A victim)
+    assert {"ts", "killmail_id", "victim_ship_name", "side_kind"} <= set(data["kills"][0])
 
     reset_engine_for_tests()
     get_settings.cache_clear()

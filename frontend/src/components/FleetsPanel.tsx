@@ -82,7 +82,7 @@ function CompositionView({ side }: { side: CompositionSide }) {
   )
 }
 
-function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onChanged, sideKind }: { p: CompositionPilot; onSelectKill?: (kmId: number) => void; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void; sideKind: string }) {
+function PilotRow({ p, showWeapons, showLogs, brId, canEdit, onChanged, sideKind }: { p: CompositionPilot; showWeapons: boolean; showLogs: boolean; brId: string; canEdit: boolean; onChanged: () => void; sideKind: string }) {
   const weapons = p.weapons ?? []
   const [logBusy, setLogBusy] = useState(false)
   const [logErr, setLogErr] = useState<string | null>(null)
@@ -121,21 +121,9 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onCha
           )}
           {p.character_name}
           {p.lost && p.killmail_id != null ? (
-            <>
-              <a className="comp-lost" href={`https://zkillboard.com/kill/${p.killmail_id}/`}
-                 target="_blank" rel="noopener noreferrer" title="lost ship — open on zKillboard"
-                 aria-label="lost ship"> ✗</a>
-              {onSelectKill && (
-                <button
-                  className="btn-mini"
-                  style={{ marginLeft: '0.3rem', fontSize: '0.72rem', padding: '0.05rem 0.3rem' }}
-                  title="View loss detail"
-                  onClick={() => onSelectKill(p.killmail_id!)}
-                >
-                  detail
-                </button>
-              )}
-            </>
+            <a className="comp-lost" href={`https://zkillboard.com/kill/${p.killmail_id}/`}
+               target="_blank" rel="noopener noreferrer" title="lost ship — open on zKillboard"
+               aria-label="lost ship"> ✗</a>
           ) : p.lost ? (
             <span className="comp-lost" title="lost ship"> ✗</span>
           ) : null}
@@ -201,7 +189,7 @@ function PilotRow({ p, onSelectKill, showWeapons, showLogs, brId, canEdit, onCha
   )
 }
 
-function CharacterView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
+function CharacterView({ side, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
   const showLogs = side.side_kind === 'friendly'
   return (
     <div>
@@ -210,7 +198,6 @@ function CharacterView({ side, onSelectKill, showWeapons, brId, canEdit, onChang
         <PilotRow
           key={`${p.character_id}-${p.ship_type_id}`}
           p={p}
-          onSelectKill={onSelectKill}
           showWeapons={showWeapons}
           showLogs={showLogs}
           brId={brId}
@@ -223,7 +210,7 @@ function CharacterView({ side, onSelectKill, showWeapons, brId, canEdit, onChang
   )
 }
 
-function UserView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; onSelectKill?: (kmId: number) => void; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
+function UserView({ side, showWeapons, brId, canEdit, onChanged }: { side: CompositionSide; showWeapons: boolean; brId: string; canEdit: boolean; onChanged: () => void }) {
   const groups = useMemo(() => {
     const m = new Map<string, CompositionPilot[]>()
     for (const p of side.pilots) {
@@ -244,7 +231,6 @@ function UserView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }:
             <PilotRow
               key={`${p.character_id}-${p.ship_type_id}`}
               p={p}
-              onSelectKill={onSelectKill}
               showWeapons={showWeapons}
               showLogs={showLogs}
               brId={brId}
@@ -259,7 +245,7 @@ function UserView({ side, onSelectKill, showWeapons, brId, canEdit, onChanged }:
   )
 }
 
-export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; reloadKey?: number; onSelectKill?: (kmId: number) => void }) {
+export function FleetsPanel({ brId, reloadKey }: { brId: string; reloadKey?: number }) {
   const [data, setData] = useState<CompositionResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('composition')
@@ -324,8 +310,8 @@ export function FleetsPanel({ brId, reloadKey, onSelectKill }: { brId: string; r
         {data.sides.map((side) => (
           <div key={side.side_kind}>
             {mode === 'composition' && <CompositionView side={side} />}
-            {mode === 'character' && <CharacterView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
-            {mode === 'user' && <UserView side={side} onSelectKill={onSelectKill} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
+            {mode === 'character' && <CharacterView side={side} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
+            {mode === 'user' && <UserView side={side} showWeapons={showWeapons} brId={brId} canEdit={data.by_user_available} onChanged={() => setLocalReload((v) => v + 1)} />}
           </div>
         ))}
       </div>
