@@ -937,7 +937,7 @@ def test_rep_recovers_italic_pilot_label_with_ship_overview() -> None:
     assert evt.effect_type == "rep_armor"
     assert evt.direction == "out"
     assert evt.other_name == "Body Cam Off"      # pilot recovered, not "Heretic(NV)"
-    assert evt.other_ship_name == "Heretic(NV)"  # hull preserved
+    assert evt.other_ship_name == "Heretic"      # hull preserved; "(NV)" ticker stripped
 
 
 def test_rep_cosmetic_custom_ship_name_is_not_taken_as_pilot() -> None:
@@ -1024,3 +1024,103 @@ def test_ewar_recovers_per_party_italic_pilot() -> None:
     assert evt is not None
     assert evt.effect_type == "scram"
     assert evt.source_name == "Body Cam Off"
+
+
+# ---------------------------------------------------------------------------
+# Regression: overview-layout counterparty resolution (real corpus lines from
+# the "NV vs MSF Rorqual Bait HA" BR). Each covers a reported parse bug.
+# ---------------------------------------------------------------------------
+
+def _scram(party_from: str, party_to: str) -> str:
+    """Build a stripped-equivalent scram line (markup already minimal)."""
+    return (
+        "[ 2026.06.26 21:00:00 ] (combat) <b>Warp scramble attempt</b> "
+        f"<font size=10>from</font> {party_from} "
+        f"<font size=10>to <b></font>{party_to}"
+    )
+
+
+def test_paren_ship_layout_both_parties() -> None:
+    # "Pilot [CORP]&lt;ALLI&gt;(Ship)" — pilot leads, alliance in angle, ship in parens.
+    # Bug: previously yielded source/target "(Absolution)" (ship-in-parens as pilot) and
+    # leaked the corp; here both pilots + ships resolve cleanly.
+    evt = parse_line(_scram(
+        "Wolf Hibra [NVACA]&lt;NV&gt;(Heretic)",
+        "SavageDoob Severasse [DDOG.]&lt;MSF.&gt;(Outrider)",
+    ))
+    assert evt is not None and evt.effect_type == "scram"
+    assert evt.source_name == "Wolf Hibra"
+    assert evt.target_name == "SavageDoob Severasse"
+    # never a corp ticker or a parenthesised ship as the party name
+    for nm in (evt.source_name, evt.target_name):
+        assert "(" not in nm and ")" not in nm
+        assert nm not in {"MSF.", "DDOG.", "NV", "NVACA"}
+
+
+def test_paren_ship_distinct_parties_no_self_tackle() -> None:
+    # Bug: many distinct targets collapsed to one string ("Cata Man tackles itself",
+    # inflated count). Source and target must stay distinct real pilots.
+    evt = parse_line(_scram(
+        "Cata Man [NVACA]&lt;NV&gt;(Absolution)",
+        "The True Fengorn [DDOG.]&lt;MSF.&gt;(Leshak)",
+    ))
+    assert evt is not None
+    assert evt.source_name == "Cata Man"
+    assert evt.target_name == "The True Fengorn"
+    assert evt.source_name != evt.target_name
+
+
+def test_four_bracket_trailing_dash_target_pilot() -> None:
+    # "Ship [ALLI] [CORP] [Pilot] -" with a trailing custom-label dash. Bug: the whole
+    # blob (incl. "MSF." corp and trailing "-") leaked as the target; pilot is recovered.
+    evt = parse_line(_scram(
+        "Absolution [NV] [NVACA] [Mustard Appreciator] -",
+        "Absolution [MSF.] [DDOG.] [Slagmallet] -",
+    ))
+    assert evt is not None
+    assert evt.source_name == "Mustard Appreciator"
+    assert evt.target_name == "Slagmallet"          # not "- Slagmallet", not "MSF."
+
+
+def test_single_word_bracket_pilot_not_ticker() -> None:
+    # "Ship [Pilot] - [ALLI]" single-word lowercase pilot in the first bracket. Bug: OLD
+    # encoding mis-picked the trailing [ALLI] ticker as the pilot.
+    evt = parse_line(_scram(
+        "Legion [Glavior] - [NV]",
+        "Scorpion [Daniel BELL Carem] - [URSA]",
+    ))
+    assert evt is not None
+    assert evt.source_name == "Glavior"             # not "NV"
+    assert evt.target_name == "Daniel BELL Carem"   # not "URSA"
+
+
+def test_angle_pilot_vs_angle_alliance() -> None:
+    from app.logs.parse import _resolve_counterparty
+    # angle holds a PILOT (space/lower-case) → ship leads, pilot in angle.
+    assert _resolve_counterparty("Zarmazd [NV] &lt;Orie toori&gt;")[0] == "Orie toori"
+    assert _resolve_counterparty("Zarmazd [NV] &lt;Orie toori&gt;")[3] == "Zarmazd"
+    # angle holds an ALLIANCE ticker → angle-first layout, pilot trails.
+    af = _resolve_counterparty("Proteus &lt;NV&gt;[NVACA] Stephen King RDG")
+    assert af[0] == "Stephen King RDG"
+    assert af[3] == "Proteus"
+
+
+def test_paren_alliance_ticker_is_not_ship() -> None:
+    from app.logs.parse import _resolve_counterparty
+    # "Heretic(NV)" — parens hold the ALLIANCE ticker, not a ship → ship-only.
+    name, _c, _a, ship = _resolve_counterparty("Heretic(NV)")
+    assert name is None
+    assert ship == "Heretic"
+
+
+def test_terse_ship_only_keeps_ship_no_pilot() -> None:
+    from app.logs.parse import _resolve_counterparty
+    name, _c, _a, ship = _resolve_counterparty("Outrider [MSF.] [DDOG.]")
+    assert name is None and ship == "Outrider"
+
+
+def test_ticker_only_counterparty_is_unattributable() -> None:
+    from app.logs.parse import _resolve_counterparty
+    # Degenerate overview render: only a bracketed ticker, no ship/pilot.
+    name, _c, _a, ship = _resolve_counterparty("[NV]")
+    assert name is None and ship is None

@@ -94,102 +94,75 @@ def _parse_ts(m: re.Match[str]) -> datetime:
 
 
 # --------------------------------------------------------------------------- #
-#  Name-encoding parsers
+#  Unified structural counterparty resolver
 # --------------------------------------------------------------------------- #
-
-# NEW encoding: Name [CORP][ALLI] Ship  (appears after stripping HTML)
-# Example stripped: "FakeEnemy Delta [10MN][.EFG] Retribution"
-_NEW_ENC_RE = re.compile(
-    r"^([\w' \-\.]+?)\s+\[([^\]]*)\]\[?([^\]]*?)\]?\s+([\w' \-]+[\w])$"
-)
-
-# NEW encoding simpler: Name [CORP][ALLI] Ship — the ALLI bracket may be absent
-_NEW_ENC_RE2 = re.compile(
-    r"^([\w' \-\.]+?)\s+\[([^\]]*)\]\s+([\w' \-]+[\w])$"
-)
-
-# OLD encoding: Ship [ALLI] [CORP] [CharName]
-# Example stripped: "Guardian [NV] [NVACA] [AllyChar Amoni]"
-# or                "Basilisk [NV] [NVACA] [AllyChar Tari]"
-_OLD_ENC_RE = re.compile(
-    r"^([\w' \-]+?)\s+\[([^\]]*)\]\s+\[?([^\]]*?)\]?\s+\[([^\]]+)\]$"
-)
-
-# TERSE form (a client variant seen in real logs renders combat counterparties with
-# NO pilot name — just the ship and 1-2 [ALLI] [CORP] tickers, e.g.
-# "Zarmazd [NV] [NVACA]" or "Leshak [SHORK]"). No inner [pilot] bracket and no
-# trailing module. We can't recover the pilot, so name is None and we keep the ship.
-_SHIP_TICKERS_RE = re.compile(
-    r"^([\w' \-]+?)\s+\[([^\]]+)\](?:\s+\[([^\]]+)\])?$"
-)
-
-
-def _parse_ship_tickers(text: str) -> tuple[str | None, str | None, str | None, str] | None:
-    """Parse the terse 'Ship [ALLI] [CORP]' counterparty form (no pilot name).
-
-    Returns (name=None, corp, alli, ship) or None if *text* isn't that shape.
-    First ticker is treated as alliance, second (if any) as corp — mirroring the
-    OLD encoding's '[ALLI] [CORP]' order.
-    """
-    m = _SHIP_TICKERS_RE.match(text.strip())
-    if not m:
-        return None
-    ship = m.group(1).strip()
-    alli = m.group(2).strip() or None
-    corp = (m.group(3).strip() or None) if m.group(3) else None
-    return None, corp, alli, ship
+#
+# EVE overview ship-label settings vary the *layout* of a counterparty independently
+# of the message type: which tokens appear (pilot / ship / corp ticker / alliance
+# ticker), their order, and whether each is wrapped in [square], <angle> (HTML-encoded
+# "&lt;..&gt;") or (paren) brackets, or left bare. Rather than guess a fixed encoding,
+# we tokenise the (already markup-stripped) counterparty into ordered SEGMENTS — bare
+# text runs and bracket/angle/paren groups — then classify each segment STRUCTURALLY:
+#
+#   * a (paren) group is always the SHIP type, e.g. "...&lt;NV&gt;(Absolution)".
+#   * a [square]/<angle> group is a corp/alliance TICKER iff it is short (<=5 chars
+#     ignoring spaces / a trailing '.'), all-upper-case and contains no lower-case —
+#     otherwise it is a PILOT name (a space, a lower-case letter, or length>5 all mark
+#     a character: "[Glavior]", "&lt;Orie toori&gt;", "[Daniel BELL Carem]").
+#   * bare runs are the pilot and/or ship depending on position.
+#
+# Positional rules then assemble (name, ship):
+#   - leading bare + a pilot-group  -> ship=lead, pilot=group  ("Ship [Pilot]"/"Ship &lt;Pilot&gt;")
+#   - leading bare + trailing bare   -> pilot=lead, ship=trail  (NEW "Pilot [CORP] Ship")
+#   - leading bare + (paren ship)    -> pilot=lead, ship=paren  ("Pilot [CORP]&lt;ALLI&gt;(Ship)")
+#   - leading bare, only tickers     -> terse ship-only, or fused (split_entity finishes)
+#   - starts with a group + bare     -> ship=first group, pilot=bare  ("[Ship] Pilot [CORP]")
+#
+# A bare run that is fused "ShipType PilotName" with no delimiter (e.g.
+# "Onyx Jennifer Hibra") cannot be split here (no SDE); we hand the whole run to `name`
+# with ship=None so the SDE-aware split_entity stage peels the known ship off the front.
+_GROUP_RE = re.compile(r"\[([^\[\]]*)\]|&lt;([^&]*?)&gt;|<([^<>]*)>|\(([^()]*)\)")
 
 
-def _parse_new_encoding(text: str) -> tuple[str | None, str | None, str | None, str | None]:
-    """Return (name, corp_ticker, alliance_ticker, ship)."""
-    text = text.strip()
-    m = _NEW_ENC_RE.match(text)
-    if m:
-        name, corp, alli, ship = (m.group(1).strip(), m.group(2).strip() or None,
-                                  m.group(3).strip() or None, m.group(4).strip())
-        return name, corp, alli, ship
-    m2 = _NEW_ENC_RE2.match(text)
-    if m2:
-        return m2.group(1).strip(), m2.group(2).strip() or None, None, m2.group(3).strip()
-    return text, None, None, None
+def _has_alnum(s: str) -> bool:
+    return any(c.isalnum() for c in s)
 
 
-def _parse_old_encoding(text: str) -> tuple[str | None, str | None, str | None, str | None]:
-    """Return (name, corp_ticker, alli_ticker, ship) — OLD format has Ship first, CharName last."""
-    text = text.strip()
-    m = _OLD_ENC_RE.match(text)
-    if m:
-        ship = m.group(1).strip()
-        alli = m.group(2).strip() or None
-        corp = m.group(3).strip() or None
-        char_name = m.group(4).strip()
-        return char_name, corp, alli, ship
-    return text, None, None, None
+def _looks_ticker(content: str) -> bool:
+    """True if *content* is a corp/alliance ticker (short, upper-case, no pilot cues)."""
+    if not _has_alnum(content) or any(c.islower() for c in content):
+        return False
+    return len(content.replace(" ", "").rstrip(".")) <= 5
 
 
-# A bracket whose content contains a space is the PILOT, wherever it sits — tickers
-# never contain a space, so a multi-word bracket is a character. This covers every
-# layout that puts the pilot in a bracket: "Ship [ALLI] [CORP] [Pilot]",
-# "Ship [Pilot] - [ALLI]", "Eris [NV] [NVACA] [Zweige Teufel]", "Ship [Pilot]".
-_SPACED_PILOT_RE = re.compile(r"\[([^\[\]]+\s[^\[\]]+)\]")
-
-# Older overviews render the alliance ticker in literal angle brackets (HTML-encoded
-# "&lt;ALLI&gt;") and leave the pilot UN-bracketed, e.g.
-#   "Proteus &lt;NV&gt;[NVACA] Stephen King RDG"  ->  ship Proteus, pilot last
-#   "Devoter &lt;NV&gt;[NVACA] Jongul Zam"        ->  ship Devoter, pilot last
-# The angle ticker is the reliable signal for this layout (the NEW form uses only
-# square brackets). The pilot is the bare token TRAILING the ticker block; the leading
-# token is the ship. If nothing trails, the pilot is fused with the ship (e.g.
-# "Absolution Meneltir Falmaro [DDOG.] &lt;MSF.&gt;") and is unrecoverable after
-# stripping — we keep the ship and emit no pilot rather than guess.
-_ANGLE_TICKER = r"(?:\[[^\[\]\s]*\]|&lt;[^&]*?&gt;)"
-_ANGLE_LAYOUT_RE = re.compile(rf"^(.*?)\s*(?:{_ANGLE_TICKER}\s*)+(.*)$", re.DOTALL)
+def _clean_party_token(s: str) -> str | None:
+    """Trim surrounding separator/custom-label punctuation; None if no name remains."""
+    s = s.strip().strip("-+>< \t")
+    return s if s and _has_alnum(s) else None
 
 
-def _ship_from_lead(lead: str) -> str | None:
-    """The ship type is the text before the first bracket/paren in *lead*."""
-    ship = re.split(r"\s*[\[(]", lead.strip(), maxsplit=1)[0].strip()
-    return ship or None
+def _segments(party: str) -> list[tuple[str, str]]:
+    """Tokenise into ordered ('bare'|'sq'|'ang'|'par', content) segments."""
+    out: list[tuple[str, str]] = []
+    pos = 0
+    for m in _GROUP_RE.finditer(party):
+        if m.start() > pos:
+            bare = party[pos:m.start()].strip()
+            if bare:
+                out.append(("bare", bare))
+        if m.group(1) is not None:
+            out.append(("sq", m.group(1).strip()))
+        elif m.group(2) is not None:
+            out.append(("ang", m.group(2).strip()))
+        elif m.group(3) is not None:
+            out.append(("ang", m.group(3).strip()))
+        else:
+            out.append(("par", m.group(4).strip()))
+        pos = m.end()
+    tail = party[pos:].strip()
+    if tail:
+        out.append(("bare", tail))
+    return out
 
 
 def _resolve_counterparty(
@@ -197,52 +170,89 @@ def _resolve_counterparty(
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Resolve a combat-log counterparty to (name, corp, alli, ship), overview-agnostic.
 
-    EVE overview ship-label settings vary the layout independently of the message type
-    (which tokens, their order, brackets vs italics vs parens), so ONE ordered resolver
-    is tried for every effect instead of a per-effect encoding guess. Each step is
-    deterministic; the first that yields a pilot/structure wins:
-
-      1. NEW encoding — pilot first, NOT in a bracket: "Name [CORP][ALLI] Ship"
-      2. a spaced [Name] bracket anywhere is the pilot (covers OLD "Ship [ALLI] [CORP]
-         [Pilot]", "Ship [Pilot] - [ALLI]", "Eris [NV] [NVACA] [Zweige Teufel]", ...)
-      3. angle-ticker layout (only when "&lt;ALLI&gt;" is present): bare pilot trailing
-         the ticker block, e.g. "Proteus &lt;NV&gt;[NVACA] Stephen King RDG"
-      4. OLD encoding — for a single-word pilot in the trailing bracket
-      5. standalone <i>pilot</i> overview label in the raw line (no brackets at all)
-      6. terse "Ship [ALLI] [CORP]" (no pilot present in the log)
-      7. fallback — the bare token
-
-    Step 2 runs before OLD because the OLD regex is loose enough to mis-pick a trailing
-    ticker bracket (e.g. "Legion [Ra'zok Zateki] - [NV]" → would yield "NV"); a spaced
-    bracket is unambiguously a character. To support a future layout, insert a step.
+    See the module comment above for the segment-classification + positional ruleset.
+    Returns name=None for a counterparty rendered ship-only / NPC (no pilot in the log).
+    A fused "ShipType PilotName" bare run is returned as ``name`` with ``ship=None`` for
+    the SDE-aware split_entity stage to peel.
     """
     party = (party or "").strip()
-    name, corp, alli, ship = _parse_new_encoding(party)
-    if ship is not None:
-        return name, corp, alli, ship
-    m = _SPACED_PILOT_RE.search(party)
-    if m:
-        return m.group(1).strip(), None, None, _ship_from_lead(party[: m.start()])
-    if "&lt;" in party:
-        am = _ANGLE_LAYOUT_RE.match(party)
-        if am:
-            lead, trail = am.group(1).strip(), am.group(2).strip()
-            if trail:  # bare pilot trails the tickers; the leading token is the ship
-                return trail, None, None, (lead or None)
-            # No trailing pilot: the leading token is ship+pilot fused (no delimiter
-            # survives stripping). Hand the blob to `name` so split_entity can peel a
-            # known ship type off the front (recovers e.g. Guardian | Jennifer Hibra).
-            return (lead or None), None, None, None
-    name, corp, alli, ship = _parse_old_encoding(party)
-    if ship is not None:
-        return name, corp, alli, ship
-    pilot = _italic_pilot_label(raw)
-    if pilot is not None:
-        return pilot, None, None, (party or None)
-    st = _parse_ship_tickers(party)
-    if st is not None:
-        return st
-    return (party or None), None, None, None
+    if not party:
+        return None, None, None, None
+
+    segs = _segments(party)
+    bares = [c for k, c in segs if k == "bare" and _clean_party_token(c)]
+    groups = [(k, c) for k, c in segs if k in ("sq", "ang")]
+    # A (paren) group is the SHIP only when its content is not itself a ticker — an
+    # alliance ticker can also render in parens, e.g. "Heretic(NV)" (ship-only + alli).
+    paren_ships = [c for k, c in segs if k == "par" and _has_alnum(c) and not _looks_ticker(c)]
+    paren_tickers = [c for k, c in segs if k == "par" and _looks_ticker(c)]
+    pilot_groups = [c for k, c in groups if _has_alnum(c) and not _looks_ticker(c)]
+    tickers = [c for k, c in groups if _looks_ticker(c)] + paren_tickers
+    # An angle ticker ("&lt;NV&gt;") marks the angle-FIRST overview layout where the
+    # ship leads and the pilot trails ("Proteus &lt;NV&gt;[NVACA] Stephen King RDG"),
+    # vs NEW ("Pilot [CORP][ALLI] Ship") where the pilot leads. A square-only two-bare
+    # run with no angle is assumed NEW; the rarer single-ticker "Ship [CORP] Pilot"
+    # ship-first overview is corrected in the SDE stage (split_entity swap) since the
+    # pure parser cannot tell which bare is the known ship.
+    has_angle_ticker = any(k == "ang" and _looks_ticker(c) for k, c in groups)
+    has_angle_group = any(k == "ang" for k, c in groups)
+    ship_par = paren_ships[0] if paren_ships else None
+    starts_with_group = bool(segs) and segs[0][0] in ("sq", "ang", "par")
+
+    corp = tickers[0] if tickers else None
+    alli = tickers[1] if len(tickers) > 1 else None
+
+    # A standalone <i>pilot</i> overview label in the raw line is an authoritative
+    # pilot signal that strip_eve_markup fuses into the bare run ("<i>Body Cam Off</i>
+    # Heretic(NV)" → "Body Cam Off Heretic(NV)"). Recover it and resolve the ship from
+    # the remainder. (Cosmetic custom-ship italics, closed by ']' or after ' - ', are
+    # excluded by _italic_pilot_label.)
+    pilot_label = _italic_pilot_label(raw) if raw else None
+    if pilot_label:
+        rest = party.replace(pilot_label, "", 1).strip(" -\t")
+        rest_ship = None
+        if rest:
+            r = _resolve_counterparty(rest)
+            rest_ship = r[3] or r[0]
+        return pilot_label, corp, alli, rest_ship
+
+    name: str | None = None
+    ship: str | None = None
+
+    if not starts_with_group and bares:
+        lead = _clean_party_token(bares[0])
+        if pilot_groups:                       # "Ship [Pilot] - [ALLI]", "Ship &lt;Pilot&gt;"
+            name = _clean_party_token(pilot_groups[0])
+            ship = ship_par or lead
+        elif ship_par:                         # "Pilot [CORP]&lt;ALLI&gt;(Ship)"
+            name = lead
+            ship = ship_par
+        elif len(bares) >= 2 and has_angle_ticker:   # angle-first "Ship &lt;ALLI&gt;[CORP] Pilot"
+            name = _clean_party_token(bares[-1])
+            ship = lead
+        elif len(bares) >= 2:                  # NEW "Pilot [CORP][ALLI] Ship"
+            name = lead
+            ship = _clean_party_token(bares[-1])
+        elif tickers and not has_angle_group:  # terse "Ship [CORP] [ALLI]" — ship-only, no pilot
+            name = None
+            ship = lead
+        else:                                  # bare NPC / angle-fused "Ship Pilot" → SDE peels
+            name = lead
+            ship = None
+    else:
+        # Starts with a group: "[Ship] Pilot [CORP]" or only-groups / "[Pilot]".
+        non_ticker_group = next((c for k, c in groups if not _looks_ticker(c)), None)
+        if bares:
+            name = _clean_party_token(bares[0])
+            ship = ship_par or non_ticker_group
+        elif pilot_groups:                     # "[Pilot]" / "[Ship]" — SDE decides which
+            name = _clean_party_token(pilot_groups[0])
+            ship = ship_par
+        else:                                  # ticker-only (unattributable) / paren ship
+            name = None
+            ship = ship_par or non_ticker_group
+
+    return name, corp, alli, ship
 
 
 # --------------------------------------------------------------------------- #
@@ -290,11 +300,14 @@ def _match_damage(rest: str) -> dict[str, Any] | None:
     m = _DAMAGE_RE.match(rest.strip())
     if m:
         direction: Literal["in", "out"] = "in" if m.group(2) == "from" else "out"
+        # Structures render as "<system> - <StructureName>[CORP](Type)"; drop the
+        # leading single-token system prefix so the name is just the structure.
+        other_name = re.sub(r"^[^\s\[\]]+\s+-\s+", "", m.group(3).strip())
         return {
             "effect_type": "damage",
             "direction": direction,
             "amount": float(m.group(1)),
-            "other_name": m.group(3).strip(),
+            "other_name": other_name,
             "other_corp_ticker": m.group(4).strip() or None,
             "other_alliance_ticker": None,
             "other_ship_name": m.group(5).strip(),
@@ -617,9 +630,12 @@ def _match_jam_broken(rest_stripped: str) -> dict[str, Any] | None:
     m = _JAM_BROKEN_RE.match(rest_stripped)
     if not m:
         return None
+    # "<jammer party> - <module>" (module may be double-dashed); drop the trailing
+    # module (the final " - <text>" carrying no bracket/ticker) so only the jammer
+    # counterparty is resolved.
     party = m.group(1).strip()
-    st = _parse_ship_tickers(party)
-    name, corp, alli, ship = st if st is not None else _parse_new_encoding(party)
+    party = re.sub(r"\s+-\s+-?\s*[^][<>]*$", "", party).strip()
+    name, corp, alli, ship = _resolve_counterparty(party)
     return {
         "effect_type": "jam",
         "direction": "in",
@@ -663,14 +679,15 @@ def _match_jam(tag: str, rest_stripped: str) -> dict[str, Any] | None:
     m = _JAM_RE.match(rest_stripped)
     if not m:
         return None
+    name, corp, alli, ship = _resolve_counterparty(m.group(1).strip())
     return {
         "effect_type": "jam",
         "direction": "in",
         "amount": None,
-        "other_name": m.group(1).strip(),
-        "other_corp_ticker": None,
-        "other_alliance_ticker": None,
-        "other_ship_name": None,
+        "other_name": name,
+        "other_corp_ticker": corp,
+        "other_alliance_ticker": alli,
+        "other_ship_name": ship,
         "module_name": None,
         "quality": None,
     }

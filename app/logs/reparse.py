@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.db.models import GamelogFile, LogEvent
 from app.logs.associate import _rebuild_buckets_for_pairs, associate_file_to_all
-from app.logs.entity import split_entity
+from app.logs.entity import correct_ship_pilot_swap, split_entity
 from app.logs.parse import parse_log
 from app.observability.logging import log
 from app.sde.load import entity_name_set
@@ -62,8 +62,16 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                     and other_name
                 ):
                     char, ship = split_entity(other_name, entity_names)
-                    other_name = char if char is not None else other_name
+                    # Ship-only / NPC → name becomes None (not the raw ship string);
+                    # only keep the original when split_entity recovered nothing at all.
+                    other_name = char if (char is not None or ship is not None) else other_name
                     other_ship = ship
+                elif e.effect_type and e.effect_type != "damage" and other_ship and other_name:
+                    # Correct the rare ship-first "Ship [CORP] Pilot" overview the parser
+                    # assumed was NEW (pilot-first) and assigned backwards.
+                    other_name, other_ship = correct_ship_pilot_swap(
+                        other_name, other_ship, entity_names
+                    )
                 # Fix (B) + C1: clean source_name/target_name for EWAR lines so
                 # they contain only the character name, stripping ship-type prefixes
                 # and corp/alliance tickers (e.g. "Proteus Nate Marston [NVACA] <NV>"

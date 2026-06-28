@@ -88,3 +88,18 @@ def test_trailing_dash_recovers_pilot_from_bracket():
     assert split_entity("Leshak [LUPUS] [OMGGF] [Tom-w] -", SHIPS) == (
         "Tom-w", "Leshak"
     )
+
+
+def test_correct_ship_pilot_swap_fixes_ship_first_overview():
+    from app.logs.entity import correct_ship_pilot_swap
+    # Parser assumed NEW (pilot-first) but the overview was "Ship [CORP] Pilot":
+    # name="Leshak" (a ship), ship="Dread PiIot Roberts" (a pilot) → swap.
+    assert correct_ship_pilot_swap("Leshak", "Dread PiIot Roberts", SHIPS) == (
+        "Dread PiIot Roberts", "Leshak",
+    )
+    # Correct NEW assignment is untouched (trailing token is the known ship).
+    assert correct_ship_pilot_swap("Mustard Appreciator", "Leshak", SHIPS) == (
+        "Mustard Appreciator", "Leshak",
+    )
+    # No ship known either side → no change.
+    assert correct_ship_pilot_swap("Alice", "Bob", SHIPS) == ("Alice", "Bob")

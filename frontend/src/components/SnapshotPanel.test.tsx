@@ -100,6 +100,34 @@ describe('SnapshotPanel', () => {
     expect(screen.queryByText('443')).not.toBeInTheDocument() // not summed
   })
 
+  it('merges multiple target-ship rows for one source into a single summed entry', async () => {
+    // A smartbomb hitting "Torpedo" splits across torpedo ship-types (the backend keys
+    // damage by target SHIP), so one source yields several rows under the same target
+    // name. They must collapse into ONE row whose value is the sum.
+    const torps: ContributionsResponse = {
+      from_ts: 1000, to_ts: 1010,
+      rows: [
+        { source_character_id: 1, source_name: 'Justice Luft', target_name: 'Torpedo', target_ship: 'Caldari Navy Inferno Torpedo',
+          effect_type: 'damage', direction: 'out', group: 'damage', value: 336960,
+          module_name: 'Imperial Navy Large EMP Smartbomb', icon_type_id: 9658, weapon_category: 'smartbomb', quality: 'Hits' },
+        { source_character_id: 1, source_name: 'Justice Luft', target_name: 'Torpedo', target_ship: 'Caldari Navy Mjolnir Torpedo',
+          effect_type: 'damage', direction: 'out', group: 'damage', value: 250560,
+          module_name: 'Imperial Navy Large EMP Smartbomb', icon_type_id: 9658, weapon_category: 'smartbomb', quality: 'Hits' },
+        { source_character_id: 1, source_name: 'Justice Luft', target_name: 'Torpedo', target_ship: 'Caldari Navy Scourge Torpedo',
+          effect_type: 'damage', direction: 'out', group: 'damage', value: 28080,
+          module_name: 'Imperial Navy Large EMP Smartbomb', icon_type_id: 9658, weapon_category: 'smartbomb', quality: 'Hits' },
+      ],
+    }
+    vi.mocked(api.snapshot).mockResolvedValue(torps)
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} />)
+    await waitFor(() => expect(screen.getAllByTestId('focus-card-head').length).toBeGreaterThan(0))
+
+    // One Torpedo card, one Justice Luft row, valued at the sum (615600 → "615.6k").
+    expect(screen.getAllByText('Justice Luft')).toHaveLength(1)
+    expect(screen.getByText('615.6k')).toBeInTheDocument()
+    expect(screen.queryByText('337k')).not.toBeInTheDocument() // individual rows gone
+  })
+
   it('renders a Clear button when a range is set and calls onClearRange', async () => {
     vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 1000, to_ts: 1010, rows: [] })
     const onClearRange = vi.fn()
