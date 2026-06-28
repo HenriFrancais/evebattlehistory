@@ -66,6 +66,40 @@ describe('SnapshotPanel', () => {
     expect(screen.getByText('Toni')).toBeInTheDocument()
   })
 
+  it('dedupes a bilaterally-logged hit (attacker out + victim in) into one row', async () => {
+    // One physical smartbomb Justice→Crash, logged by BOTH parties: the attacker's
+    // own "out" log and the victim's "in" log. SnapshotPanel folds direction away,
+    // so without dedup both perspectives land on the same (target=Crash,
+    // source=Justice) cell and render twice. The attacker's out log is authoritative.
+    const dup: ContributionsResponse = {
+      from_ts: 1000, to_ts: 1010,
+      rows: [
+        // Attacker's own log (authoritative for damage dealt).
+        { source_character_id: 1, source_name: 'Justice Luft', target_name: 'Crash', target_ship: 'Loki',
+          effect_type: 'damage', direction: 'out', group: 'damage', value: 223,
+          module_name: 'Imperial Navy Large EMP Smartbomb', icon_type_id: 9658, weapon_category: 'smartbomb', quality: 'Hits' },
+        // Victim's mirror of the SAME hit (slightly different amount from resists).
+        { source_character_id: 2, source_name: 'Crash', target_name: 'Justice Luft', target_ship: 'Apocalypse',
+          effect_type: 'damage', direction: 'in', group: 'damage', value: 220,
+          module_name: 'Imperial Navy Large EMP Smartbomb', icon_type_id: 9658, weapon_category: 'smartbomb', quality: 'Hits' },
+      ],
+    }
+    vi.mocked(api.snapshot).mockResolvedValue(dup)
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} />)
+    await waitFor(() => expect(screen.getAllByTestId('focus-card-head').length).toBeGreaterThan(0))
+
+    // Crash is the only target shown (Justice's incoming mirror must not spawn a
+    // second "Justice Luft as target" card).
+    const heads = screen.getAllByTestId('focus-card-head').map((e) => e.textContent)
+    expect(heads).toEqual(['Crash (Loki)'])
+
+    // Exactly ONE Justice→Crash damage row, valued from the authoritative out log.
+    expect(screen.getAllByText('Justice Luft')).toHaveLength(1)
+    expect(screen.getByText('223')).toBeInTheDocument()
+    expect(screen.queryByText('220')).not.toBeInTheDocument()
+    expect(screen.queryByText('443')).not.toBeInTheDocument() // not summed
+  })
+
   it('renders a Clear button when a range is set and calls onClearRange', async () => {
     vi.mocked(api.snapshot).mockResolvedValue({ from_ts: 1000, to_ts: 1010, rows: [] })
     const onClearRange = vi.fn()
