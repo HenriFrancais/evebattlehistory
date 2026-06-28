@@ -267,7 +267,7 @@ async def fleet_composition(
     # classified side. Side via classify_entity; ship via FC/HC override →
     # log-detected → Unknown. Marked from_logs; counted in pilot_count, and (when a
     # ship is known) in that ship's tally. (Local import avoids an import cycle.)
-    from app.fights.offbr_participants import offbr_log_characters
+    from app.fights.offbr_cache import get_offbr_cache
 
     ship_overrides: dict[int, int] = {
         int(cid): int(sid)
@@ -280,7 +280,7 @@ async def fleet_composition(
         ).all()
     }
     from_logs_ids: set[int] = set()
-    for oc in await offbr_log_characters(session, settings, br_id):
+    for oc in await get_offbr_cache().get(session, settings, br_id):
         if oc.character_id in acc:
             continue
         from_logs_ids.add(oc.character_id)
