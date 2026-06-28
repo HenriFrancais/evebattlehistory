@@ -977,3 +977,50 @@ def test_resolve_counterparty_layouts() -> None:
     assert name is None and ship == "Zarmazd"
     # Bare NPC / unknown — fallback keeps the token
     assert _resolve_counterparty("Sleepless Sentinel")[0] == "Sleepless Sentinel"
+
+
+def test_structure_damage_deflected_parses() -> None:
+    """Structure damage ('… (N deflected)') parses to a damage event on the structure."""
+    line = (
+        "[ 2026.06.22 01:54:19 ] (combat) <color=0xff00ffff><b>6438</b> <color=0x77ffffff>"
+        "<font size=10>to</font> <b><color=0xffffffff>J151204 - 3D Triangle Scheme[BF-F]"
+        "(Fortizar)</b><font size=10><color=0x77ffffff> - Mjolnir Fury Cruise Missile - "
+        "Hits - Hits (<b>6438</b> deflected)"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "damage"
+    assert evt.direction == "out"
+    assert evt.amount == 6438.0
+    assert evt.other_name == "3D Triangle Scheme"
+    assert evt.other_ship_name == "Fortizar"
+
+
+def test_resolve_angle_ticker_layout() -> None:
+    """Older overviews render the alliance in literal angle brackets with the pilot
+    un-bracketed; the trailing bare token is the pilot, the leading token the ship."""
+    from app.logs.parse import _resolve_counterparty
+
+    name, _c, _a, ship = _resolve_counterparty("Proteus &lt;NV&gt;[NVACA] Stephen King RDG")
+    assert name == "Stephen King RDG"
+    assert ship == "Proteus"
+    # Fused ship+pilot (nothing trails the tickers): the blob goes to `name` (ship=None)
+    # so split_entity can peel a known ship type off the front at ingest.
+    name, _c, _a, ship = _resolve_counterparty("Absolution Meneltir Falmaro [DDOG.] &lt;MSF.&gt;")
+    assert name == "Absolution Meneltir Falmaro"
+    assert ship is None
+
+
+def test_ewar_recovers_per_party_italic_pilot() -> None:
+    """An ewar counterparty logged by ship with the pilot only in an <i> label is
+    recovered per-party from the raw line."""
+    line = (
+        "[ 2026.06.26 20:42:00 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+        "<color=0x77ffffff><font size=10>from</font> <b><i>Body Cam Off</b></i><b>"
+        "<color=0xFF07dffc>Heretic<color=0xFF2261d6>(NV)</color></b> <color=0x77ffffff>"
+        "<font size=10>to <b><color=0xffffffff></font>you"
+    )
+    evt = parse_line(line)
+    assert evt is not None
+    assert evt.effect_type == "scram"
+    assert evt.source_name == "Body Cam Off"
