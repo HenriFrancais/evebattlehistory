@@ -4,6 +4,7 @@ import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse,
 import { api } from '../api'
 import { invalidateBr, loadBr, loadMe } from '../cache'
 import { CoverageMatrix } from '../components/CoverageMatrix'
+import { DeferredMount } from '../components/DeferredMount'
 import { FleetGraph } from '../components/FleetGraph'
 import { FleetsPanel } from '../components/FleetsPanel'
 import { SnapshotPanel } from '../components/SnapshotPanel'
@@ -708,7 +709,10 @@ export function BrDetailPage() {
         {me?.can_create_br && fullCoverage && (
           <div style={{ marginTop: '1rem' }}>
             <h3 style={{ margin: '0 0 0.5rem' }}>All Members</h3>
-            <CoverageMatrix coverage={fullCoverage} brId={id} />
+            {/* Heavy below-the-fold table — defer its render off the initial paint. */}
+            <DeferredMount minHeight={120}>
+              <CoverageMatrix coverage={fullCoverage} brId={id} />
+            </DeferredMount>
           </div>
         )}
       </section>
