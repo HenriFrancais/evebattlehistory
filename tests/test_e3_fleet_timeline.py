@@ -197,7 +197,8 @@ async def test_alignment_all_series_same_length_as_x(db_session_maker) -> None: 
     async with db_session_maker() as session:
         br_id, fight_id = await _make_br_with_fight(session)
         await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "damage", "out", 100.0, 1)
-        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_2, "scram", "out", 0.0, 1)
+        # jam is a count effect still sourced from buckets (unlike scram/disrupt).
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_2, "jam", "out", 0.0, 1)
         await session.commit()
 
     async with db_session_maker() as session:
@@ -214,9 +215,9 @@ async def test_alignment_all_series_same_length_as_x(db_session_maker) -> None: 
     assert dmg.values[ts1_idx] is not None
     assert dmg.values[ts2_idx] is None
 
-    scram = _series(tl, "scram:out")
-    assert scram.values[ts1_idx] is None
-    assert scram.values[ts2_idx] is not None
+    jam = _series(tl, "jam:out")
+    assert jam.values[ts1_idx] is None
+    assert jam.values[ts2_idx] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +252,10 @@ async def test_ewar_uses_event_count_not_sum_amount(db_session_maker) -> None:  
 
     async with db_session_maker() as session:
         br_id, fight_id = await _make_br_with_fight(session)
-        # scram: event_count=7, sum_amount=9999 (ignored for count metric)
-        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "scram", "out",
+        # jam: event_count=7, sum_amount=9999 (ignored for count metric). jam is the
+        # count effect still sourced from buckets (scram/disrupt are deduped from
+        # LogEvent instead — see test_timeline_tackle_series_uses_deduped_count).
+        await _insert_bucket(session, fight_id, CHAR_A, BUCKET_TS_1, "jam", "out",
                              sum_amount=9999.0, event_count=7)
         await session.commit()
 
@@ -260,7 +263,7 @@ async def test_ewar_uses_event_count_not_sum_amount(db_session_maker) -> None:  
         tl = await fleet_timeline(session, br_id)
 
     idx = tl.x.index(int(BUCKET_TS_1.timestamp()))
-    s = _series(tl, "scram:out")
+    s = _series(tl, "jam:out")
     assert s.metric == "count"
     assert s.values[idx] == pytest.approx(7.0)
 
@@ -1170,6 +1173,63 @@ async def test_snapshot_tackle_deduped_single_contribution(db_session_maker) -> 
     assert c.group == "ewar"
     assert c.direction == "out"
     assert c.value == 1                       # 1 deduped row = 1 event
+
+
+async def test_timeline_tackle_series_uses_deduped_count(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """The fleet-graph tackle COUNT series must reflect deduped tackles, not the
+    per-character bucket sum. One physical tackle broadcast to every on-grid log is
+    recorded once per observer; the buckets (built per character, no suppression
+    filter) would sum those copies, inflating the 'tackle received' series N-fold.
+    The series must instead count the deduped (dedupe_suppressed=False) rows — the
+    same number the hover/snapshot show."""
+    from app.analytics.fleet import fleet_timeline
+    from app.config import get_app_config
+    from app.db.models import LogEvent
+    from app.logs.associate import _rebuild_buckets_for_pairs
+
+    # 6 fleet members all logged the SAME incoming scram on "Victim" (broadcast),
+    # plus 5 more logged the SAME disrupt. One survivor each; the rest suppressed.
+    OBSERVERS = [4300000001, 4300000002, 4300000003, 4300000004, 4300000005, 4300000006]
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        ts = BUCKET_TS_1
+        pairs: set[tuple[int, int]] = set()
+        for i, owner in enumerate(OBSERVERS):
+            gf = await _make_gamelog_file(session, owner, f"tackle-bcast-{owner}")
+            session.add(LogEvent(
+                file_id=gf.file_id, character_id=owner, ts=ts,
+                effect_type="scram", direction="in", amount=0.0,
+                other_name="Tackler", fight_id=fight_id,
+                source_name="Tackler", target_name="Victim",
+                authoritative=False, dedupe_suppressed=(i != 0),  # one survivor
+            ))
+            if i < 5:  # 5 of them also carry the disrupt copy
+                session.add(LogEvent(
+                    file_id=gf.file_id, character_id=owner, ts=ts,
+                    effect_type="disrupt", direction="in", amount=0.0,
+                    other_name="Tackler", fight_id=fight_id,
+                    source_name="Tackler", target_name="Victim",
+                    authoritative=False, dedupe_suppressed=(i != 0),
+                ))
+            pairs.add((fight_id, owner))
+        await session.flush()
+        await _rebuild_buckets_for_pairs(session, pairs)  # buckets include every copy
+        await session.commit()
+
+    async with db_session_maker() as session:
+        cfg = get_app_config()
+        tl = await fleet_timeline(session, br_id, cfg.our_alliance_ids, cfg.our_corp_ids, {})
+
+    by_key = {s.key: s for s in tl.series}
+    assert "scram:in" in by_key and "disrupt:in" in by_key, f"series: {list(by_key)}"
+    # 1 physical scram + 1 physical disrupt — NOT 6 and 5.
+    assert sum(v or 0 for v in by_key["scram:in"].values) == 1.0, (
+        f"scram:in inflated: {by_key['scram:in'].values}"
+    )
+    assert sum(v or 0 for v in by_key["disrupt:in"].values) == 1.0, (
+        f"disrupt:in inflated: {by_key['disrupt:in'].values}"
+    )
 
 
 async def test_snapshot_tackle_null_source_excluded(db_session_maker) -> None:

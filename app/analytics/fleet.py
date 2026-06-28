@@ -1170,6 +1170,12 @@ async def fleet_timeline(
     # 4. Place per-(effect,direction) magnitudes into value arrays ------------------
     series_values: dict[str, list[float | None]] = {}
     for bucket_ts, effect, direction, amt, cnt in agg_rows:
+        if effect in _TACKLE_EFFECTS:
+            # A tackle is broadcast to every on-grid log, so the per-character bucket
+            # counts hold one copy per observer (~N-fold). Skip them here and count the
+            # deduped rows below, exactly as the hover/snapshot already do — otherwise
+            # the "tackle received" line reads several times the real number.
+            continue
         key = f"{effect}:{direction}"
         arr = series_values.get(key)
         if arr is None:
@@ -1178,6 +1184,30 @@ async def fleet_timeline(
         idx = x_index[_epoch(bucket_ts)]
         value = float(cnt) if effect in _COUNT_EFFECTS else float(amt or 0.0)
         arr[idx] = (arr[idx] or 0.0) + value
+
+    # Tackle (scram/disrupt) count series from the deduped LogEvent rows: one physical
+    # tackle = one event regardless of how many logs broadcast it. Same
+    # dedupe_suppressed=False source the snapshot + hover use, so the graph agrees.
+    tackle_rows = (
+        await session.execute(
+            select(LogEvent.ts, LogEvent.effect_type, LogEvent.direction).where(
+                LogEvent.fight_id.in_(fight_ids),
+                LogEvent.effect_type.in_(list(_TACKLE_EFFECTS)),
+                LogEvent.direction.in_(_DIRECTION_ORDER),
+                LogEvent.dedupe_suppressed.is_(False),
+            )
+        )
+    ).all()
+    for t_ts, t_effect, t_direction in tackle_rows:
+        idx = x_index.get((_epoch(t_ts) // BUCKET_SECONDS) * BUCKET_SECONDS)
+        if idx is None:
+            continue
+        key = f"{t_effect}:{t_direction}"
+        arr = series_values.get(key)
+        if arr is None:
+            arr = [None] * len(x)
+            series_values[key] = arr
+        arr[idx] = (arr[idx] or 0.0) + 1.0
 
     series: list[FleetSeriesOut] = []
     for key in sorted(series_values, key=_series_sort_key):
