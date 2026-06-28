@@ -1390,6 +1390,59 @@ async def test_snapshot_reps_in_only_kept_when_repper_did_not_log(db_session_mak
     assert rep_rows[0].value == pytest.approx(750.0)
 
 
+async def test_snapshot_cap_transfer_deduped_across_in_out(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Remote cap transfer is bilaterally logged just like reps: the transmitter
+    logs it (out, other_name=recipient) and the recipient logs it (in,
+    other_name=transmitter). The same physical tick must collapse to ONE
+    Contribution counted once, not two rows that double the total."""
+    import datetime as _dt
+
+    from app.analytics.fleet import fleet_snapshot
+    from app.config import get_settings
+    from app.db.models import Character, LogEvent
+
+    XMIT = 2100000001    # CHAR_A — the one transmitting cap
+    RECIP = 2200000001   # CHAR_B — the one receiving cap
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _make_br_with_fight(session)
+        await session.merge(Character(character_id=XMIT, name="Cap Pilot",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.merge(Character(character_id=RECIP, name="Thirsty Friend",
+                                      last_seen_at=_dt.datetime.now(_dt.UTC)))
+        await session.flush()
+        ts = BUCKET_TS_1
+
+        gf_xmit = await _make_gamelog_file(session, XMIT, "cap-out")
+        gf_recip = await _make_gamelog_file(session, RECIP, "cap-in")
+        for amt in (300.0, 500.0):
+            session.add(LogEvent(
+                file_id=gf_xmit.file_id, character_id=XMIT, ts=ts,
+                effect_type="cap_transfer", direction="out", amount=amt,
+                other_name="Thirsty Friend", fight_id=fight_id))
+            session.add(LogEvent(
+                file_id=gf_recip.file_id, character_id=RECIP, ts=ts,
+                effect_type="cap_transfer", direction="in", amount=amt,
+                other_name="Cap Pilot", fight_id=fight_id))
+        await session.commit()
+
+    frm = int(ts.timestamp())
+    async with db_session_maker() as session:
+        rows = await fleet_snapshot(session, br_id, frm, frm + 1, get_settings())
+
+    cap_rows = [r for r in rows if r.effect_type == "cap_transfer"]
+    assert len(cap_rows) == 1, (
+        f"expected 1 deduped cap_transfer row, got {len(cap_rows)}: "
+        f"{[(r.source_name, r.target_name, r.direction, r.value) for r in cap_rows]}"
+    )
+    c = cap_rows[0]
+    assert c.source_character_id == XMIT
+    assert c.source_name == "Cap Pilot"
+    assert c.target_name == "Thirsty Friend"
+    assert c.direction == "out"  # canonical transmitter -> recipient
+    assert c.value == pytest.approx(800.0)  # 300 + 500, NOT doubled to 1600
+
+
 async def test_cap_and_tackle_leaders(db_session_maker) -> None:  # type: ignore[no-untyped-def]
     """The cap panel exposes hostile-neut-taken / friendly-neut-dealt / friendly-cap-recv;
     the ewar panel exposes hostile- and friendly-tackle-taken (counts)."""
