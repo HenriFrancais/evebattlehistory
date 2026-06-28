@@ -102,21 +102,34 @@ async def offbr_log_characters(
     # the type it carries IS a non-pilot SDE charge. Exclude any token whose logged
     # ship is such a type. (Pilots fly ships — category 6 — never charges.)
     if cp_names:
-        munition_tokens = {
-            (nm or "").lower()
+        # Munition/charge type names (category 8). Matched against other_ship_name as a
+        # Python set membership rather than a JOIN on the UNINDEXED InventoryType.name
+        # text column — that join is a nested-loop scan over the fight's log events
+        # (~30s for a large fight), which times the worker out once other_ship_name is
+        # widely populated.
+        munition_names = {
+            nm
             for (nm,) in (
                 await session.execute(
-                    select(LogEvent.other_name)
-                    .join(InventoryType, InventoryType.name == LogEvent.other_ship_name)
-                    .where(
-                        LogEvent.fight_id.in_(fight_ids),
-                        LogEvent.other_name.in_(cp_names),
-                        InventoryType.category_id.in_(_MUNITION_CATEGORY_IDS),
+                    select(InventoryType.name).where(
+                        InventoryType.category_id.in_(_MUNITION_CATEGORY_IDS)
                     )
-                    .distinct()
                 )
             ).all()
             if nm
+        }
+        munition_tokens = {
+            other_name.lower()
+            for other_name, other_ship in (
+                await session.execute(
+                    select(LogEvent.other_name, LogEvent.other_ship_name).where(
+                        LogEvent.fight_id.in_(fight_ids),
+                        LogEvent.other_name.in_(cp_names),
+                        LogEvent.other_ship_name.is_not(None),
+                    )
+                )
+            ).all()
+            if other_name and other_ship in munition_names
         }
         cp_names = {n for n in cp_names if n.lower() not in munition_tokens}
     name_to_cid: dict[str, int] = {}
