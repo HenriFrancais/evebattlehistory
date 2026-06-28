@@ -1047,11 +1047,13 @@ async def test_api_fleet_timeline_includes_leaders(tmp_path, monkeypatch) -> Non
     bucket_idx = data["x"].index(int(BUCKET_TS_1.timestamp()))
     ld = data["leaders"][bucket_idx]
 
-    assert ld["top_friendly_dmg_taken"] is None
+    # Empty leader slots are omitted from the payload (not sent as null) to shrink
+    # it; an absent key therefore means "no leader", same as the client reads it.
+    assert ld.get("top_friendly_dmg_taken") is None
     assert ld["top_hostile_dmg_taken"] is not None
     assert ld["top_hostile_dmg_taken"]["name"] == "Alice"
     assert ld["top_hostile_dmg_taken"]["amount"] == pytest.approx(400.0)
-    assert ld["top_friendly_rep_recv"] is None
+    assert ld.get("top_friendly_rep_recv") is None
 
     reset_engine_for_tests()
     get_settings.cache_clear()
