@@ -30,6 +30,7 @@ from app.db.models import (
     InventoryType,
     Killmail,
     KillmailAttacker,
+    KillmailItem,
     LogEvent,
 )
 
@@ -304,6 +305,45 @@ async def fleet_composition(
     for cid, side in char_side_overrides.items():
         if cid in acc:
             acc[cid].side = side
+
+    # Drop zKillboard cross-hull weapon leaks (no hull/size compatibility checks — the
+    # signal is purely killmail-derived). zKB copies a reshipping pilot's main weapon
+    # onto EVERY hull they appear in, so e.g. an 800mm Repeating Cannon a pilot used from
+    # their Tempest also tags onto a Succubus they briefly flew. Rule, per pilot:
+    #   * a weapon used from only ONE of that pilot's hulls is that hull's real weapon and
+    #     is always kept — this preserves legitimate single-hull fits a size rule would
+    #     wrongly strip, e.g. a HAW Phoenix firing battleship torpedoes;
+    #   * a weapon spread across MULTIPLE of that pilot's hulls is a leak, kept only on the
+    #     hull(s) a killmail *victim* of that hull was actually fitted with it (so the
+    #     Tempest keeps its 800mm while the Succubus/Megathron Navy Issue rows drop it).
+    # Victim-fitting corroboration spans ALL killmails in the DB, not just this BR.
+    hull_ids = {sid for a in acc.values() for sid in a.weapons_by_hull}
+    weapon_ids = {w for a in acc.values() for ws in a.weapons_by_hull.values() for w in ws}
+    if hull_ids and weapon_ids:
+        valid_pairs: set[tuple[int, int]] = {
+            (int(v), int(t))
+            for v, t in (
+                await session.execute(
+                    select(Killmail.victim_ship_type_id, KillmailItem.type_id)
+                    .join(KillmailItem, KillmailItem.killmail_id == Killmail.killmail_id)
+                    .where(
+                        Killmail.victim_ship_type_id.in_(hull_ids),
+                        KillmailItem.type_id.in_(weapon_ids),
+                    )
+                    .distinct()
+                )
+            ).all()
+        }
+        for a in acc.values():
+            hull_count: Counter[int] = Counter()
+            for ws in a.weapons_by_hull.values():
+                hull_count.update(set(ws))
+            for sid in list(a.weapons_by_hull):
+                a.weapons_by_hull[sid] = {
+                    w
+                    for w in a.weapons_by_hull[sid]
+                    if hull_count[w] == 1 or (sid, w) in valid_pairs
+                }
 
     char_names = await _resolve_char_names(session, settings, set(acc))
     ship_ids = {sid for a in acc.values() for sid in a.hulls}

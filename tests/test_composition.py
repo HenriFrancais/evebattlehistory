@@ -11,7 +11,9 @@ from app.db.models import (
     BrFight,
     FightKill,
     InventoryType,
+    Killmail,
     KillmailAttacker,
+    KillmailItem,
 )
 from tests.test_association import _insert_fight
 
@@ -44,6 +46,23 @@ async def _seed(session):  # type: ignore[no-untyped-def]
     session.add(BrFight(br_id=br_id, fight_id=fight_id, seq=0))
     await session.flush()
     return br_id, fight_id
+
+
+_CORROB_KM = [10_000_000]
+
+
+async def _corroborate(session, victim_ship_type_id: int, *item_type_ids: int) -> None:  # type: ignore[no-untyped-def]
+    """Seed a standalone victim killmail proving *item_type_ids* are fitted on
+    *victim_ship_type_id*, so composition's fitting-corroboration keeps that
+    (hull, module) attribution. (Corroboration is global across all killmails.)"""
+    _CORROB_KM[0] += 1
+    kid = _CORROB_KM[0]
+    session.add(Killmail(killmail_id=kid, killmail_time=FIGHT_START, solar_system_id=31002222,
+                         victim_ship_type_id=victim_ship_type_id, npc_kill=False, solo_kill=False))
+    await session.flush()
+    for i, tid in enumerate(item_type_ids):
+        session.add(KillmailItem(killmail_id=kid, item_idx=i, type_id=tid, flag=27, location="hi"))
+    await session.flush()
 
 
 @pytest.mark.asyncio
@@ -186,6 +205,7 @@ async def test_composition_pilot_weapons_from_attacker(db_session_maker) -> None
             .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
             .values(weapon_type_id=RAILGUN_ID)
         )
+        # Single-hull pilot → weapon is trusted without any victim-fitting corroboration.
         await session.commit()
 
     async with db_session_maker() as session:
@@ -223,6 +243,7 @@ async def test_composition_ship_top_modules(db_session_maker) -> None:  # type: 
             .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
             .values(weapon_type_id=RAILGUN_ID)
         )
+        # Single-hull pilot → module is trusted without corroboration.
         await session.commit()
 
     async with db_session_maker() as session:
@@ -274,6 +295,8 @@ async def test_composition_reship_weapons_attributed_to_correct_hull(db_session_
         session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=1, character_id=ATTACKER,
                                      ship_type_id=GUARDIAN, weapon_type_id=REMOTE_REP_ID,
                                      damage_done=0, final_blow=False))
+        # Each weapon is used from a single (distinct) hull, so both are trusted and
+        # stay with their own hull — no leak, no corroboration needed.
         await session.commit()
 
     async with db_session_maker() as session:
@@ -290,6 +313,96 @@ async def test_composition_reship_weapons_attributed_to_correct_hull(db_session_
     guard = next(sh for s in result.sides for sh in s.ships if sh.ship_name == "Guardian")
     assert {m.type_id for m in absol.top_modules} == {RAILGUN_ID}
     assert {m.type_id for m in guard.top_modules} == {REMOTE_REP_ID}
+
+
+SUCCUBUS = 17926
+
+
+@pytest.mark.asyncio
+async def test_composition_reship_leak_dropped_only_on_uncorroborated_hull(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A weapon zKB leaks across a reship pilot's hulls is kept only where corroborated.
+
+    ATTACKER appears in TWO hulls (Absolution + Succubus) both tagged with the SAME
+    railgun — the cross-hull-leak signature. A killmail shows an Absolution victim fitted
+    with the railgun but no Succubus ever is, so the railgun stays on the Absolution and
+    is dropped from the Succubus (which could never fit it).
+    """
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)  # ATTACKER in Absolution (attacker_idx 0)
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        session.add(InventoryType(type_id=SUCCUBUS, name="Succubus"))
+        session.add(InventoryType(
+            type_id=RAILGUN_ID, name=RAILGUN_NAME, group_name="Hybrid Weapon", category_id=6,
+        ))
+        # Absolution row used the railgun…
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=RAILGUN_ID)
+        )
+        # …and zKB leaked the SAME railgun onto a Succubus the pilot briefly flew.
+        session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=1, character_id=ATTACKER,
+                                     ship_type_id=SUCCUBUS, weapon_type_id=RAILGUN_ID,
+                                     damage_done=10, final_blow=False))
+        # Only the Absolution is fitting-evidenced with the railgun.
+        await _corroborate(session, ABSOLUTION, RAILGUN_ID)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilots = {p.ship_name: p for s in result.sides for p in s.pilots if p.character_id == ATTACKER}
+    assert {w.type_id for w in pilots["Absolution"].weapons} == {RAILGUN_ID}  # corroborated → kept
+    assert pilots["Succubus"].weapons == []                                   # leak → dropped
+
+
+@pytest.mark.asyncio
+async def test_composition_single_hull_weapon_kept_without_corroboration(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A weapon used from a pilot's ONLY hull is trusted even with no victim fitting.
+
+    This is the case a hull/size rule would wrongly strip: a HAW/rapid-torp Phoenix
+    dreadnought firing battleship-class torpedoes. The pilot never reships, so there is
+    no cross-hull leak to guard against and the module is kept as-is.
+    """
+    from app.analytics.composition import fleet_composition
+    from app.config import get_settings
+
+    async with db_session_maker() as session:
+        br_id, fight_id = await _seed(session)
+        km_id = (
+            await session.execute(
+                select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
+            )
+        ).scalar_one()
+        session.add(InventoryType(
+            type_id=RAILGUN_ID, name=RAILGUN_NAME, group_name="Hybrid Weapon", category_id=6,
+        ))
+        await session.execute(
+            update(KillmailAttacker)
+            .where(KillmailAttacker.killmail_id == km_id, KillmailAttacker.character_id == ATTACKER)
+            .values(weapon_type_id=RAILGUN_ID)
+        )
+        # No _corroborate() call at all — single-hull pilot, so the weapon is trusted.
+        await session.commit()
+
+    async with db_session_maker() as session:
+        result = await fleet_composition(
+            session, br_id, baseline_alliances=set(), baseline_corps=set(),
+            overrides={}, settings=get_settings(), char_to_user=None,
+        )
+
+    pilot = next(p for s in result.sides for p in s.pilots if p.character_id == ATTACKER)
+    assert {w.type_id for w in pilot.weapons} == {RAILGUN_ID}
 
 
 @pytest.mark.asyncio
