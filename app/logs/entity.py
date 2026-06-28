@@ -45,6 +45,23 @@ def _char_from_brackets(raw: str, entity_names: frozenset[str]) -> str | None:
     return None
 
 
+def correct_ship_pilot_swap(
+    name: str | None, ship: str | None, entity_names: frozenset[str]
+) -> tuple[str | None, str | None]:
+    """Swap (name, ship) when the pure parser assigned them backwards.
+
+    The two-bare overview "Ship [CORP] Pilot" (ship-first) is indistinguishable from
+    NEW "Pilot [CORP] Ship" without the ship dictionary, so the parser assumes NEW.
+    When that guess is backwards — ``name`` is a known ship and ``ship`` is not — swap
+    them. No-ops when ``ship`` is unset, both are ships, or neither is.
+    """
+    if not name or not ship:
+        return name, ship
+    if name in entity_names and ship not in entity_names:
+        return ship, name
+    return name, ship
+
+
 def split_entity(text: str, entity_names: frozenset[str]) -> tuple[str | None, str | None]:
     """Return (character_name, ship_name). See module docstring."""
     raw = text or ""
@@ -77,6 +94,12 @@ def split_entity(text: str, entity_names: frozenset[str]) -> tuple[str | None, s
                         break
             if not matched:
                 char = cleaned  # unknown: character only
+
+    # Trim separator / custom-label punctuation left around a recovered character
+    # (e.g. "Capsule - Sakura Estidal" → leading-ship match leaves "- Sakura Estidal";
+    # a trailing " ---" / " -" custom label leaves dangling dashes).
+    if char is not None:
+        char = char.strip(" -+\t") or None
 
     # Reject bare-word "char" candidates that contain no alphanumeric characters
     # (e.g. a trailing "-" after brackets are stripped). Such tokens can't be a

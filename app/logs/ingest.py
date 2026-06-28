@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.models import GamelogFile, LogEvent
-from app.logs.entity import split_entity
+from app.logs.entity import correct_ship_pilot_swap, split_entity
 from app.logs.filename import parse_filename, resolve_character
 from app.logs.parse import parse_log
 from app.logs.store import validate_and_store
@@ -167,8 +167,18 @@ async def ingest_log(
     for e in parsed.events:
         if e.effect_type and e.effect_type != "damage" and not e.other_ship_name and e.other_name:
             char, ship = split_entity(e.other_name, entity_names)
-            object.__setattr__(e, "other_name", char if char is not None else e.other_name)
+            # Ship-only / NPC counterparty (char None, ship found) → name must become
+            # None, NOT fall back to the raw ship string (else other_name == ship). Only
+            # keep the original when split_entity recovered nothing at all.
+            new_name = char if (char is not None or ship is not None) else e.other_name
+            object.__setattr__(e, "other_name", new_name)
             object.__setattr__(e, "other_ship_name", ship)
+        elif e.effect_type and e.effect_type != "damage" and e.other_ship_name and e.other_name:
+            # Correct the rare ship-first "Ship [CORP] Pilot" overview the parser
+            # assumed was NEW (pilot-first) and assigned backwards.
+            nm, sh = correct_ship_pilot_swap(e.other_name, e.other_ship_name, entity_names)
+            object.__setattr__(e, "other_name", nm)
+            object.__setattr__(e, "other_ship_name", sh)
         # Fix (B) + C1: clean source_name/target_name for EWAR lines.
         # C1: ship-only or NPC parties → None (not raw ship name).
         if e.source_name:
