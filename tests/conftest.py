@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import get_app_config, get_settings
 from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
+from app.fights.offbr_cache import reset_offbr_cache_for_tests
 from app.observability.health import HEALTH
 from app.roster.snapshot import reset_roster_store_for_tests
 
@@ -41,6 +42,7 @@ def _clear_caches() -> None:
     get_app_config.cache_clear()
     reset_engine_for_tests()
     reset_roster_store_for_tests()
+    reset_offbr_cache_for_tests()
     HEALTH.roster_loaded = False
     HEALTH.roster_version = 0
     HEALTH.roster_fetched_at = 0.0

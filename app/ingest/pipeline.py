@@ -317,6 +317,12 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
             br.completed_at = dt.datetime.now(dt.UTC)
             await session.commit()
 
+        # The BR's killmails + log associations were just (re)built, so any cached
+        # off-BR participant derivation for it is now stale.
+        from app.fights.offbr_cache import get_offbr_cache
+
+        get_offbr_cache().invalidate(br_id)
+
         log.info("pipeline.ready", br_id=br_id)
 
     except Exception as exc:

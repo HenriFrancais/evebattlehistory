@@ -264,9 +264,9 @@ async def br_entities(
     # Off-BR log-identified participants: surface their entities too, so FC/HC can
     # allocate any alliance/corp that exists only off the killboard. (Local import
     # avoids a sides_config ↔ composition ↔ offbr import cycle.)
-    from app.fights.offbr_participants import offbr_log_characters
+    from app.fights.offbr_cache import get_offbr_cache
 
-    for oc in await offbr_log_characters(session, settings, br_id):
+    for oc in await get_offbr_cache().get(session, settings, br_id):
         pairs.add((oc.alliance_id, oc.corporation_id))
 
     alliance_ids: set[int] = {a for a, _ in pairs if a is not None}

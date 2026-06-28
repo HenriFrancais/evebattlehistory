@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 
 class BrSourceIn(BaseModel):
@@ -409,6 +409,28 @@ class LeadersOut(BaseModel):
     # Tackle / EWAR panel
     top_hostile_tackle_taken: LeaderEntryOut | None = None
     top_friendly_tackle_taken: LeaderEntryOut | None = None
+
+    @model_serializer
+    def _serialize_non_null(self) -> dict[str, LeaderEntryOut]:
+        """Emit only the populated leader slots. Per bucket most of the 8 slots are
+        empty, and these arrays span every 5s bucket of a battle — dropping the
+        nulls shrinks the fleet-timeline payload by ~80% (it was ~87% of the body).
+        The client reads each slot as ``leaders[i]?.[key]`` and treats a missing key
+        exactly like null, so this is wire-compatible."""
+        return {
+            k: v
+            for k, v in (
+                ("top_friendly_dmg_taken", self.top_friendly_dmg_taken),
+                ("top_hostile_dmg_taken", self.top_hostile_dmg_taken),
+                ("top_friendly_rep_recv", self.top_friendly_rep_recv),
+                ("top_hostile_cap_pressure", self.top_hostile_cap_pressure),
+                ("top_friendly_cap_pressure", self.top_friendly_cap_pressure),
+                ("top_friendly_cap_recv", self.top_friendly_cap_recv),
+                ("top_hostile_tackle_taken", self.top_hostile_tackle_taken),
+                ("top_friendly_tackle_taken", self.top_friendly_tackle_taken),
+            )
+            if v is not None
+        }
 
 
 class FleetTimelineOut(BaseModel):
