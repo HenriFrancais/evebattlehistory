@@ -317,6 +317,8 @@ async def associate_file(
     session: AsyncSession,
     file_id: int,
     pad_seconds: int = 120,
+    *,
+    dedupe_tackle: bool = True,
 ) -> int:
     """Stamp LogEvent.fight_id for events owned by *file_id*, rebuild buckets.
 
@@ -332,6 +334,10 @@ async def associate_file(
        it becomes a flag surfaced via br_participants (E1 design change).
     4. Stamp fight_id on events within each candidate fight's padded window.
     5. Rebuild buckets for every (fight_id, character_id) pair touched.
+
+    ``dedupe_tackle=False`` skips the per-fight tackle dedupe pass — for bulk callers
+    (reparse) that process many files touching the same fights, so the O(files) repeated
+    full-fight dedupe is replaced by a single pass the caller runs once at the end.
 
     Returns
     -------
@@ -376,7 +382,8 @@ async def associate_file(
         # This file is not canonical — it contributes nothing.  Its events were just
         # un-stamped above; rebuild the buckets it (and any sibling) used to feed.
         await _rebuild_buckets_for_pairs(session, rebuild_pairs)
-        await _dedupe_ewar_relationships(session, {fid for fid, _ in rebuild_pairs})
+        if dedupe_tackle:
+            await _dedupe_ewar_relationships(session, {fid for fid, _ in rebuild_pairs})
         log.info(
             "associate_file.superseded",
             file_id=file_id,
@@ -461,7 +468,8 @@ async def associate_file(
     await _rebuild_buckets_for_pairs(session, all_pairs)
 
     # 6. Dedupe tackle relationships for all fights touched by this file
-    await _dedupe_ewar_relationships(session, {fid for fid, _ in all_pairs})
+    if dedupe_tackle:
+        await _dedupe_ewar_relationships(session, {fid for fid, _ in all_pairs})
 
     log.info(
         "associate_file.done",
