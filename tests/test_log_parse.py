@@ -375,6 +375,37 @@ def test_neut_out_zero_gj() -> None:
     assert evt.amount == 0.0
 
 
+def test_neut_incoming_red_amount_colour() -> None:
+    """Being neuted: the amount renders in the incoming red colour (0xffe57f7f).
+
+    A neutralization line carries NO 'from/to' keyword and is byte-identical in both
+    directions; only the amount colour encodes direction (the same scheme NOS uses).
+    The named counterparty is therefore the SOURCE (attacker), and the module is the
+    attacker's own neutralizer.  Real log line: a Nestor logi with no neut fitted
+    seeing an incoming neut from a Nighthawk.
+    """
+    raw = (
+        "[ 2025.03.21 23:34:02 ] (combat) "
+        "<color=0xffe57f7f><b>12 GJ</b><color=0x77ffffff>"
+        "<font size=10> energy neutralized </font>"
+        "<b><color=0xffffffff>"
+        '<font size=11><color="orange"><b>Nighthawk</b></color></font> '
+        '<font size=9><color="yellow">Morgan TooAwesome4u</color></font> '
+        '<font size=8><color="0xFF00FFFF">[LZHX] </color></font>'
+        '<font size=8><color="0xFF00FFFF">&lt;HAWKS&gt; </color></font></b>'
+        "<color=0x77ffffff><font size=10> - Medium Energy Neutralizer II</font>"
+    )
+    evt = parse_line(raw)
+    assert evt is not None
+    assert evt.effect_type == "neut"
+    assert evt.direction == "in"
+    assert evt.amount == 12.0
+    # The named party is the SOURCE (attacker); the SDE stage peels ship from pilot later.
+    assert evt.other_name is not None
+    assert "Morgan TooAwesome4u" in evt.other_name
+    assert evt.module_name == "Medium Energy Neutralizer II"
+
+
 # ---------------------------------------------------------------------------
 # parse_line — nos (energy drained)
 # ---------------------------------------------------------------------------
@@ -830,10 +861,12 @@ def test_terse_scram_without_to_you() -> None:
 
 
 def test_terse_neut_without_module() -> None:
+    # _T_NEUT renders the amount in the incoming red colour (0xffe57f7f): this is a
+    # real log line of the listener being neuted by a Leshak, so direction is "in".
     evt = parse_line(_T_NEUT)
     assert evt is not None
     assert evt.effect_type == "neut"
-    assert evt.direction == "out"
+    assert evt.direction == "in"
     assert evt.amount == 168.0
     assert evt.other_ship_name == "Leshak"
 

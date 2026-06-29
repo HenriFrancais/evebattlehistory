@@ -445,28 +445,53 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- #
-#  Energy neutralized (neut-out)
+#  Energy neutralized (neut — in or out)
 # --------------------------------------------------------------------------- #
 
-# Stripped form: "234 GJ energy neutralized Target [ALLI][CORP] Ship - Module"
+# Stripped form: "234 GJ energy neutralized Other [ALLI][CORP] Ship - Module"
 # Trailing " - <module>" omitted by the terse variant (e.g.
 # "168 GJ energy neutralized Leshak [MSF.] [DDOG.]"), so it is optional.
-_NEUT_OUT_RE = re.compile(
+_NEUT_RE = re.compile(
     r"^(\d+)\s+GJ energy neutralized\s+(.+?)(?:\s+-\s+(.+))?$",
     re.DOTALL,
 )
 
+# Direction signal.  A neutralization line carries NO "from/to" keyword and is
+# byte-identical in both directions — only the colour of the leading "<n> GJ" amount
+# encodes who is the actor, exactly the scheme NOS uses (confirmed in 2.2k real logs:
+# "energy drained from" is always 0xff7fffff, "energy drained to" always 0xffe57f7f).
+#   * 0xff7fffff (cyan)  → OUTGOING — you neut them; the named party is the TARGET and
+#                          the module is your own neutralizer.
+#   * 0xffe57f7f (red)   → INCOMING — they neut you; the named party is the SOURCE and
+#                          the module is the attacker's.
+# Earlier code assumed neut was always outgoing (the "energy neutralized <you>" form was
+# wrongly believed never logged); that mis-credited every pilot *being* neuted — e.g. a
+# logi Nestor with no neut fitted — as if they were applying it.
+_NEUT_INCOMING_COLOUR = "e57f7f"
+_LEADING_COLOUR_RE = re.compile(r"<color=(0x[0-9a-fA-F]+)>", re.IGNORECASE)
 
-def _match_neut_out(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
-    m = _NEUT_OUT_RE.match(rest_stripped)
+
+def _neut_direction(rest_raw: str) -> Literal["in", "out"]:
+    """Return neut direction from the leading amount colour; default 'out' if absent.
+
+    The first ``<color=...>`` tag in the raw line is always the "<n> GJ" amount colour.
+    """
+    m = _LEADING_COLOUR_RE.search(rest_raw)
+    if m and m.group(1).lower().endswith(_NEUT_INCOMING_COLOUR):
+        return "in"
+    return "out"
+
+
+def _match_neut(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
+    m = _NEUT_RE.match(rest_stripped)
     if not m:
         return None
-    target_part = m.group(2).strip()
+    other_part = m.group(2).strip()
     module_name = m.group(3).strip() if m.group(3) else None
-    name, corp, alli, ship = _resolve_counterparty(target_part, rest_raw)
+    name, corp, alli, ship = _resolve_counterparty(other_part, rest_raw)
     return {
         "effect_type": "neut",
-        "direction": "out",
+        "direction": _neut_direction(rest_raw),
         "amount": float(m.group(1)),
         "other_name": name,
         "other_corp_ticker": corp,
@@ -505,10 +530,11 @@ _NOS_RE = re.compile(
 def _match_nos(rest_stripped: str, rest_raw: str = "") -> dict[str, Any] | None:
     """Match nosferatu (energy drained from/to) lines.
 
-    Real-log finding: no incoming cap-warfare (energy neutralized <you>) lines were found
-    in ~52 real gamelog files. Incoming NOS ("energy drained to <X>") IS logged client-side
-    with a negative signed amount and OLD encoding. Outgoing NOS ("energy drained from <X>")
-    uses OLD encoding for player targets and bare name for NPCs.
+    Real-log finding: incoming NOS ("energy drained to <X>") IS logged client-side with a
+    negative signed amount and OLD encoding. Outgoing NOS ("energy drained from <X>") uses
+    OLD encoding for player targets and bare name for NPCs. (Incoming neutralization IS
+    likewise logged — see _match_neut, which reads the amount colour for direction since
+    neutralization lines carry no from/to keyword.)
     """
     m = _NOS_RE.match(rest_stripped)
     if not m:
@@ -772,7 +798,7 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         if effect is None:
             effect = _match_ewar(rest_stripped, rest_raw)
         if effect is None:
-            effect = _match_neut_out(rest_stripped, rest_raw)
+            effect = _match_neut(rest_stripped, rest_raw)
         if effect is None:
             effect = _match_nos(rest_stripped, rest_raw)
         if effect is None:

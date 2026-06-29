@@ -131,6 +131,85 @@ async def _rebuild_buckets_for_pairs(
     await session.flush()
 
 
+async def _session_superseded_file_ids(
+    session: AsyncSession,
+    character_id: int,
+    session_started_at: dt.datetime | None,
+) -> set[int]:
+    """Return the file_ids of a logical session that are SUPERSEDED (non-canonical).
+
+    A "logical session" is identified by (claimed_character_id, session_started_at).
+    A player often uploads the same client log more than once while it is still
+    growing (mid-fight, then again at the end); each later upload is a superset of
+    the earlier one but has different content, so the sha256 store dedupe does not
+    catch it.  Left alone, every overlapping event is stamped to the fight twice and
+    all amount effects double-count.
+
+    The CANONICAL file is the most complete one — ordered by (log_end_at, event_count,
+    file_id) descending — and is the only one allowed to keep its fight stamps.  Every
+    other parsed file in the group is returned here so the caller can un-stamp it.
+
+    Returns an empty set when ``session_started_at`` is None (we cannot group reliably)
+    or when the group has a single file — i.e. no supersession applies.
+    """
+    if session_started_at is None:
+        return set()
+    rows = (
+        await session.execute(
+            select(
+                GamelogFile.file_id,
+                GamelogFile.log_end_at,
+                GamelogFile.event_count,
+            ).where(
+                GamelogFile.claimed_character_id == character_id,
+                GamelogFile.session_started_at == session_started_at,
+                GamelogFile.parse_status == "parsed",
+            )
+        )
+    ).all()
+    if len(rows) <= 1:
+        return set()
+
+    # Canonical = most complete file: latest log_end_at, then most events, then file_id.
+    def _coverage_key(row: tuple[int, dt.datetime | None, int]) -> tuple[float, int, int]:
+        file_id, log_end_at, event_count = row
+        end_epoch = log_end_at.replace(tzinfo=dt.UTC).timestamp() if log_end_at else 0.0
+        return (end_epoch, event_count or 0, file_id)
+
+    triples: list[tuple[int, dt.datetime | None, int]] = [(r[0], r[1], r[2]) for r in rows]
+    canonical_id = max(triples, key=_coverage_key)[0]
+    return {fid for fid, _, _ in triples if fid != canonical_id}
+
+
+async def _unstamp_files(
+    session: AsyncSession,
+    file_ids: set[int],
+    character_id: int,
+) -> set[tuple[int, int]]:
+    """Clear fight_id on the given files' events; return (fight_id, character_id) pairs
+    that must be rebuilt because they lost contributions.
+    """
+    if not file_ids:
+        return set()
+    pairs: set[tuple[int, int]] = set()
+    old_fight_ids = (
+        await session.execute(
+            select(LogEvent.fight_id)
+            .where(LogEvent.file_id.in_(file_ids))
+            .where(LogEvent.fight_id.is_not(None))
+            .distinct()
+        )
+    ).scalars()
+    for fid in old_fight_ids:
+        if fid is not None:
+            pairs.add((fid, character_id))
+    await session.execute(
+        update(LogEvent).where(LogEvent.file_id.in_(file_ids)).values(fight_id=None),
+        execution_options={"synchronize_session": False},
+    )
+    return pairs
+
+
 _EWAR_DEDUPE_TYPES = ("scram", "disrupt")
 
 
@@ -271,12 +350,38 @@ async def associate_file(
     character_id: int | None = file_row.claimed_character_id
     log_start: dt.datetime | None = file_row.log_start_at
     log_end: dt.datetime | None = file_row.log_end_at
+    session_started_at: dt.datetime | None = file_row.session_started_at
 
     if character_id is None or log_start is None or log_end is None:
         log.info(
             "associate_file.skip_unresolved",
             file_id=file_id,
             character_id=character_id,
+        )
+        return 0
+
+    # 1b. Supersession: within a logical session (same character + session_started_at),
+    # a player may upload the still-growing client log more than once.  Only the most
+    # complete file contributes events to fights; un-stamp every superseded sibling so
+    # overlapping events are not double-counted.  Done first so the canonical/superseded
+    # decision is independent of the order files happen to be associated in.
+    superseded_ids = await _session_superseded_file_ids(
+        session, character_id, session_started_at
+    )
+    rebuild_pairs: set[tuple[int, int]] = await _unstamp_files(
+        session, superseded_ids, character_id
+    )
+
+    if file_id in superseded_ids:
+        # This file is not canonical — it contributes nothing.  Its events were just
+        # un-stamped above; rebuild the buckets it (and any sibling) used to feed.
+        await _rebuild_buckets_for_pairs(session, rebuild_pairs)
+        await _dedupe_ewar_relationships(session, {fid for fid, _ in rebuild_pairs})
+        log.info(
+            "associate_file.superseded",
+            file_id=file_id,
+            character_id=character_id,
+            session_started_at=str(session_started_at),
         )
         return 0
 
@@ -348,8 +453,11 @@ async def associate_file(
         ).scalar_one()
         new_pairs.add((fight.fight_id, character_id))
 
-    # 5. Rebuild buckets for all affected pairs (old + new)
-    all_pairs = {(fid, character_id) for fid in old_fight_ids} | new_pairs
+    # 5. Rebuild buckets for all affected pairs (old + new, plus any superseded sibling
+    # whose stamps we just cleared so its now-orphaned buckets are recomputed too).
+    all_pairs = (
+        {(fid, character_id) for fid in old_fight_ids} | new_pairs | rebuild_pairs
+    )
     await _rebuild_buckets_for_pairs(session, all_pairs)
 
     # 6. Dedupe tackle relationships for all fights touched by this file

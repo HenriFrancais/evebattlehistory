@@ -180,6 +180,8 @@ async def _insert_gamelog_file(  # type: ignore[no-untyped-def]
     log_start: dt.datetime = LOG_START,
     log_end: dt.datetime = LOG_END,
     parse_status: str = "parsed",
+    session_started_at: dt.datetime | None = None,
+    event_count: int = 0,
 ) -> int:
     """Insert a minimal GamelogFile row.  Returns file_id."""
     sha = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
@@ -190,7 +192,7 @@ async def _insert_gamelog_file(  # type: ignore[no-untyped-def]
         character_name=f"Char{character_id}" if character_id else None,
         original_filename="test.txt",
         resolved_via="filename" if character_id else "unresolved",
-        session_started_at=None,
+        session_started_at=session_started_at,
         log_start_at=log_start,
         log_end_at=log_end,
         stored_path="/tmp/test.txt",
@@ -198,7 +200,7 @@ async def _insert_gamelog_file(  # type: ignore[no-untyped-def]
         mime="text/plain",
         size=100,
         parse_status=parse_status,
-        event_count=0,
+        event_count=event_count,
         uploaded_at=dt.datetime.now(dt.UTC),
     )
     session.add(gf)
@@ -1512,3 +1514,131 @@ async def test_ewar_dedupe_distant_observations_both_survive(db_session_maker) -
     assert len(surviving) == 2, (
         f"Expected 2 distinct re-tackles (30s apart), got {len(surviving)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Duplicate-session-upload supersession
+# ---------------------------------------------------------------------------
+#
+# A user often uploads their gamelog more than once during a session (mid-fight,
+# then again at the end). Each later upload is a near-superset of the earlier one
+# (same client log file, more lines), so the content hash differs and the sha256
+# dedupe in store.py does NOT catch it. Without supersession both files' overlapping
+# events get stamped to the same fight and every amount effect is double-counted.
+
+SESSION_START = dt.datetime(2026, 6, 10, 19, 50, 0, tzinfo=dt.UTC)
+TS_INSIDE_2 = dt.datetime(2026, 6, 10, 20, 16, 0, tzinfo=dt.UTC)  # different 5s bucket
+
+
+async def test_duplicate_session_upload_not_double_counted(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Two uploads of one growing session contribute each overlapping event ONCE.
+
+    The later/longer upload (canonical) keeps its stamps; the earlier one is superseded
+    and stamps nothing, so the fight's bucket totals reflect a single copy of the data.
+    """
+    from app.logs.associate import associate_file
+
+    async with db_session_maker() as session:
+        fight_id = await _insert_fight(session)
+        # Earlier upload: ends sooner, one combat event.
+        file_old = await _insert_gamelog_file(
+            session, character_id=CHAR_A, session_started_at=SESSION_START,
+            log_start=LOG_START, log_end=dt.datetime(2026, 6, 10, 20, 20, 0, tzinfo=dt.UTC),
+            event_count=1,
+        )
+        await _insert_log_events(session, file_old, CHAR_A, [TS_INSIDE], amount=100.0)
+        # Later upload of the SAME session: ends later, contains the same event PLUS one more.
+        file_new = await _insert_gamelog_file(
+            session, character_id=CHAR_A, session_started_at=SESSION_START,
+            log_start=LOG_START, log_end=LOG_END, event_count=2,
+        )
+        await _insert_log_events(
+            session, file_new, CHAR_A, [TS_INSIDE, TS_INSIDE_2], amount=100.0
+        )
+        await session.commit()
+
+    # Associate both (order independent).
+    async with db_session_maker() as session:
+        await associate_file(session, file_old)
+        await associate_file(session, file_new)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        # Earlier upload contributes nothing — its events are not stamped.
+        old_stamped = (
+            await session.execute(
+                select(func.count()).select_from(LogEvent)
+                .where(LogEvent.file_id == file_old, LogEvent.fight_id.is_not(None))
+            )
+        ).scalar()
+        # Later upload is canonical — both its events are stamped.
+        new_stamped = (
+            await session.execute(
+                select(func.count()).select_from(LogEvent)
+                .where(LogEvent.file_id == file_new, LogEvent.fight_id == fight_id)
+            )
+        ).scalar()
+        # Bucket totals count each physical event ONCE (200, not 300).
+        bucket_sum = (
+            await session.execute(
+                select(func.coalesce(func.sum(LogEventBucket.sum_amount), 0.0))
+                .where(LogEventBucket.fight_id == fight_id, LogEventBucket.character_id == CHAR_A)
+            )
+        ).scalar()
+        bucket_cnt = (
+            await session.execute(
+                select(func.coalesce(func.sum(LogEventBucket.event_count), 0))
+                .where(LogEventBucket.fight_id == fight_id, LogEventBucket.character_id == CHAR_A)
+            )
+        ).scalar()
+
+    assert old_stamped == 0, "superseded earlier upload must not stamp any events"
+    assert new_stamped == 2, "canonical (later) upload should stamp all its events"
+    assert bucket_sum == 200.0, f"expected single-count total 200.0, got {bucket_sum}"
+    assert bucket_cnt == 2, f"expected 2 distinct events, got {bucket_cnt}"
+
+
+async def test_supersession_handles_reverse_association_order(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Associating the canonical file FIRST then the superseded one still single-counts.
+
+    Guards order-independence: when the longer file is stamped first and the shorter
+    arrives later, associating the shorter must not re-introduce duplicate stamps.
+    """
+    from app.logs.associate import associate_file
+
+    async with db_session_maker() as session:
+        fight_id = await _insert_fight(session)
+        file_new = await _insert_gamelog_file(
+            session, character_id=CHAR_A, session_started_at=SESSION_START,
+            log_start=LOG_START, log_end=LOG_END, event_count=2,
+        )
+        await _insert_log_events(session, file_new, CHAR_A, [TS_INSIDE, TS_INSIDE_2], amount=100.0)
+        file_old = await _insert_gamelog_file(
+            session, character_id=CHAR_A, session_started_at=SESSION_START,
+            log_start=LOG_START, log_end=dt.datetime(2026, 6, 10, 20, 20, 0, tzinfo=dt.UTC),
+            event_count=1,
+        )
+        await _insert_log_events(session, file_old, CHAR_A, [TS_INSIDE], amount=100.0)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        await associate_file(session, file_new)   # canonical first
+        await associate_file(session, file_old)   # superseded second
+        await session.commit()
+
+    async with db_session_maker() as session:
+        bucket_sum = (
+            await session.execute(
+                select(func.coalesce(func.sum(LogEventBucket.sum_amount), 0.0))
+                .where(LogEventBucket.fight_id == fight_id, LogEventBucket.character_id == CHAR_A)
+            )
+        ).scalar()
+        old_stamped = (
+            await session.execute(
+                select(func.count()).select_from(LogEvent)
+                .where(LogEvent.file_id == file_old, LogEvent.fight_id.is_not(None))
+            )
+        ).scalar()
+
+    assert old_stamped == 0
+    assert bucket_sum == 200.0, f"expected single-count total 200.0, got {bucket_sum}"
