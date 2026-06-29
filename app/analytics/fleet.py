@@ -180,6 +180,13 @@ def _accumulate_remote_assist(
             if other is not None and (other, eff) in out_repper_keys:
                 continue  # repper's own out log is authoritative — drop the copy
             repper = _clean_target_name(other)
+            if repper == "?":
+                # Terse client logs the applier ship-only (no pilot), e.g. "repaired by
+                # Zarmazd [NV] [NVACA]". Label by ship rather than a bare "?" so the row
+                # is still attributable to a hull.
+                ship_label = _clean_target_name(oship)
+                if ship_label != "?":
+                    repper = ship_label
             recipient = _clean_target_name(rep_names.get(cid) or f"Char {cid}")
             rkey = (repper, recipient, eff)
             rep_cid.setdefault(rkey, None)
