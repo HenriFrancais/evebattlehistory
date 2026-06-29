@@ -99,12 +99,13 @@ async def reparse_gamelogs(session: AsyncSession, settings: Settings) -> int:
                 if target_name and e.target_ship_name is None:
                     char, _ = split_entity(target_name, entity_names)
                     target_name = char  # None when ship-only/NPC
-                # Fix (B2): resolve "you" to owner for authoritative EWAR events.
-                # Runs AFTER C1 so the authoritative-None is correctly resolved.
-                if e.effect_type in _TACKLE and e.authoritative:
-                    if source_name is None and gf.character_name is not None:
+                # Fix (B2): resolve "you" to owner for authoritative EWAR events. Fill
+                # ONLY the you-side (mirrors ingest_log): filling any None side fabricates
+                # a self-tackle when the other party is an unresolved ship-only enemy.
+                if e.effect_type in _TACKLE and gf.character_name is not None:
+                    if e.source_is_you:
                         source_name = gf.character_name
-                    if target_name is None and gf.character_name is not None:
+                    if e.target_is_you:
                         target_name = gf.character_name
                 rows.append(dict(
                     file_id=gf.file_id, character_id=gf.claimed_character_id, ts=e.ts,

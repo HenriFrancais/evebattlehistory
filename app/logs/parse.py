@@ -23,6 +23,17 @@ from typing import Any, Literal
 _TAG_RE = re.compile(r"<[^>]+>")
 _NBSP_RE = re.compile(r"&nbsp;")
 
+# HTML-ENCODED EVE markup tags. A player can put literal "<...>" markup in a custom
+# ship/bio name; EVE renders it entity-encoded ("&lt;fontsize=10&gt;&lt;b&gt;"), so it
+# survives _TAG_RE (which only matches real "<...>") and was then mis-parsed as an
+# angle-group pilot name. Strip the encoded forms of the known formatting tags.  Matched
+# case-SENSITIVELY against lowercase tag names so genuine UPPERCASE alliance tickers
+# rendered in angles ("&lt;NV&gt;") and angle-bracketed pilots ("&lt;Orie toori&gt;")
+# are never touched.
+_ENCODED_TAG_RE = re.compile(
+    r"&lt;\s*/?\s*(?:fontsize|font|color|size|br|url|loc|b|i|u|s|a)(?:[ =/][^&]*)?&gt;"
+)
+
 # A ship given a custom (user-entered) name renders that cosmetic name in italics —
 # "<u>ShipType</u> <i>CustomName</i>]" — with the real pilot following in a separate
 # [bracket]. The custom name is arbitrary text (brackets, unicode, punctuation) that
@@ -35,6 +46,7 @@ _CUSTOM_SHIP_NAME_RE = re.compile(r"(?:\[[^\[\]<]*)?<i>.*?</i>\]?", re.DOTALL)
 def strip_eve_markup(s: str) -> str:
     """Remove all HTML/EVE color+font tags from *s*; collapse excess whitespace minimally."""
     s = _CUSTOM_SHIP_NAME_RE.sub(" ", s)
+    s = _ENCODED_TAG_RE.sub(" ", s)
     s = _TAG_RE.sub("", s)
     s = _NBSP_RE.sub(" ", s)
     # collapse runs of spaces to a single space
@@ -448,6 +460,8 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
         "target_name": target_name,
         "source_ship_name": source_ship_name,
         "target_ship_name": target_ship_name,
+        "source_is_you": src_is_you,
+        "target_is_you": tgt_is_you,
         "authoritative": authoritative,
     }
 
@@ -753,6 +767,11 @@ class ParsedLogEvent:
     #: for the SDE stage to peel.  See ingest_log's source/target cleaning.
     source_ship_name: str | None = None
     target_ship_name: str | None = None
+    #: Which ewar party is the log owner ("you") — transient, used by ingest to fill
+    #: ONLY the you-side with the owner name (filling any None side fabricates a
+    #: self-tackle when the other party is an unresolved ship-only counterparty).
+    source_is_you: bool = False
+    target_is_you: bool = False
     authoritative: bool = False
 
 
@@ -774,6 +793,8 @@ _EMPTY_EFFECT: dict[str, Any] = {
     "target_name": None,
     "source_ship_name": None,
     "target_ship_name": None,
+    "source_is_you": False,
+    "target_is_you": False,
     "authoritative": False,
 }
 
@@ -847,6 +868,8 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         target_name=effect.get("target_name"),
         source_ship_name=effect.get("source_ship_name"),
         target_ship_name=effect.get("target_ship_name"),
+        source_is_you=bool(effect.get("source_is_you")),
+        target_is_you=bool(effect.get("target_is_you")),
         authoritative=bool(effect.get("authoritative")),
     )
 
