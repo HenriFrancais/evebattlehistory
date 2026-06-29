@@ -879,6 +879,34 @@ def test_terse_nos_without_module() -> None:
     assert evt.other_ship_name == "Rorqual"
 
 
+# A player whose custom SHIP NAME contains HTML-ENCODED EVE markup
+# ("&lt;fontsize=10&gt;&lt;b&gt;[SHORK ..."): the encoded tags survive markup stripping
+# (they are &lt;..&gt;, not real <..> tags) and were then parsed as an angle-group
+# pilot name ("fontsize=10").  strip_eve_markup must drop encoded markup tags so the
+# real pilot in the trailing [bracket] is resolved instead.
+_ENCODED_MARKUP_SCRAM = (
+    "[ 2026.06.26 20:56:02 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+    "<color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Leshak</u></b></color></fontsize> "
+    "&lt;fontsize=10&gt;&lt;b&gt;[SHORK <i>my ceo beats me</i>]</b></fontsize>"
+    "<fontsize=10> [Dread PiIot Roberts]</fontsize><color=0xFFFFFFFF><b> -</b> "
+    "<color=0x77ffffff><font size=10>to <b><color=0xffffffff></font><fontsize=12>"
+    "<color=0xFFFEBB64><b> <u>Proteus</u></b></color></fontsize> <i>[HA] Scroat</i>]"
+    "</b></fontsize><fontsize=10> [Nate Marston]</fontsize><color=0xFFFFFFFF><b> -"
+    "<fontsize=12><color=0xFFFEFF6F> [NV]</color></fontsize>"
+)
+
+
+def test_encoded_markup_in_custom_ship_name_not_parsed_as_pilot() -> None:
+    evt = parse_line(_ENCODED_MARKUP_SCRAM)
+    assert evt is not None
+    assert evt.effect_type == "scram"
+    assert "fontsize" not in (evt.source_name or ""), f"markup leaked: {evt.source_name!r}"
+    assert "fontsize" not in (evt.other_name or ""), f"markup leaked: {evt.other_name!r}"
+    assert evt.source_name == "Dread PiIot Roberts"
+    assert evt.target_name == "Nate Marston"
+
+
 def test_jam_target_locks_broken_combat_variant() -> None:
     evt = parse_line(_T_JAM)
     assert evt is not None

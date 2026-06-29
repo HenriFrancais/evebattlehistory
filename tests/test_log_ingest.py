@@ -806,3 +806,46 @@ async def test_ingest_you_as_source_resolves_to_owner(db_session_maker) -> None:
         "Fix B: authoritative 'you' source should resolve to character_name."
     )
     assert row.target_name == "FakeEnemy Delta"
+
+
+# A terse INCOMING tackle by a ship-only enemy (no pilot in the line) on the log
+# owner: "Warp scramble attempt from <Ship> [ALLI] [CORP]" with no "to you". The
+# source pilot is unresolvable (None) and the target is the owner ("you"). The
+# authoritative owner-fill must fill ONLY the you-side (target), never both — else
+# it fabricates a self-tackle (owner tackling owner).
+_TERSE_INCOMING_SHIPONLY_SCRAM = GAMELOG_HEADER + (
+    b"[ 2026.06.26 20:32:43 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+    b"<color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><fontsize=12>"
+    b"<color=0xFFFEBB64><b> <u>Outrider</u></b></color></fontsize><fontsize=12>"
+    b"<color=0xFFFEFF6F> [MSF.]</color></fontsize> <fontsize=10><b>[DDOG.]</b></fontsize>\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_terse_incoming_shiponly_tackle_no_self_tackle(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A terse incoming tackle from a ship-only enemy must not become a self-tackle:
+    source stays unresolved (None), only the owner (you) fills the target side."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+
+    async with db_session_maker() as session:
+        session.add(InventoryType(type_id=11192, name="Outrider", category_id=6))
+        await session.flush()
+        await ingest_log(
+            session, get_settings(), "u", "20260626_203200_2112615087.txt",
+            _TERSE_INCOMING_SHIPONLY_SCRAM,
+            _make_roster_lookup({"testchar alpha": 2112615087}),
+        )
+        await session.commit()
+
+    async with db_session_maker() as session:
+        row = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "scram")
+        )).scalar_one()
+
+    assert row.target_name == "TestChar Alpha", f"you-side should be owner, got {row.target_name!r}"
+    assert row.source_name != "TestChar Alpha", f"self-tackle fabricated: {row.source_name!r}"
+    assert row.source_name is None, f"unresolved enemy source should stay None, got {row.source_name!r}"

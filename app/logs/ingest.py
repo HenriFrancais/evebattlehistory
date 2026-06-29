@@ -192,16 +192,18 @@ async def ingest_log(
             char, _ = split_entity(e.target_name, entity_names)
             object.__setattr__(e, "target_name", char)  # None when ship-only/NPC
 
-    # Fix (B2): resolve "you" to owner for authoritative EWAR events.
-    # Must run AFTER C1 so that ship-only None values from above don't mask the
-    # authoritative-None case (they share the same None signal but different meaning).
+    # Fix (B2): resolve "you" to the owner for authoritative EWAR events. Fill ONLY the
+    # party that is actually the log owner (source_is_you / target_is_you), never any
+    # None side — the other party is None when it is an unresolved ship-only counterparty,
+    # and filling it with the owner fabricates a self-tackle (owner tackling owner).
     _TACKLE = frozenset({"scram", "disrupt"})
-    for e in parsed.events:
-        if e.effect_type in _TACKLE and e.authoritative:
-            if e.source_name is None and character_name is not None:
-                object.__setattr__(e, "source_name", character_name)
-            if e.target_name is None and character_name is not None:
-                object.__setattr__(e, "target_name", character_name)
+    if character_name is not None:
+        for e in parsed.events:
+            if e.effect_type in _TACKLE:
+                if e.source_is_you:
+                    object.__setattr__(e, "source_name", character_name)
+                if e.target_is_you:
+                    object.__setattr__(e, "target_name", character_name)
 
     # 8. Bulk-insert LogEvent rows
     if parsed.events:
