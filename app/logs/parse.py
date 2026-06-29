@@ -413,13 +413,19 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
 
     src_seg, tgt_seg = _split_ewar_raw(rest_raw)
     src_id = _resolve_counterparty(src_raw, src_seg)
+    tgt_id = _resolve_counterparty(tgt_raw, tgt_seg)
     source_name: str | None = None if src_is_you else src_id[0]
-    target_name: str | None = None if tgt_is_you else _resolve_counterparty(tgt_raw, tgt_seg)[0]
+    target_name: str | None = None if tgt_is_you else tgt_id[0]
+    # The ship the resolver already separated from each pilot (None for "you" and for
+    # fused "ShipType Pilot" runs the SDE stage must still peel).  ingest uses this to
+    # decide whether source_name/target_name is already a clean pilot — see ingest_log.
+    source_ship_name: str | None = None if src_is_you else src_id[3]
+    target_ship_name: str | None = None if tgt_is_you else tgt_id[3]
     authoritative = src_is_you or tgt_is_you
 
     if src_is_you:
         direction: Literal["in", "out"] = "out"
-        name, corp, alli, ship = _resolve_counterparty(tgt_raw, tgt_seg)
+        name, corp, alli, ship = tgt_id
     elif tgt_is_you:
         direction = "in"
         name, corp, alli, ship = src_id
@@ -440,6 +446,8 @@ def _match_ewar(rest_stripped: str, rest_raw: str) -> dict[str, Any] | None:
         "quality": None,
         "source_name": source_name,
         "target_name": target_name,
+        "source_ship_name": source_ship_name,
+        "target_ship_name": target_ship_name,
         "authoritative": authoritative,
     }
 
@@ -740,6 +748,11 @@ class ParsedLogEvent:
     raw: str
     source_name: str | None = None
     target_name: str | None = None
+    #: Ship the parser already separated from each ewar party's pilot (transient,
+    #: not persisted): None means the name may still be a fused "ShipType Pilot" run
+    #: for the SDE stage to peel.  See ingest_log's source/target cleaning.
+    source_ship_name: str | None = None
+    target_ship_name: str | None = None
     authoritative: bool = False
 
 
@@ -759,6 +772,8 @@ _EMPTY_EFFECT: dict[str, Any] = {
     "quality": None,
     "source_name": None,
     "target_name": None,
+    "source_ship_name": None,
+    "target_ship_name": None,
     "authoritative": False,
 }
 
@@ -830,6 +845,8 @@ def parse_line(line: str) -> ParsedLogEvent | None:
         raw=line,
         source_name=effect.get("source_name"),
         target_name=effect.get("target_name"),
+        source_ship_name=effect.get("source_ship_name"),
+        target_ship_name=effect.get("target_ship_name"),
         authoritative=bool(effect.get("authoritative")),
     )
 

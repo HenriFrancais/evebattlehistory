@@ -181,10 +181,14 @@ async def ingest_log(
             object.__setattr__(e, "other_ship_name", sh)
         # Fix (B) + C1: clean source_name/target_name for EWAR lines.
         # C1: ship-only or NPC parties → None (not raw ship name).
-        if e.source_name:
+        # Only run the SDE ship-peel when the parser did NOT already separate a ship
+        # from the pilot. When it did (the "[bracket] pilot" overview, source_ship_name
+        # set), the name is already a clean pilot; re-splitting would wrongly peel a
+        # pilot whose FIRST NAME is itself a ship hull (e.g. "Wolf Hibra" → "Hibra").
+        if e.source_name and e.source_ship_name is None:
             char, _ = split_entity(e.source_name, entity_names)
             object.__setattr__(e, "source_name", char)  # None when ship-only/NPC
-        if e.target_name:
+        if e.target_name and e.target_ship_name is None:
             char, _ = split_entity(e.target_name, entity_names)
             object.__setattr__(e, "target_name", char)  # None when ship-only/NPC
 

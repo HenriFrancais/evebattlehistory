@@ -720,6 +720,52 @@ async def test_ingest_custom_named_ship_ewar_source_target_are_pilots(db_session
     assert ev.target_name == "Sue Moe", f"target leaked: {ev.target_name!r}"
 
 
+# A bracket-form scram where the source pilot's FIRST NAME is itself a ship hull:
+# "Wolf Hibra" flies a Heretic ("Wolf" is the assault-frigate hull). The parser
+# already separates ship=Heretic from pilot="Wolf Hibra" via the [bracket]; ingest
+# must NOT re-run split_entity on the clean pilot (which would peel "Wolf" and leave
+# the bare surname "Hibra"). Real line from the 2026-06-26 NV-vs-MSF BR.
+_SHIP_FIRSTNAME_SCRAM_LOG = GAMELOG_HEADER + (
+    b"[ 2026.06.26 20:33:25 ] (combat) <color=0xffffffff><b>Warp scramble attempt</b> "
+    b"<color=0x77ffffff><font size=10>from</font> <color=0xffffffff><b><fontsize=12>"
+    b"<color=0xFFFEBB64><b> <u>Heretic</u></b></color></fontsize> <i>+[HA/Zerg] Heretic</i>]"
+    b"</b></fontsize><fontsize=10> [Wolf Hibra]</fontsize><color=0xFFFFFFFF><b> -"
+    b"<fontsize=12><color=0xFFFEFF6F> [NV]</color></fontsize></b> <color=0x77ffffff>"
+    b"<font size=10>to <b><color=0xffffffff></font><fontsize=12><color=0xFFFEBB64><b> "
+    b"<u>Outrider</u></b></color></fontsize> <i>Slightly Rerited</i>]</b></fontsize>"
+    b"<fontsize=10> [SavageDoob Severasse]</fontsize><color=0xFFFFFFFF><b> -<fontsize=12>"
+    b"<color=0xFFFEFF6F> [MSF.]</color></fontsize>\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_ingest_ewar_pilot_with_ship_firstname_not_split(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """A tackler whose first name collides with a ship hull (Wolf Hibra in a Heretic,
+    bracket form) must keep the full pilot name — not be truncated to the surname."""
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import InventoryType, LogEvent
+    from app.logs.ingest import ingest_log
+
+    async with db_session_maker() as session:
+        # Register the colliding hulls so split_entity WOULD peel "Wolf" if applied.
+        session.add(InventoryType(type_id=11371, name="Wolf", category_id=6))
+        session.add(InventoryType(type_id=11393, name="Heretic", category_id=6))
+        session.add(InventoryType(type_id=11192, name="Outrider", category_id=6))
+        await session.flush()
+        await ingest_log(session, get_settings(), "u", "L_20260626_203300_90000003.txt",
+                         _SHIP_FIRSTNAME_SCRAM_LOG, lambda n: 90000003)
+        await session.commit()
+
+    async with db_session_maker() as session:
+        ev = (await session.execute(
+            select(LogEvent).where(LogEvent.effect_type == "scram")
+        )).scalar_one()
+    assert ev.source_name == "Wolf Hibra", f"surname-only leak: {ev.source_name!r}"
+    assert ev.target_name == "SavageDoob Severasse", f"target leaked: {ev.target_name!r}"
+
+
 # ---------------------------------------------------------------------------
 # Fix B: "you" as source resolves to owner character_name
 # ---------------------------------------------------------------------------
