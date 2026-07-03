@@ -120,7 +120,7 @@ async def test_busy_timeout_pragma_set(tmp_path):
     async with session_maker() as session:
         value = (await session.execute(text("PRAGMA busy_timeout"))).scalar()
 
-    assert value == 5000, f"Expected PRAGMA busy_timeout=5000, got {value!r}"
+    assert value == 30000, f"Expected PRAGMA busy_timeout=30000, got {value!r}"
     reset_engine_for_tests()
 
 

@@ -27,11 +27,14 @@ def _register_pragma_listener(engine: AsyncEngine) -> None:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA synchronous=NORMAL")
-        # Wait up to 5s for a held write lock instead of failing instantly with
-        # SQLITE_BUSY ("database is locked"). Essential under concurrency: WAL
-        # permits concurrent readers but only one writer, so a reader/writer that
-        # meets an in-flight commit must wait rather than 500.
-        cursor.execute("PRAGMA busy_timeout=5000")
+        # Wait up to 30s for a held write lock instead of failing with SQLITE_BUSY
+        # ("database is locked"). WAL permits concurrent readers but only one writer;
+        # a background ingest can hold the writer for several seconds, so a quick op
+        # (a delete, a source edit) that lands mid-ingest must wait it out rather than
+        # 500. At 5s such ops failed and rolled back — e.g. a delete issued during an
+        # ingest silently left the BR in place. Ingest itself is serialized in
+        # jobs.schedule_ingest, so this timeout only backstops cross-operation contention.
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
 
