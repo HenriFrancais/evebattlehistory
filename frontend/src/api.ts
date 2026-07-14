@@ -454,6 +454,158 @@ export interface CompositionResponse {
   sides: CompositionSide[]
 }
 
+// --- Fleet broadcast analytics ---
+
+export interface BroadcastSummary {
+  n_targets: number
+  n_reps: number
+  median_time_to_fire_s: number | null
+  compliance_rate: number | null
+  median_logi_response_s: number | null
+  median_reaction_s: number | null
+  median_damage_lead_s: number | null
+  late_broadcast_rate: number | null
+  false_broadcast_rate: number | null
+  deaths_total: number
+  deaths_flagged: number
+}
+
+export interface TargetCallRow {
+  broadcast_id: number
+  ts: string
+  subject_name: string
+  subject_ship: string | null
+  fight_id: number | null
+  first_fire_delta_s: number | null
+  already_primaried: boolean
+  complied: boolean
+}
+
+export interface PilotSwitchRow {
+  character_id: number
+  character_name: string
+  calls_fired: number
+  median_switch_s: number | null
+  compliance_rate: number
+}
+
+export interface RepRequestRow {
+  broadcast_id: number
+  ts: string
+  subject_name: string
+  subject_character_id: number | null
+  resource: string
+  fight_id: number | null
+  logi_response_s: number | null
+  repper_name: string | null
+  justified: boolean | null
+  reaction_s: number | null
+  damage_lead_s: number | null
+  broadcast_late: boolean
+  has_log: boolean
+}
+
+export interface DeathBroadcastRow {
+  character_id: number
+  character_name: string
+  ship: string | null
+  killmail_id: number
+  ts: string
+  fight_id: number | null
+  classification: string // no_broadcast | late_broadcast | unanswered | ok
+  last_broadcast_delta_s: number | null
+}
+
+export interface BroadcastMetrics {
+  has_broadcasts: boolean
+  summary: BroadcastSummary
+  targets: {
+    rows: TargetCallRow[]
+    per_pilot: PilotSwitchRow[]
+    compliance_rate: number | null
+    unanswered_count: number
+  }
+  reps: {
+    rows: RepRequestRow[]
+    false_broadcast_rate: number | null
+    median_logi_response_s: number | null
+    median_damage_lead_s: number | null
+    late_broadcast_rate: number | null
+    unresolved_subjects: number
+  }
+  quality: {
+    total_targets: number
+    total_reps: number
+    unanswered_targets: number
+    false_reps: number
+    late_broadcasts: number
+    deaths_without_broadcast: number
+    unresolved_rep_subjects: number
+  }
+  deaths: DeathBroadcastRow[]
+}
+
+export interface BroadcastRawItem {
+  broadcast_id: number
+  ts: string
+  kind: string
+  subject_name: string
+  subject_ship: string | null
+  fight_id: number | null
+}
+
+export interface BroadcastFileInfo {
+  file_id: number
+  original_filename: string | null
+  broadcast_count: number
+  uploaded_by_user: string
+  uploaded_at: string
+}
+
+export interface BroadcastUploadResult {
+  file_id: number
+  status: string
+  broadcast_count: number
+  br_id: string
+}
+
+// --- Per-character performance (access-aware) ---
+
+export interface PerfCharRow {
+  character_id: number
+  character_name: string
+  user_name: string | null
+  is_self: boolean
+  damage_done: number
+  reps_out: number
+  kills_on: number
+  has_logs: boolean
+  target_calls_engaged: number
+  target_median_switch_s: number | null
+  target_compliance_rate: number | null
+  logi_response_median_s: number | null
+  damage_lead_median_s: number | null
+  late_broadcasts: number
+  rep_broadcasts: number
+  false_broadcasts: number
+  deaths: number
+  deaths_flagged: number
+}
+
+export interface FleetDistributions {
+  target_switch_s: number[]
+  logi_response_s: number[]
+  damage_lead_s: number[]
+}
+
+export interface BrPerformance {
+  elevated: boolean
+  has_broadcasts: boolean
+  summary: BroadcastSummary
+  distributions: FleetDistributions
+  characters: PerfCharRow[]
+}
+
 // ---------------------------------------------------------------------------
 // Damage attribution types (Task 15)
 // ---------------------------------------------------------------------------
@@ -755,4 +907,36 @@ export const api = {
     jsonFetch<LossDamageAttribution>(`${API}/brs/${brId}/losses/${kmId}/damage`),
   lossItems: (brId: string, kmId: number) =>
     jsonFetch<ItemLossBreakdown>(`${API}/brs/${brId}/losses/${kmId}/items`),
+  broadcastMetrics: (brId: string) =>
+    jsonFetch<BroadcastMetrics>(`${API}/brs/${brId}/broadcasts/metrics`),
+  broadcasts: (brId: string) =>
+    jsonFetch<BroadcastRawItem[]>(`${API}/brs/${brId}/broadcasts`),
+  broadcastFile: (brId: string) =>
+    jsonFetch<BroadcastFileInfo | null>(`${API}/brs/${brId}/broadcasts/file`),
+  uploadBroadcast: async (brId: string, file: File): Promise<BroadcastUploadResult> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${API}/brs/${brId}/broadcasts`, {
+      method: 'POST',
+      body: formData,
+      headers: _impersonateHeaders(),
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        if (typeof body?.detail === 'string') detail = body.detail
+      } catch {
+        // non-JSON error body; keep statusText
+      }
+      throw new ApiError(res.status, detail)
+    }
+    return res.json() as Promise<BroadcastUploadResult>
+  },
+  deleteBroadcast: (brId: string, fileId: number) =>
+    jsonFetch<{ ok: boolean }>(`${API}/brs/${brId}/broadcasts/${fileId}`, {
+      method: 'DELETE',
+    }),
+  performance: (brId: string) =>
+    jsonFetch<BrPerformance>(`${API}/brs/${brId}/performance`),
 }

@@ -19,6 +19,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from app.api.analytics import router as analytics_router
+from app.api.broadcasts import router as broadcasts_router
 from app.api.brs import router as brs_router
 from app.api.filters import router as filters_router
 from app.api.fleet import router as fleet_router
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(fleet_router, prefix=prefix)
     app.include_router(sides_router, prefix=prefix)
     app.include_router(analytics_router, prefix=prefix)
+    app.include_router(broadcasts_router, prefix=prefix)
     app.include_router(filters_router, prefix=prefix)
     # Mount the built SPA last so API routes take precedence. SpaStaticFiles
     # serves index.html for unknown non-API paths so client-side routes

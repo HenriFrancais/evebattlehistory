@@ -573,3 +573,171 @@ class SlotLossOut(BaseModel):
 class ItemLossBreakdownOut(BaseModel):
     killmail_id: int
     slots: list[SlotLossOut]  # ordered: high,med,low,rig,subsystem,drone_bay,cargo,implant,other
+
+
+# ---------------------------------------------------------------------------
+# Fleet broadcast schemas (Fleet Broadcast Analytics)
+# ---------------------------------------------------------------------------
+
+
+class BroadcastSummaryOut(BaseModel):
+    n_targets: int
+    n_reps: int
+    median_time_to_fire_s: float | None
+    compliance_rate: float | None
+    median_logi_response_s: float | None
+    median_reaction_s: float | None
+    median_damage_lead_s: float | None
+    late_broadcast_rate: float | None
+    false_broadcast_rate: float | None
+    deaths_total: int
+    deaths_flagged: int
+
+
+class TargetCallRowOut(BaseModel):
+    broadcast_id: int
+    ts: dt.datetime
+    subject_name: str
+    subject_ship: str | None
+    fight_id: int | None
+    first_fire_delta_s: float | None
+    already_primaried: bool
+    complied: bool
+
+
+class PilotSwitchRowOut(BaseModel):
+    character_id: int
+    character_name: str
+    calls_fired: int
+    median_switch_s: float | None
+    compliance_rate: float
+
+
+class TargetCallMetricsOut(BaseModel):
+    rows: list[TargetCallRowOut]
+    per_pilot: list[PilotSwitchRowOut]
+    compliance_rate: float | None
+    unanswered_count: int
+
+
+class RepRequestRowOut(BaseModel):
+    broadcast_id: int
+    ts: dt.datetime
+    subject_name: str
+    subject_character_id: int | None
+    resource: str
+    fight_id: int | None
+    logi_response_s: float | None
+    repper_name: str | None
+    justified: bool | None
+    reaction_s: float | None
+    damage_lead_s: float | None
+    broadcast_late: bool
+    has_log: bool
+
+
+class RepRequestMetricsOut(BaseModel):
+    rows: list[RepRequestRowOut]
+    false_broadcast_rate: float | None
+    median_logi_response_s: float | None
+    median_damage_lead_s: float | None
+    late_broadcast_rate: float | None
+    unresolved_subjects: int
+
+
+class DeathBroadcastRowOut(BaseModel):
+    character_id: int
+    character_name: str
+    ship: str | None
+    killmail_id: int
+    ts: dt.datetime
+    fight_id: int | None
+    classification: str
+    last_broadcast_delta_s: float | None
+
+
+class QualityReportOut(BaseModel):
+    total_targets: int
+    total_reps: int
+    unanswered_targets: int
+    false_reps: int
+    late_broadcasts: int
+    deaths_without_broadcast: int
+    unresolved_rep_subjects: int
+
+
+class BroadcastMetricsOut(BaseModel):
+    has_broadcasts: bool
+    summary: BroadcastSummaryOut
+    targets: TargetCallMetricsOut
+    reps: RepRequestMetricsOut
+    quality: QualityReportOut
+    deaths: list[DeathBroadcastRowOut]
+
+
+class BroadcastRawItemOut(BaseModel):
+    """One broadcast marker for the timeline overlay."""
+
+    broadcast_id: int
+    ts: dt.datetime
+    kind: str
+    subject_name: str
+    subject_ship: str | None
+    fight_id: int | None
+
+
+class BroadcastFileOut(BaseModel):
+    """The broadcast file currently attached to a BR (for the management control)."""
+
+    file_id: int
+    original_filename: str | None
+    broadcast_count: int
+    uploaded_by_user: str
+    uploaded_at: dt.datetime
+
+
+class BroadcastUploadResult(BaseModel):
+    file_id: int
+    status: str  # "parsed" | "duplicate"
+    broadcast_count: int
+    br_id: str
+
+
+# ---------------------------------------------------------------------------
+# Per-character performance schemas (access-aware)
+# ---------------------------------------------------------------------------
+
+
+class PerfCharRowOut(BaseModel):
+    character_id: int
+    character_name: str
+    user_name: str | None
+    is_self: bool
+    damage_done: float
+    reps_out: float
+    kills_on: int
+    has_logs: bool
+    target_calls_engaged: int
+    target_median_switch_s: float | None
+    target_compliance_rate: float | None
+    logi_response_median_s: float | None
+    damage_lead_median_s: float | None
+    late_broadcasts: int
+    rep_broadcasts: int
+    false_broadcasts: int
+    deaths: int
+    deaths_flagged: int
+
+
+class FleetDistributionsOut(BaseModel):
+    target_switch_s: list[float]
+    logi_response_s: list[float]
+    damage_lead_s: list[float]
+
+
+class BrPerformanceOut(BaseModel):
+    elevated: bool
+    has_broadcasts: bool
+    summary: BroadcastSummaryOut
+    distributions: FleetDistributionsOut
+    characters: list[PerfCharRowOut]

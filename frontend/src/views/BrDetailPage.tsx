@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { ApiError, BrDetail, BrSourceIn, BrSourceOut, BrStatus, MeResponse, UserCoverage } from '../api'
 import { api } from '../api'
+import type { BroadcastMetrics as BroadcastMetricsData } from '../api'
+import { flaggedDeathsByChar } from '../broadcasts'
 import { invalidateBr, loadBr, loadMe } from '../cache'
+import { BroadcastMetrics } from '../components/BroadcastMetrics'
+import { PerformancePanel } from '../components/PerformancePanel'
 import { CoverageMatrix } from '../components/CoverageMatrix'
 import { DeferredMount } from '../components/DeferredMount'
 import { FleetGraph } from '../components/FleetGraph'
@@ -444,6 +448,13 @@ export function BrDetailPage() {
   const [sidesVersion, setSidesVersion] = useState(0)
   const [range, setRange] = useState<{ from: number; to: number } | null>(null)
   const [graphFullscreen, setGraphFullscreen] = useState(false)
+  // Broadcast overlay: version bumps on upload/delete to re-fetch the timeline
+  // markers; flaggedDeaths is lifted from the broadcast metrics for kill-marker styling.
+  const [broadcastVersion, setBroadcastVersion] = useState(0)
+  const [flaggedDeaths, setFlaggedDeaths] = useState<Map<number, string>>(new Map())
+  const handleBroadcastLoaded = useCallback((m: BroadcastMetricsData) => {
+    setFlaggedDeaths(flaggedDeathsByChar(m))
+  }, [])
 
   // `force` bypasses the prefetch cache and refreshes it — used after an ingest
   // or refresh completes. The initial mount load uses the cache so a row that was
@@ -690,7 +701,7 @@ export function BrDetailPage() {
               </button>
             </div>
             {id && !graphFullscreen && (
-              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} />
+              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} broadcastKey={broadcastVersion} flaggedDeaths={flaggedDeaths} />
             )}
             {graphFullscreen && <p className="dim" style={{ fontSize: '0.85rem' }}>Graph open in fullscreen…</p>}
           </section>
@@ -702,6 +713,24 @@ export function BrDetailPage() {
           </section>
         </div>
       </div>
+
+      <section data-testid="broadcast-section" className="panel">
+        <h2 style={{ margin: '0 0 0.75rem' }}>Fleet Broadcasts</h2>
+        {id && (
+          <BroadcastMetrics
+            brId={id}
+            canManage={canCreate}
+            reloadKey={sidesVersion}
+            onChange={() => setBroadcastVersion((v) => v + 1)}
+            onLoaded={handleBroadcastLoaded}
+          />
+        )}
+      </section>
+
+      <section data-testid="performance-section" className="panel">
+        <h2 style={{ margin: '0 0 0.75rem' }}>Performance</h2>
+        {id && <PerformancePanel brId={id} reloadKey={sidesVersion + broadcastVersion} />}
+      </section>
 
       <section data-testid="log-coverage-section" className="panel">
         <h2 style={{ margin: '0 0 0.75rem' }}>Log Coverage</h2>
@@ -740,7 +769,7 @@ export function BrDetailPage() {
           </div>
           <div className="graph-overlay-body">
             <section className="panel graph-overlay-main">
-              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} height={360} />
+              <FleetGraph brId={id} reloadKey={sidesVersion} selectedRange={range} onSelectRange={setRange} height={360} broadcastKey={broadcastVersion} flaggedDeaths={flaggedDeaths} />
             </section>
             <section className="panel graph-overlay-side">
               <h3 style={{ margin: '0 0 0.5rem' }}>Snapshot</h3>
