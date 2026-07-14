@@ -10,7 +10,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import type { FleetTimeline, KillEvent, Leaders, TimelineFightInfo } from '../api'
+import { api } from '../api'
+import type { BroadcastRawItem, FleetTimeline, KillEvent, Leaders, TimelineFightInfo } from '../api'
+import type { BroadcastMarker } from '../broadcasts'
+import { toBroadcastMarkers } from '../broadcasts'
 import { loadFleetTimeline } from '../cache'
 import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
 import type { FleetPanel, FleetView, PanelId, PanelSeries } from '../fleet'
@@ -27,6 +30,28 @@ const KILL_HOSTILE_LOSS = '#4caf50' // green — Side A made a kill (enemy lost)
 const KILL_NEUTRAL = '#9aa4b2' // grey — neutral / unknown victim side
 const SYNC_KEY = 'fleet-x'
 const NO_KILLS: KillEvent[] = [] // stable empty ref when markers are toggled off
+const DEATH_FLAG_COLOR = '#ffb300' // amber — a death flagged by broadcast classification
+
+// Broadcast marker colours by kind (bottom-anchored ticks on the timeline).
+const BROADCAST_KIND_COLOR: Record<string, string> = {
+  target: '#42a5f5',
+  needs_shield: '#66bb6a',
+  needs_armor: '#ffa726',
+  needs_capacitor: '#ab47bc',
+  repair: '#26c6da',
+}
+const BROADCAST_KIND_LABEL: Record<string, string> = {
+  target: 'Targets',
+  needs_shield: 'Shield',
+  needs_armor: 'Armor',
+  needs_capacitor: 'Cap',
+  repair: 'Repair',
+}
+const DEATH_FLAG_REASON: Record<string, string> = {
+  no_broadcast: 'died with no rep broadcast',
+  late_broadcast: 'broadcast too late to save',
+  unanswered: 'broadcast went unanswered by logi',
+}
 
 function killColor(side: string | null): string {
   if (side === 'friendly') return KILL_FRIENDLY_LOSS
@@ -70,10 +95,16 @@ function zeroBaselinePlugin(): uPlot.Plugin {
 // DOM-overlay kill markers (inside uPlot's plot-area `over` element): each is a
 // thin coloured line with a top flag and a native hover tooltip, repositioned
 // on scale/size changes. DOM (not canvas) so hover + clean toggling work.
-function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
+function killMarkersPlugin(
+  kills: KillEvent[],
+  flaggedDeaths: Map<number, string> = new Map(),
+): uPlot.Plugin {
   let layer: HTMLDivElement | null = null
   let tip: HTMLDivElement | null = null
   let detachDrag: (() => void) | null = null
+
+  const flagOf = (k: KillEvent): string | undefined =>
+    k.victim_character_id != null ? flaggedDeaths.get(k.victim_character_id) : undefined
 
   // Anchored above the chart, horizontally centred on the marker's triangle —
   // NOT following the cursor. This keeps the kill tip clear of the cursor-tracking
@@ -89,10 +120,15 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
     const pilot = k.victim_character_name
       ? `<div class="kill-tip-pilot">${k.victim_character_name}</div>`
       : ''
+    const flag = flagOf(k)
+    const flagLine = flag
+      ? `<div class="kill-tip-meta" style="color:${DEATH_FLAG_COLOR}">⚠ ${DEATH_FLAG_REASON[flag] ?? flag}</div>`
+      : ''
     tip.innerHTML =
       `${icon}<div class="kill-tip-text"><div class="kill-tip-ship">${k.victim_ship_name}</div>` +
       pilot +
       `<div class="kill-tip-meta">${t} UTC${isk}</div>` +
+      flagLine +
       `<div class="kill-tip-meta">⌃-click → zKill</div></div>`
     tip.style.display = 'flex'
     // The marker spans the full plot height (top:0, height:100%), so its rect's
@@ -116,9 +152,10 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
     tip.className = 'kill-tip'
     document.body.appendChild(tip)
     for (const k of kills) {
-      const color = killColor(k.side_kind)
+      const flagged = flagOf(k)
+      const color = flagged ? DEATH_FLAG_COLOR : killColor(k.side_kind)
       const el = document.createElement('div')
-      el.className = 'fleet-kill-marker'
+      el.className = flagged ? 'fleet-kill-marker fleet-kill-marker--flagged' : 'fleet-kill-marker'
       el.dataset.ts = String(k.ts)
       // Faint 1px line centred in a 9px hover target — present but not dominant
       // over the series. The solid flag at the top is the primary locator.
@@ -201,6 +238,54 @@ function killMarkersPlugin(kills: KillEvent[]): uPlot.Plugin {
         tip?.remove()
         tip = null
       },
+    },
+  }
+}
+
+// DOM-overlay broadcast markers: short bottom-anchored ticks coloured by kind.
+// Purely visual (pointer-events:none) so they never snag the zoom/snapshot drag;
+// the toggle legend explains the colours.  `markers[].ts` is epoch MILLISECONDS.
+function broadcastMarkersPlugin(markers: BroadcastMarker[]): uPlot.Plugin {
+  let layer: HTMLDivElement | null = null
+
+  const build = (u: uPlot) => {
+    layer = document.createElement('div')
+    layer.style.cssText = 'position:absolute;inset:0;pointer-events:none;'
+    for (const m of markers) {
+      const el = document.createElement('div')
+      el.className = 'fleet-broadcast-marker'
+      el.dataset.ts = String(m.ts / 1000) // chart x is epoch seconds
+      const color = BROADCAST_KIND_COLOR[m.kind] ?? '#8893a7'
+      // A short tick rising from the bottom axis; title gives a native hover label.
+      el.style.cssText =
+        'position:absolute;bottom:0;width:0;height:26%;border-left:1px solid ' +
+        `${hexToRgba(color, 0.75)};`
+      el.title = m.label
+      layer.appendChild(el)
+    }
+    u.over.appendChild(layer)
+    position(u)
+  }
+
+  const position = (u: uPlot) => {
+    if (!layer) return
+    const w = u.over.clientWidth
+    for (const node of Array.from(layer.children)) {
+      const el = node as HTMLElement
+      const x = u.valToPos(Number(el.dataset.ts), 'x')
+      if (x < 0 || x > w) el.style.display = 'none'
+      else {
+        el.style.display = ''
+        el.style.left = `${x}px`
+      }
+    }
+  }
+
+  return {
+    hooks: {
+      ready: (u) => build(u),
+      setScale: (u) => position(u),
+      setSize: (u) => position(u),
     },
   }
 }
@@ -357,6 +442,8 @@ interface PanelChartProps {
   x: number[]
   hiddenSeries: Set<string>
   kills: KillEvent[]
+  broadcastMarkers: BroadcastMarker[]
+  flaggedDeaths: Map<number, string>
   fights: TimelineFightInfo[]
   height: number
   /** Shared x-zoom [min,max] across panels; null = full extent. Preserved across rebuilds. */
@@ -377,6 +464,8 @@ function PanelChart({
   x,
   hiddenSeries,
   kills,
+  broadcastMarkers,
+  flaggedDeaths,
   fights,
   height,
   zoomRef,
@@ -510,7 +599,8 @@ function PanelChart({
       plugins: [
         fightEdgesPlugin(fights),
         zeroBaselinePlugin(),
-        killMarkersPlugin(kills),
+        ...(broadcastMarkers.length ? [broadcastMarkersPlugin(broadcastMarkers)] : []),
+        killMarkersPlugin(kills, flaggedDeaths),
         rangePlugin(() => rangeRef.current, onRangeDrag, registerPositioner),
         ...(showHoverSummary ? [hoverSummaryPlugin(panel.id, leaders)] : []),
       ],
@@ -563,7 +653,7 @@ function PanelChart({
       unregisterReset()
       u.destroy()
     }
-  }, [panel, x, hiddenSeries, kills, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax, leaders, showHoverSummary])
+  }, [panel, x, hiddenSeries, kills, broadcastMarkers, flaggedDeaths, fights, height, zoomRef, rangeRef, onRangeDrag, registerPositioner, registerReset, fullMin, fullMax, leaders, showHoverSummary])
 
   return (
     <div className="fleet-panel" data-testid={`fleet-panel-${panel.id}`}>
@@ -645,7 +735,14 @@ interface CoreProps {
   height?: number
   /** Show the per-bucket leaders hover tooltip. Off for the per-character view. */
   showHoverSummary?: boolean
+  /** Raw fleet broadcasts for the toggleable timeline overlay (empty = no toggle). */
+  broadcasts?: BroadcastRawItem[]
+  /** character_id → flagged death classification, styles matching kill markers. */
+  flaggedDeaths?: Map<number, string>
 }
+
+const EMPTY_FLAGS = new Map<number, string>() // stable default ref
+const NO_RAW: BroadcastRawItem[] = [] // stable default ref
 
 /**
  * Stacked family panels with smoothing, per-series toggles, kill markers, and a
@@ -657,11 +754,14 @@ export function FleetGraphCore({
   onSelectRange,
   height = 165,
   showHoverSummary = true,
+  broadcasts = NO_RAW,
+  flaggedDeaths = EMPTY_FLAGS,
 }: CoreProps) {
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set())
   const [smooth, setSmooth] = useState(true)
   const [smoothScale, setSmoothScale] = useState(1)
   const [showKills, setShowKills] = useState(true)
+  const [enabledKinds, setEnabledKinds] = useState<Set<string>>(new Set())
   const initialised = useRef(false)
   const winMin = fleet.t_start
   const winMax = fleet.t_end
@@ -750,6 +850,29 @@ export function FleetGraphCore({
     })
   }, [])
 
+  // Broadcast kinds present (legend order), and the currently-shown markers.
+  const availableKinds = useMemo(() => {
+    const seen = new Set<string>()
+    for (const b of broadcasts) seen.add(b.kind)
+    return ['target', 'needs_shield', 'needs_armor', 'needs_capacitor', 'repair'].filter((k) =>
+      seen.has(k),
+    )
+  }, [broadcasts])
+
+  const broadcastMarkers = useMemo(
+    () => toBroadcastMarkers(broadcasts, enabledKinds),
+    [broadcasts, enabledKinds],
+  )
+
+  const toggleKind = useCallback((kind: string) => {
+    setEnabledKinds((prev) => {
+      const next = new Set(prev)
+      if (next.has(kind)) next.delete(kind)
+      else next.add(kind)
+      return next
+    })
+  }, [])
+
   if (view.x.length === 0)
     return (
       <p className="dim" data-testid="fleet-empty">
@@ -826,6 +949,36 @@ export function FleetGraphCore({
         </button>
       </div>
 
+      {availableKinds.length > 0 && (
+        <div
+          className="fleet-controls"
+          data-testid="broadcast-toggles"
+          style={{ marginTop: '0.35rem' }}
+        >
+          <span className="dim" style={{ fontSize: '0.78rem', alignSelf: 'center' }}>
+            Broadcasts:
+          </span>
+          {availableKinds.map((kind) => {
+            const on = enabledKinds.has(kind)
+            const color = BROADCAST_KIND_COLOR[kind] ?? 'var(--accent)'
+            return (
+              <button
+                key={kind}
+                type="button"
+                role="button"
+                aria-pressed={on}
+                className="fleet-legend-btn"
+                data-testid={`broadcast-toggle-${kind}`}
+                onClick={() => toggleKind(kind)}
+                style={{ borderColor: color, color: on ? '#fff' : color, background: on ? color : 'transparent' }}
+              >
+                {BROADCAST_KIND_LABEL[kind] ?? kind}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {view.panels.map((panel) => (
         <div key={panel.id} style={{ marginBottom: '0.75rem' }}>
           <ToggleLegend series={panel.series} hiddenSeries={hiddenSeries} onToggle={handleToggle} />
@@ -834,6 +987,8 @@ export function FleetGraphCore({
             x={view.x}
             hiddenSeries={hiddenSeries}
             kills={showKills ? view.kills : NO_KILLS}
+            broadcastMarkers={broadcastMarkers}
+            flaggedDeaths={flaggedDeaths}
             fights={fleet.fights ?? []}
             height={height}
             zoomRef={zoomRef}
@@ -866,12 +1021,42 @@ interface Props {
   onSelectRange: (r: { from: number; to: number } | null) => void
   /** Per-panel height in px (taller in the fullscreen overlay). */
   height?: number
+  /** Bump to re-fetch the broadcast overlay (after upload/delete). */
+  broadcastKey?: number
+  /** character_id → flagged death classification (from broadcast metrics). */
+  flaggedDeaths?: Map<number, string>
 }
 
-export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange, height = 260 }: Props) {
+export function FleetGraph({
+  brId,
+  reloadKey,
+  selectedRange,
+  onSelectRange,
+  height = 260,
+  broadcastKey,
+  flaggedDeaths,
+}: Props) {
   const [fleet, setFleet] = useState<FleetTimeline | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [broadcasts, setBroadcasts] = useState<BroadcastRawItem[]>([])
+
+  // Light fetch of the raw broadcast markers for the timeline toggle. Best-effort:
+  // a BR with no broadcast log simply yields none and shows no toggle.
+  useEffect(() => {
+    let cancelled = false
+    api.broadcasts(brId).then(
+      (rows) => {
+        if (!cancelled) setBroadcasts(rows)
+      },
+      () => {
+        if (!cancelled) setBroadcasts([])
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [brId, broadcastKey])
 
   // Tracks the brId the last fetch ran for. When the effect re-runs for the SAME
   // brId, only `reloadKey` changed (sides edit / refresh) → force a fresh fetch.
@@ -921,6 +1106,13 @@ export function FleetGraph({ brId, reloadKey, selectedRange, onSelectRange, heig
     )
 
   return (
-    <FleetGraphCore fleet={fleet} selectedRange={selectedRange} onSelectRange={onSelectRange} height={height} />
+    <FleetGraphCore
+      fleet={fleet}
+      selectedRange={selectedRange}
+      onSelectRange={onSelectRange}
+      height={height}
+      broadcasts={broadcasts}
+      flaggedDeaths={flaggedDeaths}
+    />
   )
 }

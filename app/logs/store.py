@@ -7,6 +7,7 @@ silent no-op (the file already exists).  Nothing is served from this directory.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -15,6 +16,10 @@ from app.observability.logging import log
 
 _GAMELOG_DIVIDER = b"----"
 _GAMELOG_HEADER_MARKER = b"Gamelog"
+
+# A fleet-broadcast line begins with a bare "HH:MM:SS " time-of-day (no date, no
+# "[ ... ]" envelope).  Used to sanity-check broadcast uploads.
+_BROADCAST_LINE_RE = re.compile(rb"(?m)^\d{2}:\d{2}:\d{2} ")
 
 
 class StoreResult(NamedTuple):
@@ -51,6 +56,39 @@ def validate_and_store(
     if not dest.exists():
         dest.write_bytes(raw_bytes)
         log.info("logs.store.written", sha256=sha, size=len(raw_bytes))
+    else:
+        log.debug("logs.store.already_exists", sha256=sha)
+
+    return StoreResult(sha256=sha, stored_path=dest, size=len(raw_bytes), mime="text/plain")
+
+
+def validate_and_store_broadcast(
+    raw_bytes: bytes, settings: Settings, sha256: str | None = None
+) -> StoreResult:
+    """Validate *raw_bytes* as a fleet-broadcast upload and persist it.
+
+    Broadcast logs have no Gamelog header; they are plain "HH:MM:SS - ..." lines.
+    Raises ``ValueError`` on oversize or content with no broadcast-shaped line.
+    Storage is content-addressed, identical to :func:`validate_and_store`.
+    """
+    max_bytes = settings.max_log_mb * 1024 * 1024
+    if len(raw_bytes) > max_bytes:
+        raise ValueError(
+            f"File too large: {len(raw_bytes)} bytes exceeds {settings.max_log_mb} MB limit"
+        )
+
+    if not _BROADCAST_LINE_RE.search(raw_bytes):
+        raise ValueError(
+            "not a valid fleet-broadcast log: no 'HH:MM:SS ...' lines found"
+        )
+
+    sha = sha256 if sha256 is not None else hashlib.sha256(raw_bytes).hexdigest()
+    settings.log_dir.mkdir(parents=True, exist_ok=True)
+    dest = settings.log_dir / f"{sha}.txt"
+
+    if not dest.exists():
+        dest.write_bytes(raw_bytes)
+        log.info("logs.store.broadcast_written", sha256=sha, size=len(raw_bytes))
     else:
         log.debug("logs.store.already_exists", sha256=sha)
 

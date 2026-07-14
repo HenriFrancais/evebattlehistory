@@ -59,7 +59,14 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 select(BrSource).where(BrSource.br_id == br_id)
             )
             existing_sources = list(source_check.scalars())
-            if not existing_sources and br.source_url:
+            # "multi-source:<br_id>" is an internal sentinel written to
+            # BattleReport.source_url when a BR has no fetchable link source — it must
+            # NOT be turned into a fetchable link source (it isn't a real URL).
+            if (
+                not existing_sources
+                and br.source_url
+                and not br.source_url.startswith("multi-source:")
+            ):
                 fallback_src = BrSource(
                     br_id=br_id,
                     kind="link",
@@ -96,6 +103,11 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
 
         for src_row in source_rows:
             source_id = src_row.source_id
+            # Skip the internal multi-source sentinel: it is a label, not a fetchable
+            # source, so resolving it would raise "Unknown BR source URL" and wrongly
+            # fail the BR. Any real sources alongside it still resolve normally.
+            if src_row.kind == "link" and (src_row.url or "").startswith("multi-source:"):
+                continue
             try:
                 resolved = await resolve_source(
                     source_kind=src_row.kind,

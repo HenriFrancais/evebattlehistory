@@ -7,6 +7,7 @@ import datetime as dt
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -548,4 +549,147 @@ class LogEventBucket(Base):
     __table_args__ = (
         Index("ix_log_event_bucket_fight_char", "fight_id", "character_id"),
         Index("ix_log_event_bucket_fight_effect", "fight_id", "effect_type"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fleet broadcast tables (Fleet Broadcast Analytics)
+# ---------------------------------------------------------------------------
+# Fleet broadcasts differ from gamelogs on three axes:
+#   * ownerless   — one file for the whole fleet, no character_id/listener
+#   * dateless    — lines carry HH:MM:SS only, reverse-chronological, cross midnight
+#   * manual      — associated to a specific BR by an elevated user, not by content
+# So they get a parallel, thinner pipeline (app/logs/broadcast_*.py) anchored to a
+# user-supplied br_id, but reuse the time-window fight-stamping approach from
+# associate.py once absolute dates are reconstructed (see broadcast_parse.reconstruct_dates).
+#
+# An existing populated DB needs:
+#   CREATE TABLE broadcast_file (
+#     broadcast_file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
+#     uploaded_by_user VARCHAR(128) NOT NULL,
+#     original_filename VARCHAR(256),
+#     stored_path TEXT NOT NULL,
+#     sha256 VARCHAR(64) NOT NULL UNIQUE,
+#     mime VARCHAR(64) NOT NULL,
+#     size INTEGER NOT NULL,
+#     parse_status VARCHAR(16) NOT NULL,
+#     broadcast_count INTEGER NOT NULL DEFAULT 0,
+#     anchor_date DATE,
+#     log_start_at DATETIME,
+#     log_end_at DATETIME,
+#     superseded BOOLEAN NOT NULL DEFAULT 0,
+#     uploaded_at DATETIME NOT NULL);
+#   CREATE INDEX ix_broadcast_file_br_id ON broadcast_file (br_id);
+#   CREATE INDEX ix_broadcast_file_sha256 ON broadcast_file (sha256);
+#   CREATE TABLE broadcast (
+#     broadcast_id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     file_id INTEGER NOT NULL REFERENCES broadcast_file(broadcast_file_id) ON DELETE CASCADE,
+#     br_id VARCHAR(64) NOT NULL,
+#     fight_id INTEGER,
+#     ts DATETIME NOT NULL,
+#     kind VARCHAR(16) NOT NULL,
+#     subject_name VARCHAR(128) NOT NULL,
+#     subject_ship VARCHAR(128),
+#     subject_character_id BIGINT,
+#     seq INTEGER NOT NULL,
+#     raw_line TEXT NOT NULL);
+#   CREATE INDEX ix_broadcast_br_id ON broadcast (br_id);
+#   CREATE INDEX ix_broadcast_fight_id ON broadcast (fight_id);
+#   CREATE INDEX ix_broadcast_fight_kind ON broadcast (fight_id, kind);
+#   CREATE INDEX ix_broadcast_ts ON broadcast (ts);
+
+
+#: Broadcast kinds parsed from a fleet-broadcast log.
+BROADCAST_KINDS: tuple[str, ...] = (
+    "target",
+    "needs_shield",
+    "needs_armor",
+    "needs_capacitor",
+    "repair",
+)
+
+
+class BroadcastFile(Base):
+    """An uploaded fleet-broadcast log, mirrors GamelogFile but ownerless + BR-scoped.
+
+    Identity is (br_id): one canonical broadcast file per BR.  Re-uploading an
+    extended log produces a new row (different sha256); the less-complete siblings
+    are flagged ``superseded=True`` so analytics never double-count.  Deleting the
+    parent BR cascades to the file and its broadcasts.
+    """
+
+    __tablename__ = "broadcast_file"
+
+    broadcast_file_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    br_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("battle_report.br_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+    )
+    uploaded_by_user: Mapped[str] = mapped_column(String(128))
+    original_filename: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    stored_path: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    mime: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    # "parsed" | "error"
+    parse_status: Mapped[str] = mapped_column(String(16))
+    broadcast_count: Mapped[int] = mapped_column(Integer, default=0)
+    # UTC calendar date assigned to the newest (first) line — persisted so reparse
+    # reproduces the date reconstruction without re-reading the BR's fight window.
+    anchor_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    log_start_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    log_end_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False)
+    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_broadcast_file_br_id", "br_id"),
+        Index("ix_broadcast_file_sha256", "sha256"),
+    )
+
+
+class Broadcast(Base):
+    """One meaningful fleet-broadcast line (target call or rep/repair request).
+
+    ``ts`` is a reconstructed naive-UTC datetime (broadcast logs carry HH:MM:SS
+    only; see broadcast_parse.reconstruct_dates), matching the LogEvent.ts naive-UTC
+    convention so the two join directly.  ``fight_id`` is stamped by time-window
+    overlap (broadcast_associate); ``br_id`` is the authoritative manual link and is
+    retained even for broadcasts that fall in a fight's ±pad gap (fight_id NULL).
+    """
+
+    __tablename__ = "broadcast"
+
+    broadcast_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("broadcast_file.broadcast_file_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+    )
+    br_id: Mapped[str] = mapped_column(String(64))
+    fight_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    # one of BROADCAST_KINDS
+    kind: Mapped[str] = mapped_column(String(16))
+    # enemy pilot (target) or friendly pilot (needs_*/repair)
+    subject_name: Mapped[str] = mapped_column(String(128))
+    subject_ship: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # resolved for friendly subjects (needs_*/repair) via roster/Character; NULL for
+    # enemy targets and unresolved names.
+    subject_character_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # original line index in the file (0 = newest line), for stable ordering/debug.
+    seq: Mapped[int] = mapped_column(Integer)
+    raw_line: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_broadcast_br_id", "br_id"),
+        Index("ix_broadcast_fight_id", "fight_id"),
+        Index("ix_broadcast_fight_kind", "fight_id", "kind"),
+        Index("ix_broadcast_ts", "ts"),
     )
