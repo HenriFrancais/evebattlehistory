@@ -14,7 +14,6 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.config import AppConfig
 from tests.conftest import CREATOR_HEADERS, MEMBER_HEADERS, TEST_TOKEN
 
 
@@ -46,6 +45,9 @@ async def _setup_db_with_br(tmp_path, monkeypatch, br_id: str):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.setenv("DATA_SOURCE", "demo")
     monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
+    monkeypatch.setenv("DISCORD_FORUM_CHANNEL_ID", "forum1")
+    monkeypatch.setenv("DISCORD_MEMBER_CHANNEL_ID", "mem1")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://tools.example/ns/br")
     get_settings.cache_clear()
     get_app_config.cache_clear()
     reset_engine_for_tests()
@@ -83,15 +85,6 @@ async def test_run_stores_thread_url_and_announces(tmp_path, monkeypatch):
 
     fake = _FakeSender(thread={"id": "999", "guild_id": "111"})
     monkeypatch.setattr(br_discord, "get_discord_sender", lambda s: fake)
-    monkeypatch.setattr(
-        br_discord,
-        "get_app_config",
-        lambda: AppConfig(
-            discord_forum_channel_id="forum1",
-            discord_member_channel_id="mem1",
-            public_base_url="https://tools.example/ns/br",
-        ),
-    )
 
     await br_discord._run(settings, br_id, "Big Fight")
 
@@ -150,15 +143,6 @@ async def test_run_announces_even_when_thread_fails(tmp_path, monkeypatch):
 
     fake = _FakeSender(thread=None)  # create_forum_thread returns None
     monkeypatch.setattr(br_discord, "get_discord_sender", lambda s: fake)
-    monkeypatch.setattr(
-        br_discord,
-        "get_app_config",
-        lambda: AppConfig(
-            discord_forum_channel_id="forum1",
-            discord_member_channel_id="mem1",
-            public_base_url="https://tools.example/ns/br",
-        ),
-    )
 
     await br_discord._run(settings, br_id, "Big Fight")
 

@@ -13,7 +13,7 @@ import asyncio
 
 from sqlalchemy import update
 
-from app.config import Settings, get_app_config
+from app.config import Settings
 from app.db.engine import get_sessionmaker
 from app.db.models import BattleReport
 from app.observability.logging import log
@@ -36,15 +36,15 @@ async def _run(settings: Settings, br_id: str, title: str | None) -> None:
             log.debug("br_discord.skipped", reason="not_configured", br_id=br_id)
             return
 
-        cfg = get_app_config()
         name = title or f"Battle Report {br_id[:8]}"
-        br_url = f"{cfg.public_base_url}/brs/{br_id}" if cfg.public_base_url else None
+        base = settings.public_base_url
+        br_url = f"{base}/brs/{br_id}" if base else None
 
         # 1) FC/HC forum thread. Persist the jump link (gated to FC/HC on read).
         thread_body = f"{name}\n{br_url}" if br_url else name
         try:
             thread = await sender.create_forum_thread(
-                cfg.discord_forum_channel_id, name, thread_body
+                settings.discord_forum_channel_id, name, thread_body
             )
             if thread and thread.get("id") and thread.get("guild_id"):
                 thread_url = (
@@ -71,7 +71,7 @@ async def _run(settings: Settings, br_id: str, title: str | None) -> None:
             if br_url:
                 content = f"{content}\n{br_url}"
             await sender.send_to_channel(
-                cfg.discord_member_channel_id, DiscordMessage(content=content)
+                settings.discord_member_channel_id, DiscordMessage(content=content)
             )
         except Exception as exc:
             log.warning("br_discord.announce_failed", br_id=br_id, error=str(exc))

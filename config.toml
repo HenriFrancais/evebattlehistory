@@ -10,12 +10,3 @@ create_teams = ["fc"]
 # real NV alliance/corp IDs before deploying.
 our_alliance_ids = []
 our_corp_ids = []
-
-# Discord: creating a BR opens a thread in the FC/HC forum channel (its link is
-# shown in-app to FC/HC only) and posts an announcement to the member channel.
-# The bot token is a secret in .env (DISCORD_BOT_TOKEN); leave IDs empty to
-# disable. public_base_url is the externally reachable app base (NV Tools
-# namespace + prefix) used to build the BR links posted to Discord.
-discord_forum_channel_id = ""
-discord_member_channel_id = ""
-public_base_url = ""
