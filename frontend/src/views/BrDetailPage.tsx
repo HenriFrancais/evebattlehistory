@@ -653,6 +653,15 @@ export function BrDetailPage() {
               )}
             </div>
           </div>
+          {/* FC/HC-only: the backend sends discord_thread_url solely to elevated viewers. */}
+          {br.discord_thread_url && (
+            <div>
+              <div className="stat-label">Discord</div>
+              <div>
+                <a href={br.discord_thread_url} target="_blank" rel="noopener noreferrer">Fleet thread ↗</a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

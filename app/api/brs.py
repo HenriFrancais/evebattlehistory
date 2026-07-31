@@ -57,6 +57,7 @@ from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
+from app.services.br_discord import schedule_br_announce
 
 SUPPORTED_HOSTS = {"zkillboard.com", "br.evetools.org"}
 
@@ -251,6 +252,7 @@ async def create_br(
 
     log.info("brs.created", br_id=br_id, source_count=len(sources), user=user.user_name)
     schedule_ingest(settings, br_id)
+    schedule_br_announce(settings, br_id, body.title)
 
     return BrCreated(br_id=br_id, status="pending")
 
@@ -607,6 +609,7 @@ async def list_brs(
 @router.get("/api/brs/{br_id}")
 async def get_br(
     br_id: str,
+    request: Request,
     session: SessionDep,
 ) -> BrDetail:
     """Return full detail for one battle report, including fights."""
@@ -616,6 +619,10 @@ async def get_br(
     br = result.scalar_one_or_none()
     if br is None:
         raise HTTPException(status_code=404, detail="Battle report not found")
+
+    # The Discord forum-thread link is FC/HC-only — gate the VALUE, not just its
+    # visibility, so the URL never reaches a non-elevated client.
+    elevated = can_create_br(await acting_user(request, get_settings()))
 
     fights = await _load_fights(session, br_id)
 
@@ -641,6 +648,7 @@ async def get_br(
         **_br_to_summary(br).model_dump(exclude={"systems"}),
         fights=fights,
         systems=system_names,
+        discord_thread_url=br.discord_thread_url if elevated else None,
     )
 
 

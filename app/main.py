@@ -100,6 +100,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         warmup.cancel()
+        try:
+            from app.services.discord import get_discord_sender
+
+            await get_discord_sender(settings).close()
+        except Exception as exc:
+            log.warning("discord.close_failed", error=str(exc))
         log.info("app.shutdown")
 
 

@@ -31,6 +31,29 @@ class AppConfig(BaseModel):
     our_alliance_ids: list[int] = Field(default_factory=list)
     our_corp_ids: list[int] = Field(default_factory=list)
 
+    # Discord integration (creating a BR posts a forum thread + a member
+    # announcement via the shared NV bot; the bot TOKEN is a secret in .env).
+    # Channel IDs are snowflakes — 18-19 digit numbers TOML parses as ints, so
+    # coerce to str (users don't have to remember to quote them).
+    discord_forum_channel_id: str = ""  # FC/HC forum channel: new BR → new thread
+    discord_member_channel_id: str = ""  # member channel: new BR → announcement
+    # Externally reachable base URL for building in-app BR links posted to
+    # Discord, including the NV Tools namespace + prefix
+    # (e.g. "https://tools.novacancies.space/<ns>/<prefix>"). Empty → skip links.
+    public_base_url: str = ""
+
+    @field_validator("discord_forum_channel_id", "discord_member_channel_id", mode="before")
+    @classmethod
+    def _coerce_channel_id(cls, v: object) -> str:
+        if v is None:
+            return ""
+        return str(v)
+
+    @field_validator("public_base_url", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        return v.rstrip("/")
+
 
 class Settings(BaseSettings):
     """Env-driven secrets and locations."""
@@ -47,6 +70,10 @@ class Settings(BaseSettings):
     # Outbound NV Tools portal API (roster). Separate bearer from nv_token.
     nv_api_url: str = "https://tools.novacancies.space/api"
     nv_api_token: str = ""
+
+    # Shared NV Discord bot token (reused from the `router` project). Empty ⇒
+    # every Discord call is a silent no-op, so dev/tests need no bot access.
+    discord_bot_token: str = ""
 
     # Persistence + uploads + caches.
     db_path: Path = Path("./var/db/nvbr.db")

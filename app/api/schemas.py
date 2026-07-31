@@ -114,6 +114,9 @@ class BrSummary(BaseModel):
 class BrDetail(BrSummary):
     fights: list[FightOut]
     systems: list[str] = []
+    #: Discord forum-thread jump link. FC/High Command only — populated by the
+    #: detail endpoint solely for elevated viewers, None otherwise.
+    discord_thread_url: str | None = None
 
 
 class BrListSummary(BaseModel):
