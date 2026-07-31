@@ -16,6 +16,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -692,4 +693,130 @@ class Broadcast(Base):
         Index("ix_broadcast_fight_id", "fight_id"),
         Index("ix_broadcast_fight_kind", "fight_id", "kind"),
         Index("ix_broadcast_ts", "ts"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# AAR (After Action Report): one shared markdown report per BR, plus flat
+# comments and emoji reactions.  All three tables are BR-scoped and cascade on
+# BR delete.  The AAR is authored/edited/deleted by FC / High Command; comments
+# and reactions are open to all authenticated users (author-owned).
+#
+# Prod DDL (no Alembic — apply by hand to an existing DB; create_all handles
+# fresh DBs):
+#   -- FK clauses below carry ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+#   --    (elided in-comment for width; use the same _FK options as sibling tables).
+#   CREATE TABLE aar (
+#     aar_id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     br_id VARCHAR(64) NOT NULL UNIQUE REFERENCES battle_report(br_id) ...,
+#     body TEXT NOT NULL,
+#     created_by_user VARCHAR(128) NOT NULL,
+#     created_by_char_id BIGINT,
+#     updated_by_user VARCHAR(128) NOT NULL,
+#     created_at DATETIME NOT NULL,
+#     updated_at DATETIME NOT NULL
+#   );
+#   CREATE TABLE aar_comment (
+#     comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     br_id VARCHAR(64) NOT NULL,
+#     aar_id INTEGER NOT NULL REFERENCES aar(aar_id) ...,
+#     author_user VARCHAR(128) NOT NULL,
+#     author_char_id BIGINT,
+#     body TEXT NOT NULL,
+#     created_at DATETIME NOT NULL,
+#     updated_at DATETIME
+#   );
+#   CREATE INDEX ix_aar_comment_aar_id ON aar_comment (aar_id);
+#   CREATE TABLE aar_reaction (
+#     reaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+#     aar_id INTEGER NOT NULL REFERENCES aar(aar_id) ...,
+#     target_type VARCHAR(16) NOT NULL,
+#     target_id INTEGER NOT NULL,
+#     user_name VARCHAR(128) NOT NULL,
+#     emoji VARCHAR(32) NOT NULL,
+#     created_at DATETIME NOT NULL,
+#     UNIQUE (target_type, target_id, user_name, emoji)
+#   );
+#   CREATE INDEX ix_aar_reaction_target ON aar_reaction (target_type, target_id);
+
+
+class Aar(Base):
+    """The single After Action Report for a BR (one row per BR).
+
+    Written / edited / deleted by FC / High Command only.  Deleting the parent
+    BR cascades to the AAR, its comments and reactions.
+    """
+
+    __tablename__ = "aar"
+
+    aar_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    br_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("battle_report.br_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+        unique=True,
+    )
+    # Markdown source (rendered client-side; raw HTML is not honoured).
+    body: Mapped[str] = mapped_column(Text)
+    created_by_user: Mapped[str] = mapped_column(String(128))
+    created_by_char_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_by_user: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AarComment(Base):
+    """A flat (non-threaded) comment on a BR's AAR.
+
+    Any authenticated user may post.  The author may edit/delete their own; FC /
+    High Command may delete any (moderation).  ``updated_at`` is NULL until edited.
+    """
+
+    __tablename__ = "aar_comment"
+
+    comment_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    br_id: Mapped[str] = mapped_column(String(64))
+    aar_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("aar.aar_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+    )
+    author_user: Mapped[str] = mapped_column(String(128))
+    author_char_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (Index("ix_aar_comment_aar_id", "aar_id"),)
+
+
+class AarReaction(Base):
+    """One emoji reaction by one user on either the AAR body or a comment.
+
+    ``target_type`` is 'aar' or 'comment'; ``target_id`` is the aar_id or the
+    comment_id.  Scoped via ``aar_id`` so BR/AAR deletes cascade; a comment
+    delete removes its reactions in the service (they hang off aar_id, not the
+    comment).  The unique constraint makes the toggle idempotent.
+    """
+
+    __tablename__ = "aar_reaction"
+
+    reaction_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    aar_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("aar.aar_id", ondelete="CASCADE", **_FK),  # type: ignore[arg-type]
+    )
+    # 'aar' | 'comment'
+    target_type: Mapped[str] = mapped_column(String(16))
+    target_id: Mapped[int] = mapped_column(Integer)
+    user_name: Mapped[str] = mapped_column(String(128))
+    emoji: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "target_type", "target_id", "user_name", "emoji",
+            name="uq_aar_reaction",
+        ),
+        Index("ix_aar_reaction_target", "target_type", "target_id"),
     )

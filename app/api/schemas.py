@@ -741,3 +741,84 @@ class BrPerformanceOut(BaseModel):
     summary: BroadcastSummaryOut
     distributions: FleetDistributionsOut
     characters: list[PerfCharRowOut]
+
+
+# ---------------------------------------------------------------------------
+# AAR (After Action Report) — shared markdown report + flat comments + reactions
+# ---------------------------------------------------------------------------
+
+#: The fixed reaction palette. Server-defined and echoed to the client so the
+#: available reactions are authoritative here.  ``o7`` is the EVE salute (a text
+#: token, not an emoji); the rest are single emoji.
+AAR_REACTIONS: tuple[str, ...] = ("👍", "❤️", "🔥", "🎉", "😂", "o7")
+
+
+class ReactionGroupOut(BaseModel):
+    """Reactions of one emoji on one target, aggregated across users."""
+
+    emoji: str
+    count: int
+    reacted_by_me: bool
+    # Roster user_names who reacted (for a hover tooltip).
+    user_names: list[str]
+
+
+class AarBodyOut(BaseModel):
+    aar_id: int
+    body: str
+    created_by_user: str
+    created_by_char_id: int | None
+    updated_by_user: str
+    created_at: dt.datetime
+    updated_at: dt.datetime
+
+
+class AarCommentOut(BaseModel):
+    comment_id: int
+    author_user: str
+    author_char_id: int | None
+    body: str
+    created_at: dt.datetime
+    updated_at: dt.datetime | None
+    # Per-viewer UI hints (authoritative checks are re-run server-side on write).
+    editable: bool
+    deletable: bool
+    reactions: list[ReactionGroupOut]
+
+
+class AarViewerOut(BaseModel):
+    user_name: str
+    can_manage: bool
+    allowed_reactions: list[str]
+
+
+class AarPanelOut(BaseModel):
+    """Everything the AAR panel needs in one round trip."""
+
+    aar: AarBodyOut | None
+    comments: list[AarCommentOut]
+    # Reactions on the AAR body itself (comment reactions live on each comment).
+    reactions: list[ReactionGroupOut]
+    viewer: AarViewerOut
+
+
+class AarBodyIn(BaseModel):
+    body: str
+
+
+class CommentIn(BaseModel):
+    body: str
+
+
+class ReactionIn(BaseModel):
+    target_type: str  # 'aar' | 'comment'
+    target_id: int
+    emoji: str
+
+
+class ReactionToggleOut(BaseModel):
+    """Updated reaction groups for the single target that was toggled."""
+
+    target_type: str
+    target_id: int
+    reactions: list[ReactionGroupOut]

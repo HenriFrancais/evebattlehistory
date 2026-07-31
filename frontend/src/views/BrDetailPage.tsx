@@ -5,6 +5,7 @@ import { api } from '../api'
 import type { BroadcastMetrics as BroadcastMetricsData } from '../api'
 import { flaggedDeathsByChar } from '../broadcasts'
 import { invalidateBr, loadBr, loadMe } from '../cache'
+import { AarPanel } from '../components/AarPanel'
 import { BroadcastMetrics } from '../components/BroadcastMetrics'
 import { PerformancePanel } from '../components/PerformancePanel'
 import { CoverageMatrix } from '../components/CoverageMatrix'
@@ -654,6 +655,10 @@ export function BrDetailPage() {
           </div>
         </div>
       </div>
+
+      <section className="panel" data-testid="aar-section">
+        <AarPanel brId={br.br_id} canManage={canCreate} />
+      </section>
 
       {br.status !== 'ready' && (
         <IngestProgress brId={br.br_id} initialStatus={brStatus} onReady={() => load(true)} />
