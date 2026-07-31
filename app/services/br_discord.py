@@ -40,11 +40,18 @@ async def _run(settings: Settings, br_id: str, title: str | None) -> None:
         base = settings.public_base_url
         br_url = f"{base}/brs/{br_id}" if base else None
 
-        # 1) FC/HC forum thread. Persist the jump link (gated to FC/HC on read).
-        thread_body = f"{name}\n{br_url}" if br_url else name
+        # 1) FC/HC forum thread. Ping the FC role (if configured) in the opening
+        # post so the team is pulled in; persist the jump link (gated on read).
+        role_id = settings.discord_fc_role_id
+        mention = f"<@&{role_id}> " if role_id else ""
+        body = f"{name}\n{br_url}" if br_url else name
+        thread_body = f"{mention}{body}"
         try:
             thread = await sender.create_forum_thread(
-                settings.discord_forum_channel_id, name, thread_body
+                settings.discord_forum_channel_id,
+                name,
+                thread_body,
+                mention_role_ids=[role_id] if role_id else None,
             )
             if thread and thread.get("id") and thread.get("guild_id"):
                 thread_url = (

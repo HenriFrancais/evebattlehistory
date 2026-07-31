@@ -124,9 +124,18 @@ class DiscordSender:
         return resp is not None
 
     async def create_forum_thread(
-        self, forum_channel_id: str, name: str, content: str
+        self,
+        forum_channel_id: str,
+        name: str,
+        content: str,
+        *,
+        mention_role_ids: list[str] | None = None,
     ) -> dict | None:
         """Create a forum-channel thread (Discord "Start Thread in Forum Channel").
+
+        ``content`` should already contain any ``<@&id>`` role mentions; pass the
+        same ids in ``mention_role_ids`` so ``allowed_mentions`` lets the ping fire
+        (and nothing else — e.g. no accidental @everyone).
 
         Returns the created thread channel object (has ``id`` and ``guild_id``)
         on success, or None when unconfigured / on persistent failure.
@@ -138,9 +147,12 @@ class DiscordSender:
             log.debug("discord.skipped", reason="no_forum_channel")
             return None
 
+        message: dict[str, object] = {"content": content}
+        if mention_role_ids:
+            message["allowed_mentions"] = {"roles": mention_role_ids}
         payload: dict[str, object] = {
             "name": name[:100],
-            "message": {"content": content},
+            "message": message,
         }
         resp = await self._post_with_retries(
             f"/channels/{forum_channel_id}/threads", payload, ctx=f"thread:{forum_channel_id}"

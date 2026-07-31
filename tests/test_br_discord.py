@@ -28,8 +28,8 @@ class _FakeSender:
     def configured(self) -> bool:
         return self._configured
 
-    async def create_forum_thread(self, forum_channel_id, name, content):
-        self.thread_call = (forum_channel_id, name, content)
+    async def create_forum_thread(self, forum_channel_id, name, content, *, mention_role_ids=None):
+        self.thread_call = (forum_channel_id, name, content, mention_role_ids)
         return self._thread
 
     async def send_to_channel(self, channel_id, msg):
@@ -47,6 +47,7 @@ async def _setup_db_with_br(tmp_path, monkeypatch, br_id: str):
     monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
     monkeypatch.setenv("DISCORD_FORUM_CHANNEL_ID", "forum1")
     monkeypatch.setenv("DISCORD_MEMBER_CHANNEL_ID", "mem1")
+    monkeypatch.setenv("DISCORD_FC_ROLE_ID", "9001")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://tools.example/ns/br")
     get_settings.cache_clear()
     get_app_config.cache_clear()
@@ -97,8 +98,11 @@ async def test_run_stores_thread_url_and_announces(tmp_path, monkeypatch):
 
     # Forum thread targeted the FC/HC channel, named from the title, body links the app.
     assert fake.thread_call[0] == "forum1"
-    assert fake.thread_call[1] == "Big Fight"
+    assert fake.thread_call[1] == "Big Fight"  # thread title stays clean (no mention)
     assert f"https://tools.example/ns/br/brs/{br_id}" in fake.thread_call[2]
+    # FC role pinged in the opening post, with allowed_mentions scoping the ping.
+    assert fake.thread_call[2].startswith("<@&9001> ")
+    assert fake.thread_call[3] == ["9001"]
 
     # Member announcement links back to the in-app BR.
     assert fake.messages and fake.messages[0][0] == "mem1"

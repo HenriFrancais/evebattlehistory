@@ -185,6 +185,41 @@ async def test_create_thread_posts_to_threads_endpoint_and_returns_object():
     await sender.close()
 
 
+async def test_create_thread_includes_allowed_mentions_when_role_given():
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(201, json={"id": "1", "guild_id": "2"})
+
+    sender = _make_sender(handler)
+    await sender.create_forum_thread(
+        "forum-7", "Fight X", "<@&9001> Fight X", mention_role_ids=["9001"]
+    )
+    import json
+
+    payload = json.loads(seen[0].read())
+    assert payload["message"]["content"] == "<@&9001> Fight X"
+    assert payload["message"]["allowed_mentions"] == {"roles": ["9001"]}
+    await sender.close()
+
+
+async def test_create_thread_omits_allowed_mentions_without_role():
+    seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(201, json={"id": "1", "guild_id": "2"})
+
+    sender = _make_sender(handler)
+    await sender.create_forum_thread("forum-7", "Fight X", "Fight X")
+    import json
+
+    payload = json.loads(seen[0].read())
+    assert "allowed_mentions" not in payload["message"]
+    await sender.close()
+
+
 async def test_create_thread_truncates_name_to_100():
     seen: list[httpx.Request] = []
 

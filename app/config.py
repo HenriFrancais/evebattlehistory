@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     discord_bot_token: str = ""
     discord_forum_channel_id: str = ""  # FC/HC forum channel: new BR → new thread
     discord_member_channel_id: str = ""  # member channel: new BR → announcement
+    # Role pinged in the forum thread's opening post so the FC team is pulled in.
+    # A Discord role snowflake; empty → no role mention. Mentioned as <@&id>.
+    discord_fc_role_id: str = ""
     # Externally reachable base URL for building the in-app BR links posted to
     # Discord, including the NV Tools namespace + prefix
     # (e.g. "https://tools.novacancies.space/<ns>/<prefix>"). Empty → skip links.
