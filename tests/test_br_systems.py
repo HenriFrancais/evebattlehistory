@@ -29,6 +29,12 @@ async def test_br_detail_lists_distinct_system_names(make_client, db_session_mak
 
 
 async def _call_get_br(br_id, db_session_maker):  # type: ignore[no-untyped-def]
+    from starlette.requests import Request
+
     from app.api.brs import get_br
+
+    # Minimal ASGI scope → a non-elevated anonymous request (no X-User-* headers),
+    # which is all this systems-listing assertion needs.
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
     async with db_session_maker() as session:
-        return await get_br(br_id, session)
+        return await get_br(br_id, request, session)

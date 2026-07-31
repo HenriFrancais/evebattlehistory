@@ -80,6 +80,8 @@ export interface FightOut {
 export interface BrDetail extends BrSummary {
   fights: FightOut[]
   systems: string[]
+  // Discord forum-thread link; only present for FC/High Command (backend-gated).
+  discord_thread_url?: string | null
 }
 
 export interface BrStatus {

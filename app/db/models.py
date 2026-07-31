@@ -199,6 +199,14 @@ class BattleReport(Base):
     battle_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     fight_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Discord forum thread opened when this BR was created (see app/services/
+    # br_discord.py). thread_url is the FC/HC-only jump link surfaced in the UI;
+    # thread_id doubles as an idempotency marker. BigInteger: snowflakes are 64-bit.
+    # prod: ALTER TABLE battle_report ADD COLUMN discord_thread_id BIGINT;
+    # prod: ALTER TABLE battle_report ADD COLUMN discord_thread_url TEXT;
+    discord_thread_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    discord_thread_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class BrSource(Base):
     """One source entry for a BR — a zKB/Aurora link or a system+time-window."""
