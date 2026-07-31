@@ -666,6 +666,58 @@ export interface BrSides {
   can_edit: boolean
 }
 
+// --- AAR (After Action Report) ---
+
+export interface ReactionGroup {
+  emoji: string
+  count: number
+  reacted_by_me: boolean
+  user_names: string[]
+}
+
+export interface AarBody {
+  aar_id: number
+  body: string
+  created_by_user: string
+  created_by_char_id: number | null
+  updated_by_user: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AarComment {
+  comment_id: number
+  author_user: string
+  author_char_id: number | null
+  body: string
+  created_at: string
+  updated_at: string | null
+  editable: boolean
+  deletable: boolean
+  reactions: ReactionGroup[]
+}
+
+export interface AarViewer {
+  user_name: string
+  can_manage: boolean
+  allowed_reactions: string[]
+}
+
+export interface AarPanel {
+  aar: AarBody | null
+  comments: AarComment[]
+  reactions: ReactionGroup[]
+  viewer: AarViewer
+}
+
+export type ReactionTargetType = 'aar' | 'comment'
+
+export interface ReactionToggle {
+  target_type: ReactionTargetType
+  target_id: number
+  reactions: ReactionGroup[]
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -939,4 +991,40 @@ export const api = {
     }),
   performance: (brId: string) =>
     jsonFetch<BrPerformance>(`${API}/brs/${brId}/performance`),
+  getAar: (brId: string) => jsonFetch<AarPanel>(`${API}/brs/${brId}/aar`),
+  putAar: (brId: string, body: string) =>
+    jsonFetch<AarBody>(`${API}/brs/${brId}/aar`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    }),
+  deleteAar: (brId: string) =>
+    jsonFetch<{ ok: boolean }>(`${API}/brs/${brId}/aar`, { method: 'DELETE' }),
+  createAarComment: (brId: string, body: string) =>
+    jsonFetch<AarComment>(`${API}/brs/${brId}/aar/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    }),
+  editAarComment: (brId: string, cid: number, body: string) =>
+    jsonFetch<AarComment>(`${API}/brs/${brId}/aar/comments/${cid}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    }),
+  deleteAarComment: (brId: string, cid: number) =>
+    jsonFetch<{ ok: boolean }>(`${API}/brs/${brId}/aar/comments/${cid}`, {
+      method: 'DELETE',
+    }),
+  toggleAarReaction: (
+    brId: string,
+    target_type: ReactionTargetType,
+    target_id: number,
+    emoji: string,
+  ) =>
+    jsonFetch<ReactionToggle>(`${API}/brs/${brId}/aar/reactions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ target_type, target_id, emoji }),
+    }),
 }
