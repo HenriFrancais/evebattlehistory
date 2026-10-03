@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # Role pinged in the forum thread's opening post so the FC team is pulled in.
     # A Discord role snowflake; empty → no role mention. Mentioned as <@&id>.
     discord_fc_role_id: str = ""
+    # Ops alerts (e.g. a failed backup) are posted here. Empty → no alert.
+    discord_alert_channel_id: str = ""
     # Externally reachable base URL for building the in-app BR links posted to
     # Discord, including the NV Tools namespace + prefix
     # (e.g. "https://tools.novacancies.space/<ns>/<prefix>"). Empty → skip links.

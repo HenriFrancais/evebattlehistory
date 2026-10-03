@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # In-container, self-scheduling Google Drive backup loop for the `backup` compose
-# profile. Runs daily at BACKUP_HOUR:00 UTC: takes a WAL-consistent snapshot via
-# python -m app.backup into a temp dir, rclone-copies it to the remote, prunes to
-# BACKUP_KEEP newest. Logs to stdout so `docker compose logs backup` shows activity.
+# profile. Runs daily at BACKUP_HOUR:00 UTC: python -m app.backup snapshots the DB,
+# pushes + verifies it, syncs logs and prunes to BACKUP_KEEP. It exits non-zero on
+# any failure (logged below as FAILED). Logs to stdout: `docker compose logs backup`.
 #
 # Disabled mode: if BACKUP_RCLONE_REMOTE is empty, log and `sleep infinity` — the
 # service uses `restart: unless-stopped`, and a clean exit would cause a restart loop.

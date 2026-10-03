@@ -406,8 +406,13 @@ docker compose exec backup python -m app.backup
 docker compose exec backup rclone lsf nvbr-gdrive:nvbr/backups
 ```
 
-- **Backup:** `python -m app.backup` snapshots the DB + logs and pushes to
-  `<BACKUP_RCLONE_REMOTE>/<YYYYMMDD-HHMMSS>/`; snapshots beyond `BACKUP_KEEP` are purged.
+- **Backup:** `python -m app.backup` pushes a DB snapshot to
+  `<BACKUP_RCLONE_REMOTE>/<YYYYMMDD-HHMMSS>/app.db` and syncs uploaded logs incrementally into
+  `<BACKUP_RCLONE_REMOTE>/logs/` (stored once, not per snapshot); snapshots beyond `BACKUP_KEEP`
+  are purged. A failed or unverifiable push **exits non-zero**, prunes nothing, removes its own
+  partial directory, and posts to `DISCORD_ALERT_CHANNEL_ID` if set.
+- **Restore drill:** `docker compose exec backup python -m app.backup --verify` pulls the newest
+  snapshot to a temp dir and runs an integrity check. Run it after setup and periodically.
 - **Daily sidecar:** `scripts/backup-loop.sh` sleeps until `BACKUP_HOUR:00 UTC`, then runs the
   backup; a failed run logs and continues (never crashes the loop).
 - **Restore on startup:** with `RESTORE_ON_START=true`, a fresh VM (empty `nvbr_data` volume)

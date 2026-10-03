@@ -98,15 +98,15 @@ starts, with a snapshot taken first.
 
 ### 4. Backup failures are silent
 
-- [ ] `RcloneClient.push` logs a non-zero exit and returns
+- [x] `RcloneClient.push` logs a non-zero exit and returns
       (`app/backup.py:79-84`). `run_backup` then prunes old snapshots and
       returns the destination (`app/backup.py:165-169`), so the CLI prints
       "Backup complete" and exits 0. `scripts/backup-loop.sh` never sees a
       failure.
-- [ ] A partial push still creates a dated directory, which counts toward
+- [x] A partial push still creates a dated directory, which counts toward
       `BACKUP_KEEP` and can rotate out the last good snapshot.
-- [ ] Nothing verifies a snapshot or exercises restore. Do a restore drill.
-- [ ] Every run re-copies the whole log directory (299 MB locally) into a new
+- [x] Nothing verifies a snapshot or exercises restore. Do a restore drill.
+- [x] Every run re-copies the whole log directory (299 MB locally) into a new
       dated folder; store logs once (content-addressed) and snapshot only the DB.
 
 Fix: raise on rclone failure, skip prune after a failed push, exit non-zero,

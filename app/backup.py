@@ -1,18 +1,30 @@
 """Backup + restore logic for the NV Battle Reports app.
 
 Uses the SQLite online-backup API for WAL-consistent snapshots (no live lock).
-Shells out to rclone for cloud storage. All errors are caught and logged so
-backup/restore failures never crash startup or the scheduler.
+Shells out to rclone for cloud storage.
 
-CLI entry point:
-    python -m app.backup   →  runs one backup with the current UTC timestamp
+Remote layout::
+
+    <remote>/<YYYYMMDD-HHMMSS>/app.db   one DB snapshot per run (pruned to BACKUP_KEEP)
+    <remote>/logs/<sha256>.txt          uploaded logs, stored ONCE (content-addressed,
+                                        so an incremental copy never rewrites a file)
+
+A backup that fails is LOUD: ``run_backup`` raises ``BackupError``, never prunes
+older snapshots, and the CLI exits non-zero. Restore-on-start stays best-effort
+(a failed restore logs and lets the app boot with a fresh DB).
+
+CLI entry points:
+    python -m app.backup            →  one backup with the current UTC timestamp
+    python -m app.backup --verify   →  restore drill: pull the newest snapshot to a
+                                       temp dir and run an integrity check on it
 """
 
 from __future__ import annotations
 
-import shutil
+import re
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from contextlib import closing
@@ -22,33 +34,35 @@ from typing import Any
 from app.config import Settings
 from app.observability.logging import log
 
+#: Shared, incrementally-synced directory of uploaded logs on the remote.
+LOGS_DIRNAME = "logs"
+#: A snapshot directory name (UTC ``YYYYMMDD-HHMMSS``); anything else on the remote
+#: (e.g. the shared logs directory) is never listed, pruned or restored as a snapshot.
+_SNAPSHOT_RE = re.compile(r"^\d{8}-\d{6}$")
+
+
+class BackupError(RuntimeError):
+    """A backup or snapshot verification failed."""
+
+
 # ---------------------------------------------------------------------------
 # make_snapshot
 # ---------------------------------------------------------------------------
 
 
 def make_snapshot(settings: Settings, staging_dir: Path) -> Path:
-    """Copy the live DB + log_dir into staging_dir using the SQLite online-backup API.
-
-    - staging_dir/app.db  — WAL-consistent snapshot (no live lock)
-    - staging_dir/logs/   — recursive copy of log_dir (tolerates missing/empty)
+    """Snapshot the live DB into staging_dir/app.db with the SQLite online-backup
+    API (WAL-consistent, no live lock). Logs are synced separately (see run_backup).
 
     Returns staging_dir. Sync; callers may wrap in asyncio.to_thread.
     """
     snap_db = staging_dir / "app.db"
-    logs_out = staging_dir / "logs"
 
     # SQLite online-backup: consistent even under concurrent WAL writes.
     with closing(sqlite3.connect(str(settings.db_path))) as src, closing(
         sqlite3.connect(str(snap_db))
     ) as dst:
         src.backup(dst)
-
-    # Copy log_dir recursively; tolerate missing or empty.
-    if settings.log_dir.exists():
-        shutil.copytree(str(settings.log_dir), str(logs_out), dirs_exist_ok=True)
-    else:
-        logs_out.mkdir(parents=True, exist_ok=True)
 
     return staging_dir
 
@@ -69,19 +83,42 @@ class RcloneClient:
     """Thin injectable wrapper around the rclone binary.
 
     Pass a ``runner`` callable (signature: ``(cmd: list[str], **kwargs) -> result``)
-    to replace the real subprocess in tests.  Non-zero exits are logged, not raised,
-    except for list_dirs which returns [].
+    to replace the real subprocess in tests.  Non-zero exits are logged and
+    reported through the return value (False / []); callers decide what is fatal.
     """
 
     def __init__(self, runner: _Runner = _default_runner) -> None:
         self._run = runner
 
-    def push(self, local_dir: Path, dest: str) -> None:
-        """rclone copy local_dir → dest.  Logs on failure, does not raise."""
+    def push(self, local_dir: Path, dest: str) -> bool:
+        """rclone copy local_dir → dest.  Returns False (and logs) on failure."""
         cmd = ["rclone", "copy", str(local_dir), dest, "--transfers=4"]
         result = self._run(cmd)
         if result.returncode != 0:
             log.error("rclone.push_failed", dest=dest, stderr=result.stderr)
+            return False
+        return True
+
+    def check(self, local_dir: Path, dest: str) -> bool:
+        """True iff every file in local_dir exists identically at dest."""
+        cmd = ["rclone", "check", str(local_dir), dest, "--one-way"]
+        result = self._run(cmd)
+        if result.returncode != 0:
+            log.error("rclone.check_failed", dest=dest, stderr=result.stderr)
+            return False
+        return True
+
+    def purge(self, path: str) -> bool:
+        """rclone purge path.  Returns False (and logs) on failure."""
+        result = self._run(["rclone", "purge", path])
+        if result.returncode != 0:
+            log.error("rclone.purge_failed", path=path, stderr=result.stderr)
+            return False
+        return True
+
+    def list_snapshots(self, remote: str) -> list[str]:
+        """Snapshot directory names under remote, oldest first."""
+        return sorted(d for d in self.list_dirs(remote) if _SNAPSHOT_RE.match(d))
 
     def list_dirs(self, remote: str) -> list[str]:
         """Return directory names (without trailing slash) under remote.
@@ -96,28 +133,27 @@ class RcloneClient:
         # rclone lsf appends a trailing slash to each dir entry
         return [line.rstrip("/") for line in result.stdout.splitlines() if line.strip()]
 
-    def pull(self, remote_subpath: str, local_dir: Path) -> None:
-        """rclone copy remote_subpath → local_dir.  Logs on failure, does not raise."""
+    def pull(self, remote_subpath: str, local_dir: Path) -> bool:
+        """rclone copy remote_subpath → local_dir.  Returns False (and logs) on failure."""
         local_dir.mkdir(parents=True, exist_ok=True)
         cmd = ["rclone", "copy", remote_subpath, str(local_dir)]
         result = self._run(cmd)
         if result.returncode != 0:
             log.error("rclone.pull_failed", src=remote_subpath, stderr=result.stderr)
+            return False
+        return True
 
     def prune(self, remote: str, keep: int) -> None:
-        """Purge all but the newest ``keep`` subdirs of remote (lex sort).
+        """Purge all but the newest ``keep`` SNAPSHOT dirs of remote (lex sort).
 
-        Logs on individual purge failures, does not raise.
+        Only timestamp-named directories are candidates, so the shared logs
+        directory is never touched. Logs on individual purge failures.
         """
-        dirs = sorted(self.list_dirs(remote))
+        dirs = self.list_snapshots(remote)
         to_purge = dirs[: max(0, len(dirs) - keep)]
         for old in to_purge:
             path = f"{remote}/{old}"
-            cmd = ["rclone", "purge", path]
-            result = self._run(cmd)
-            if result.returncode != 0:
-                log.error("rclone.purge_failed", path=path, stderr=result.stderr)
-            else:
+            if self.purge(path):
                 log.info("rclone.pruned", path=path)
 
 
@@ -143,6 +179,11 @@ def run_backup(
     Returns:
         The remote path (``<remote>/<timestamp>``) on success, or None when
         backups are disabled (empty remote).
+
+    Raises:
+        BackupError: the snapshot, push or post-push verification failed. Older
+        snapshots are NOT pruned in that case, and the partial directory of the
+        failed run is removed so it can never count toward ``backup_keep``.
     """
     if not settings.backup_rclone_remote:
         log.info("backup.disabled", reason="backup_rclone_remote is empty")
@@ -160,13 +201,59 @@ def run_backup(
             make_snapshot(settings, tmp)
         except Exception as exc:
             log.error("backup.snapshot_failed", error=str(exc))
-            return None
+            raise BackupError(f"snapshot failed: {exc}") from exc
 
-        client.push(tmp, dest)
-        client.prune(remote, settings.backup_keep)
+        if not (client.push(tmp, dest) and client.check(tmp, dest)):
+            client.purge(dest)
+            raise BackupError(f"push to {dest} failed or did not verify")
 
+    # Uploaded logs are content-addressed and immutable: sync them once into a
+    # shared directory instead of re-copying the whole set into every snapshot.
+    if settings.log_dir.exists() and not client.push(
+        settings.log_dir, f"{remote}/{LOGS_DIRNAME}"
+    ):
+        raise BackupError(f"log sync to {remote}/{LOGS_DIRNAME} failed")
+
+    client.prune(remote, settings.backup_keep)
     log.info("backup.complete", remote_path=dest)
     return dest
+
+
+def verify_latest_snapshot(
+    settings: Settings,
+    *,
+    client: RcloneClient | None = None,
+) -> str:
+    """Restore drill: pull the newest snapshot to a temp dir and check it opens,
+    passes ``PRAGMA integrity_check`` and contains tables. Returns its remote path.
+
+    Raises BackupError when there is no snapshot or it is not a healthy database.
+    """
+    remote = settings.backup_rclone_remote
+    if not remote:
+        raise BackupError("backup_rclone_remote is empty")
+    if client is None:
+        client = RcloneClient()
+    snaps = client.list_snapshots(remote)
+    if not snaps:
+        raise BackupError(f"no snapshots under {remote}")
+    remote_snap = f"{remote}/{snaps[-1]}"
+    with tempfile.TemporaryDirectory() as _tmp:
+        tmp = Path(_tmp)
+        if not client.pull(f"{remote_snap}/app.db", tmp) or not (tmp / "app.db").exists():
+            raise BackupError(f"could not pull {remote_snap}/app.db")
+        try:
+            with closing(sqlite3.connect(str(tmp / "app.db"))) as con:
+                status = con.execute("PRAGMA integrity_check").fetchone()[0]
+                tables = con.execute(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table'"
+                ).fetchone()[0]
+        except sqlite3.DatabaseError as exc:
+            raise BackupError(f"{remote_snap}/app.db is not a database: {exc}") from exc
+    if status != "ok" or tables == 0:
+        raise BackupError(f"{remote_snap}/app.db failed verification: {status}")
+    log.info("backup.verified", remote_path=remote_snap, tables=tables)
+    return remote_snap
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +305,12 @@ def _restore_if_empty_inner(
         log.info("restore.skipped", reason="backup_rclone_remote is empty")
         return False
 
-    dirs = client.list_dirs(remote)
+    dirs = client.list_snapshots(remote)
     if not dirs:
         log.info("restore.skipped", reason="no snapshots on remote")
         return False
 
-    latest = sorted(dirs)[-1]
+    latest = dirs[-1]
     remote_snap = f"{remote}/{latest}"
 
     # Restore app.db — pull the snapshot file then rename to the configured db name.
@@ -240,10 +327,13 @@ def _restore_if_empty_inner(
     if pulled_db != settings.db_path:
         pulled_db.rename(settings.db_path)
 
-    # Restore logs (non-fatal if missing on remote)
+    # Restore logs (non-fatal if missing on remote): the shared directory, plus
+    # the per-snapshot copy written by older versions of this module.
     try:
         settings.log_dir.mkdir(parents=True, exist_ok=True)
-        client.pull(f"{remote_snap}/logs", settings.log_dir)
+        client.pull(f"{remote}/{LOGS_DIRNAME}", settings.log_dir)
+        if LOGS_DIRNAME in client.list_dirs(remote_snap):
+            client.pull(f"{remote_snap}/{LOGS_DIRNAME}", settings.log_dir)
     except Exception as exc:
         log.warning("restore.logs_failed", error=str(exc))
 
@@ -261,17 +351,42 @@ def _restore_if_empty_inner(
 # ---------------------------------------------------------------------------
 
 
-def _cli() -> None:
+def _cli(argv: list[str] | None = None) -> None:
     import datetime
 
-    settings_mod = __import__("app.config", fromlist=["get_settings"])
-    settings = settings_mod.get_settings()
-    ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
-    result = run_backup(settings, ts)
-    if result:
-        print(f"Backup complete: {result}")
-    else:
-        print("Backup disabled or failed — check logs.")
+    from app.config import get_settings
+
+    args = sys.argv[1:] if argv is None else argv
+    settings = get_settings()
+    try:
+        if "--verify" in args:
+            print(f"Snapshot verified: {verify_latest_snapshot(settings)}")
+            return
+        ts = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
+        result = run_backup(settings, ts)
+    except BackupError as exc:
+        log.error("backup.failed", error=str(exc))
+        _alert(settings, f"NV Battle Reports backup FAILED: {exc}")
+        print(f"Backup FAILED: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"Backup complete: {result}" if result else "Backups disabled (no remote set).")
+
+
+def _alert(settings: Settings, text: str) -> None:
+    """Best-effort Discord alert (needs DISCORD_BOT_TOKEN + DISCORD_ALERT_CHANNEL_ID)."""
+    if not (settings.discord_bot_token and settings.discord_alert_channel_id):
+        return
+    try:
+        import httpx
+
+        httpx.post(
+            f"https://discord.com/api/v10/channels/{settings.discord_alert_channel_id}/messages",
+            headers={"Authorization": f"Bot {settings.discord_bot_token}"},
+            json={"content": text[:1900]},
+            timeout=15.0,
+        )
+    except Exception as exc:  # an alert must never mask the real failure
+        log.warning("backup.alert_failed", error=str(exc))
 
 
 if __name__ == "__main__":

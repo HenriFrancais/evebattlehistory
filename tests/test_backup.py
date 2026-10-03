@@ -79,23 +79,6 @@ def test_make_snapshot_copies_db(tmp_path: Path) -> None:
     assert result == staging
 
 
-def test_make_snapshot_copies_logs(tmp_path: Path) -> None:
-    """make_snapshot copies log_dir contents into staging_dir/logs/."""
-    from app.backup import make_snapshot
-
-    settings = _make_settings(tmp_path)
-    _seed_db(settings.db_path)
-    (settings.log_dir / "app.log").write_text("line one")
-    (settings.log_dir / "app.log.1").write_text("line two")
-
-    staging = tmp_path / "stage"
-    staging.mkdir()
-    make_snapshot(settings, staging)
-
-    assert (staging / "logs" / "app.log").read_text() == "line one"
-    assert (staging / "logs" / "app.log.1").read_text() == "line two"
-
-
 def test_make_snapshot_tolerates_missing_log_dir(tmp_path: Path) -> None:
     """make_snapshot does not raise when log_dir doesn't exist."""
     from app.backup import make_snapshot
@@ -441,3 +424,119 @@ def test_rclone_client_prune_noop_when_under_keep(tmp_path: Path) -> None:
     client = RcloneClient(runner=fake_runner)
     client.prune("myremote:bucket", keep=5)
     assert purged == []
+
+
+# ---------------------------------------------------------------------------
+# Failure handling: a failed push must be loud and must not rotate good snapshots
+# ---------------------------------------------------------------------------
+
+
+class _Result:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _failing_push_runner(calls: list[list[str]]):  # type: ignore[no-untyped-def]
+    """rclone stand-in: every `copy` fails; `lsf` lists two older good snapshots."""
+
+    def run(cmd: list[str], **_kw: object) -> _Result:
+        calls.append(cmd)
+        if cmd[1] == "copy":
+            return _Result(1, stderr="quota exceeded")
+        if cmd[1] == "lsf":
+            return _Result(0, stdout="20240101-120000/\n20240102-120000/\n20240103-120000/\n")
+        return _Result(0)
+
+    return run
+
+
+def test_run_backup_raises_when_push_fails(tmp_path: Path) -> None:
+    from app.backup import BackupError, RcloneClient, run_backup
+
+    settings = _make_settings(tmp_path, backup_rclone_remote="remote:nvbr", backup_keep=1)
+    _seed_db(settings.db_path)
+    calls: list[list[str]] = []
+    with pytest.raises(BackupError):
+        run_backup(settings, "20240103-120000", client=RcloneClient(_failing_push_runner(calls)))
+
+
+def test_failed_push_never_prunes_older_snapshots(tmp_path: Path) -> None:
+    from app.backup import BackupError, RcloneClient, run_backup
+
+    settings = _make_settings(tmp_path, backup_rclone_remote="remote:nvbr", backup_keep=1)
+    _seed_db(settings.db_path)
+    calls: list[list[str]] = []
+    with pytest.raises(BackupError):
+        run_backup(settings, "20240103-120000", client=RcloneClient(_failing_push_runner(calls)))
+    purged = [c[2] for c in calls if c[1] == "purge"]
+    # Only the partial directory of the failed run may be removed.
+    assert purged == ["remote:nvbr/20240103-120000"]
+
+
+def test_cli_exits_nonzero_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.backup as backup
+
+    def boom(*_a: object, **_k: object) -> str:
+        raise backup.BackupError("push failed")
+
+    monkeypatch.setattr(backup, "run_backup", boom)
+    with pytest.raises(SystemExit) as exc:
+        backup._cli([])
+    assert exc.value.code == 1
+
+
+@requires_rclone
+def test_logs_are_stored_once_not_per_snapshot(tmp_path: Path) -> None:
+    from app.backup import run_backup
+
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    settings = _make_settings(tmp_path, backup_rclone_remote=str(remote_dir), backup_keep=1)
+    _seed_db(settings.db_path)
+    (settings.log_dir / "aaa.txt").write_text("log a")
+
+    run_backup(settings, "20240101-120000")
+    (settings.log_dir / "bbb.txt").write_text("log b")
+    run_backup(settings, "20240102-120000")
+
+    assert not (remote_dir / "20240102-120000" / "logs").exists()
+    assert sorted(p.name for p in (remote_dir / "logs").iterdir()) == ["aaa.txt", "bbb.txt"]
+    # Pruning snapshots must never touch the shared logs directory.
+    assert sorted(d.name for d in remote_dir.iterdir()) == ["20240102-120000", "logs"]
+
+
+@requires_rclone
+def test_restore_pulls_shared_logs(tmp_path: Path) -> None:
+    from app.backup import restore_if_empty, run_backup
+
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    src = _make_settings(tmp_path / "src", backup_rclone_remote=str(remote_dir))
+    _seed_db(src.db_path)
+    (src.log_dir / "aaa.txt").write_text("log a")
+    run_backup(src, "20240101-120000")
+
+    dst = _make_settings(tmp_path / "dst", backup_rclone_remote=str(remote_dir),
+                         restore_on_start=True)
+    dst.db_path.unlink(missing_ok=True)
+    assert restore_if_empty(dst) is True
+    assert _rows(dst.db_path) == [(1, "hello")]
+    assert (dst.log_dir / "aaa.txt").read_text() == "log a"
+
+
+@requires_rclone
+def test_verify_latest_snapshot_checks_integrity(tmp_path: Path) -> None:
+    from app.backup import BackupError, run_backup, verify_latest_snapshot
+
+    remote_dir = tmp_path / "remote"
+    remote_dir.mkdir()
+    settings = _make_settings(tmp_path, backup_rclone_remote=str(remote_dir))
+    _seed_db(settings.db_path)
+    run_backup(settings, "20240101-120000")
+    assert verify_latest_snapshot(settings) == f"{remote_dir}/20240101-120000"
+
+    (remote_dir / "20240101-120000" / "app.db").write_bytes(b"not a database at all" * 100)
+    with pytest.raises(BackupError):
+        verify_latest_snapshot(settings)
