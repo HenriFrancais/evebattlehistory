@@ -311,10 +311,10 @@ outside any fight window.
 
 ## Low
 
-- [ ] The kill tooltip builds `innerHTML` from unescaped pilot and ship names
+- [x] The kill tooltip builds `innerHTML` from unescaped pilot and ship names
       (`frontend/src/components/FleetGraph.tsx:119-131`); the hover summary
       already has an `esc()` helper. Names come from ESI/SDE, so risk is small.
-- [ ] `source_url` is rendered as an `href` with no scheme check
+- [x] `source_url` is rendered as an `href` with no scheme check
       (`frontend/src/views/BrDetailPage.tsx:652`) and link sources accept any
       URL (`app/api/brs.py:70-78`). Host matching is a substring test
       (`app/ingest/sources/factory.py:82-85`).

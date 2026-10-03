@@ -659,7 +659,8 @@ export function BrDetailPage() {
             <div className="stat-label">Source</div>
             <div>
               <span className="badge badge-source">{br.source}</span>
-              {br.source_url && (
+              {/* Only real web links become an href (never javascript:/data:). */}
+              {br.source_url && /^https?:\/\//i.test(br.source_url) && (
                 <a href={br.source_url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: '0.5rem' }}>View source ↗</a>
               )}
             </div>

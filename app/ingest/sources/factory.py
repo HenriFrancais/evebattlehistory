@@ -78,10 +78,11 @@ class DemoWindowSource:
 def get_source(url: str, settings: Settings) -> BrSource:
     if settings.data_source == "demo":
         return DemoSource(settings.demo_data_dir)
-    host = urlparse(url).netloc
-    if "zkillboard.com" in host:
+    # Exact host match (substring matching accepted e.g. "zkillboard.com.evil.example").
+    host = urlparse(url).netloc.lower().removeprefix("www.")
+    if host == "zkillboard.com":
         return ZkbSource(user_agent=settings.esi_user_agent)
-    if "evetools.org" in host:
+    if host == "br.evetools.org":
         return AuroraSource()
     raise ValueError(f"Unknown BR source URL: {url}")
 

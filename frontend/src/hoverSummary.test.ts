@@ -79,3 +79,33 @@ describe('renderHoverSummary — empty cases', () => {
     expect(renderHoverSummary('damage', leaders, 99)).toContain('no log data')
   })
 })
+
+describe('renderKillTip', () => {
+  const kill = {
+    ts: 1_750_000_000,
+    killmail_id: 1,
+    victim_character_id: 5,
+    victim_character_name: '<img src=x onerror=alert(1)>',
+    victim_ship_name: 'Loki <b>bold</b>',
+    victim_ship_type_id: 29990,
+    side_kind: 'hostile',
+    isk: 1_000_000,
+  }
+
+  it('escapes pilot and ship names', async () => {
+    const { renderKillTip } = await import('./hoverSummary')
+    const html = renderKillTip(kill, null)
+    expect(html).not.toContain('<img src=x')
+    expect(html).not.toContain('<b>bold</b>')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(html).toContain('Loki &lt;b&gt;bold&lt;/b&gt;')
+    // The only <img> is the ship icon built from the numeric type id.
+    expect(html.match(/<img /g)).toHaveLength(1)
+  })
+
+  it('renders the flagged-death line when given', async () => {
+    const { renderKillTip } = await import('./hoverSummary')
+    expect(renderKillTip(kill, 'No rep broadcast')).toContain('⚠ No rep broadcast')
+    expect(renderKillTip(kill, null)).not.toContain('⚠')
+  })
+})

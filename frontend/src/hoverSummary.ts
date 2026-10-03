@@ -7,9 +7,9 @@
 //   ewar panel   → hostile most tackled, friendly most tackled
 // Each is the top character for that metric in the hovered time bucket.
 
-import type { LeaderEntry, Leaders } from './api'
+import type { KillEvent, LeaderEntry, Leaders } from './api'
 import type { PanelId } from './fleet'
-import { fmtCompact } from './format'
+import { fmtCompact, fmtIsk } from './format'
 
 function esc(s: string): string {
   return s
@@ -74,4 +74,33 @@ export function renderHoverSummary(panelId: PanelId, leaders: Leaders[], idx: nu
     return '<span class="hover-tip-no-data">no log data</span>'
   }
   return html
+}
+
+
+/**
+ * HTML for the kill-marker tooltip. Pilot and ship names are escaped: they come
+ * from ESI / the SDE today, but this string is assigned to innerHTML, so nothing
+ * interpolated here may ever be trusted as markup. `flagReason` is the optional
+ * "flagged death" explanation (already a fixed, app-defined label).
+ */
+export function renderKillTip(k: KillEvent, flagReason: string | null, flagColor = ''): string {
+  const icon =
+    k.victim_ship_type_id != null
+      ? `<img src="https://images.evetech.net/types/${Number(k.victim_ship_type_id)}/icon?size=32" width="32" height="32" alt="" />`
+      : ''
+  const t = new Date(k.ts * 1000).toISOString().slice(11, 19)
+  const isk = k.isk != null ? ` · ${fmtIsk(k.isk)}` : ''
+  const pilot = k.victim_character_name
+    ? `<div class="kill-tip-pilot">${esc(k.victim_character_name)}</div>`
+    : ''
+  const flagLine = flagReason
+    ? `<div class="kill-tip-meta" style="color:${esc(flagColor)}">⚠ ${esc(flagReason)}</div>`
+    : ''
+  return (
+    `${icon}<div class="kill-tip-text"><div class="kill-tip-ship">${esc(k.victim_ship_name)}</div>` +
+    pilot +
+    `<div class="kill-tip-meta">${t} UTC${isk}</div>` +
+    flagLine +
+    `<div class="kill-tip-meta">⌃-click → zKill</div></div>`
+  )
 }

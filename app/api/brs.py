@@ -81,6 +81,13 @@ def _validate_sources(sources: list[BrSourceIn]) -> None:
         if src.kind == "link":
             if not src.url:
                 raise HTTPException(status_code=400, detail="link source requires url")
+            # The URL is shown to users as a link, so it must be a real web URL —
+            # never javascript:, data: or a scheme-less string.
+            parsed = urlparse(src.url.strip())
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise HTTPException(
+                    status_code=400, detail="link source url must start with http:// or https://"
+                )
         elif src.kind == "window":
             if src.system_id is None and not (src.system_name and src.system_name.strip()):
                 raise HTTPException(
@@ -260,10 +267,11 @@ async def create_br(
         await _resolve_window_system_names(session, sources)
     elif body.url is not None:
         # Back-compat single-URL path: still validate the host eagerly
-        host = urlparse(body.url).netloc.removeprefix("www.")
+        host = urlparse(body.url).netloc.lower().removeprefix("www.")
         if host not in SUPPORTED_HOSTS:
             raise HTTPException(status_code=400, detail=f"Unsupported URL host: {host}")
         sources = [BrSourceIn(kind="link", url=body.url)]
+        _validate_sources(sources)
     else:
         raise HTTPException(status_code=400, detail="Provide either 'url' or 'sources'")
 

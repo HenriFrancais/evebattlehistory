@@ -15,10 +15,10 @@ import type { BroadcastRawItem, FleetTimeline, KillEvent, Leaders, TimelineFight
 import type { BroadcastMarker } from '../broadcasts'
 import { toBroadcastMarkers } from '../broadcasts'
 import { loadFleetTimeline } from '../cache'
-import { fmtCompact, fmtIsk, isoToEpoch } from '../format'
+import { fmtCompact, isoToEpoch } from '../format'
 import type { FleetPanel, FleetView, PanelId, PanelSeries } from '../fleet'
 import { toFleetView } from '../fleet'
-import { renderHoverSummary } from '../hoverSummary'
+import { renderHoverSummary, renderKillTip } from '../hoverSummary'
 
 const AXIS = '#8893a7'
 const GRID = 'rgba(138,147,167,0.15)'
@@ -111,25 +111,10 @@ function killMarkersPlugin(
   // damage hover-tip (.hover-tip), which would otherwise render on top of it.
   const showTip = (k: KillEvent, el: HTMLElement) => {
     if (!tip) return
-    const icon =
-      k.victim_ship_type_id != null
-        ? `<img src="https://images.evetech.net/types/${k.victim_ship_type_id}/icon?size=32" width="32" height="32" alt="" />`
-        : ''
-    const t = new Date(k.ts * 1000).toISOString().slice(11, 19)
-    const isk = k.isk != null ? ` · ${fmtIsk(k.isk)}` : ''
-    const pilot = k.victim_character_name
-      ? `<div class="kill-tip-pilot">${k.victim_character_name}</div>`
-      : ''
     const flag = flagOf(k)
-    const flagLine = flag
-      ? `<div class="kill-tip-meta" style="color:${DEATH_FLAG_COLOR}">⚠ ${DEATH_FLAG_REASON[flag] ?? flag}</div>`
-      : ''
-    tip.innerHTML =
-      `${icon}<div class="kill-tip-text"><div class="kill-tip-ship">${k.victim_ship_name}</div>` +
-      pilot +
-      `<div class="kill-tip-meta">${t} UTC${isk}</div>` +
-      flagLine +
-      `<div class="kill-tip-meta">⌃-click → zKill</div></div>`
+    tip.innerHTML = renderKillTip(
+      k, flag ? (DEATH_FLAG_REASON[flag] ?? flag) : null, DEATH_FLAG_COLOR,
+    )
     tip.style.display = 'flex'
     // The marker spans the full plot height (top:0, height:100%), so its rect's
     // top edge is the chart top and its mid-x is the triangle's position.
