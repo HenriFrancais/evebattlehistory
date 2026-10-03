@@ -29,15 +29,9 @@ class StoreResult(NamedTuple):
     mime: str
 
 
-def validate_and_store(
-    raw_bytes: bytes, settings: Settings, sha256: str | None = None
-) -> StoreResult:
-    """Validate *raw_bytes* as a Gamelog upload and persist to content-addressed storage.
-
-    Raises ``ValueError`` with a human-readable message on:
-    - oversize (> ``max_log_mb`` MB)
-    - content that does not look like an EVE gamelog (no ``Gamelog`` header block)
-    """
+def validate_gamelog(raw_bytes: bytes, settings: Settings) -> None:
+    """Raise ``ValueError`` (human-readable) unless *raw_bytes* is an acceptable
+    gamelog upload: within ``max_log_mb`` and starting with a ``Gamelog`` header."""
     max_bytes = settings.max_log_mb * 1024 * 1024
     if len(raw_bytes) > max_bytes:
         raise ValueError(
@@ -49,6 +43,9 @@ def validate_and_store(
     if _GAMELOG_DIVIDER not in first_512 or _GAMELOG_HEADER_MARKER not in first_512:
         raise ValueError("not a valid gamelog: missing Gamelog header block")
 
+
+def store_gamelog(raw_bytes: bytes, settings: Settings, sha256: str | None = None) -> StoreResult:
+    """Persist *raw_bytes* to content-addressed storage (no-op if already there)."""
     sha = sha256 if sha256 is not None else hashlib.sha256(raw_bytes).hexdigest()
     settings.log_dir.mkdir(parents=True, exist_ok=True)
     dest = settings.log_dir / f"{sha}.txt"
@@ -60,6 +57,19 @@ def validate_and_store(
         log.debug("logs.store.already_exists", sha256=sha)
 
     return StoreResult(sha256=sha, stored_path=dest, size=len(raw_bytes), mime="text/plain")
+
+
+def validate_and_store(
+    raw_bytes: bytes, settings: Settings, sha256: str | None = None
+) -> StoreResult:
+    """Validate *raw_bytes* as a Gamelog upload and persist to content-addressed storage.
+
+    Raises ``ValueError`` with a human-readable message on:
+    - oversize (> ``max_log_mb`` MB)
+    - content that does not look like an EVE gamelog (no ``Gamelog`` header block)
+    """
+    validate_gamelog(raw_bytes, settings)
+    return store_gamelog(raw_bytes, settings, sha256)
 
 
 def validate_and_store_broadcast(

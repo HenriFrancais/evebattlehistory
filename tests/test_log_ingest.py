@@ -222,12 +222,17 @@ async def test_ingest_log_dedupe(  # type: ignore[no-untyped-def]
 async def test_ingest_log_unresolved(  # type: ignore[no-untyped-def]
     tmp_path: Path, db_session_maker
 ) -> None:
-    """A log with no charId and unknown listener name: stored, unresolved, events persisted."""
+    """A log with combat but no charId and no known listener: stored, unresolved,
+    events persisted. (With no combat at all it is "empty" and not stored — see
+    tests/test_upload_management.py.)"""
     from app.db.models import GamelogFile, LogEvent
     from app.logs.ingest import ingest_log
 
     settings = _settings_with_tmp(tmp_path)
-    raw = (FIXTURES / "no_char_id.txt").read_bytes()
+    raw = (FIXTURES / "no_char_id.txt").read_bytes() + (
+        b"[ 2023.10.06 20:46:00 ] (combat) 432 from Enemy Pilot[TST](Brutix)"
+        b" - 250mm Railgun II - Hits\n"
+    )
     filename = "20231006_204512.txt"  # no char_id in filename
 
     async with db_session_maker() as session:

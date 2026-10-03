@@ -6,13 +6,14 @@ GET  /api/logs/mine — the caller's uploaded logs, newest first.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.access import acting_user, can_view_character
+from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import current_user
 from app.api.deps import SessionDep, SessionMakerDep
 from app.api.derived_cache import bump_derived
@@ -20,9 +21,9 @@ from app.config import get_settings
 from app.db.models import GamelogFile, LogEvent
 from app.fights.offbr_cache import get_offbr_cache
 from app.fights.offbr_resolve import resolve_log_characters
-from app.logs.associate import associate_file_to_all
+from app.logs.associate import associate_file_to_all, delete_gamelog_file
 from app.logs.extract import build_battle_log
-from app.logs.ingest import GamelogFileResult, ingest_log
+from app.logs.ingest import EMPTY, GamelogFileResult, ingest_log
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
@@ -121,11 +122,15 @@ async def upload_logs(
                 )
                 # Wire-in: associate a resolved upload against all existing fights.
                 # associate_file_to_all is guarded; failure is logged, not raised.
-                fresh = not result.duplicate and result.parse_status == "parsed"
-                if fresh:
+                fresh = (
+                    not result.duplicate
+                    and result.parse_status == "parsed"
+                    and result.file_id is not None
+                )
+                if fresh and result.file_id is not None:
                     await associate_file_to_all(session, result.file_id)
                 await session.commit()
-            if fresh:
+            if fresh and result.file_id is not None:
                 new_file_ids.append(result.file_id)
                 # New events can add off-BR participants to any BR they overlap.
                 get_offbr_cache().clear()
@@ -139,7 +144,11 @@ async def upload_logs(
                     "status": status,
                     "event_count": result.event_count,
                     "character_name": result.character_name,
-                    "message": None,
+                    "message": (
+                        "No combat events in this file — nothing to store."
+                        if result.parse_status == EMPTY
+                        else None
+                    ),
                 }
             )
         except Exception as exc:
@@ -189,6 +198,32 @@ async def get_my_logs(request: Request, session: SessionDep) -> list[dict[str, A
         }
         for f in files
     ]
+
+
+@router.delete("/api/logs/{file_id}")
+async def delete_log(file_id: int, request: Request, session: SessionDep) -> dict[str, bool]:
+    """Delete an uploaded gamelog and its derived data. The uploader may delete
+    their own files; FC / High Command may delete any."""
+    viewer = await viewer_scope(request)
+    gf = (
+        await session.execute(select(GamelogFile).where(GamelogFile.file_id == file_id))
+    ).scalar_one_or_none()
+    if gf is None:
+        raise HTTPException(status_code=404, detail="Log not found")
+    if gf.uploaded_by_user != viewer.user.user_name and not viewer.elevated:
+        raise HTTPException(status_code=403, detail="Not your upload")
+
+    stored_path = await delete_gamelog_file(session, file_id)
+    await session.commit()
+    get_offbr_cache().clear()
+    bump_derived()
+    if stored_path:
+        try:  # content-addressed and now unreferenced (sha256 is unique per file row)
+            Path(stored_path).unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("logs.delete.unlink_failed", file_id=file_id, error=str(exc))
+    log.info("logs.deleted", file_id=file_id, user=viewer.user.user_name)
+    return {"ok": True}
 
 
 @router.get("/api/brs/{br_id}/logs/{character_id}/download")

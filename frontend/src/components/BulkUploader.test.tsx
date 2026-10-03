@@ -164,4 +164,21 @@ describe('BulkUploader', () => {
       expect(screen.getByText(/1 duplicate/i)).toBeInTheDocument()
     })
   })
+
+  it('labels a log with no combat as empty, not as a failure', async () => {
+    mockUploads([
+      makeResult({ filename: 'idle.txt', status: 'empty', file_id: null, character_name: null,
+                   message: 'No combat events in this file — nothing to store.' }),
+    ])
+    render(<BulkUploader onUploaded={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Select log files'), {
+      target: { files: [makeFile('idle.txt')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /upload/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/idle\.txt: no combat in this file/i)).toHaveClass('chip-empty')
+      expect(screen.getByText(/1 with no combat/i)).toBeInTheDocument()
+    })
+  })
 })

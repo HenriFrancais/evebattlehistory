@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MyLogFile } from '../api'
@@ -12,6 +12,7 @@ vi.mock('../api', async (importOriginal) => {
       ...actual.api,
       myLogs: vi.fn(),
       uploadLogs: vi.fn(),
+      deleteLog: vi.fn(),
     },
   }
 })
@@ -57,9 +58,18 @@ const mockLogs: MyLogFile[] = [
   },
 ]
 
+function renderPage() {
+  return render(
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <LogsPage />
+    </MemoryRouter>,
+  )
+}
+
 describe('LogsPage', () => {
   beforeEach(() => {
     vi.mocked(api.myLogs).mockReset()
+    vi.mocked(api.deleteLog).mockReset()
     vi.mocked(api.uploadLogs).mockReset()
   })
 
@@ -108,5 +118,31 @@ describe('LogsPage', () => {
 
     await waitFor(() => expect(screen.getByText('No logs uploaded yet.')).toBeInTheDocument())
     expect(screen.queryByTestId('logs-table')).not.toBeInTheDocument()
+  })
+
+  it('deletes an upload after confirmation and reloads the list', async () => {
+    vi.mocked(api.myLogs).mockResolvedValueOnce(mockLogs).mockResolvedValueOnce(mockLogs.slice(1))
+    vi.mocked(api.deleteLog).mockResolvedValue({ ok: true })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('logs-table')).toBeInTheDocument())
+    fireEvent.click(screen.getAllByRole('button', { name: /delete/i })[0])
+
+    await waitFor(() => expect(api.deleteLog).toHaveBeenCalledWith('f1'))
+    await waitFor(() => expect(api.myLogs).toHaveBeenCalledTimes(2))
+    confirm.mockRestore()
+  })
+
+  it('does not delete when the confirmation is declined', async () => {
+    vi.mocked(api.myLogs).mockResolvedValue(mockLogs)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('logs-table')).toBeInTheDocument())
+    fireEvent.click(screen.getAllByRole('button', { name: /delete/i })[0])
+
+    expect(api.deleteLog).not.toHaveBeenCalled()
+    confirm.mockRestore()
   })
 })

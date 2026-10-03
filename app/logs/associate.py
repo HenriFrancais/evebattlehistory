@@ -485,6 +485,57 @@ async def associate_file(
     return stamped_total
 
 
+async def delete_gamelog_file(session: AsyncSession, file_id: int) -> str | None:
+    """Delete an uploaded gamelog and everything derived from it.
+
+    Removes the file's events, rebuilds the buckets and tackle dedupe of every
+    fight it contributed to, and re-associates the remaining files of the same
+    logical session (a previously superseded sibling may now be the canonical
+    one). Returns the stored path to unlink after commit, or None if not found.
+    """
+    gf = (
+        await session.execute(select(GamelogFile).where(GamelogFile.file_id == file_id))
+    ).scalar_one_or_none()
+    if gf is None:
+        return None
+    character_id = gf.claimed_character_id
+    session_started_at = gf.session_started_at
+    stored_path = gf.stored_path
+
+    fight_ids = {
+        fid
+        for fid in (
+            await session.execute(
+                select(LogEvent.fight_id)
+                .where(LogEvent.file_id == file_id, LogEvent.fight_id.is_not(None))
+                .distinct()
+            )
+        ).scalars()
+        if fid is not None
+    }
+    await session.execute(delete(LogEvent).where(LogEvent.file_id == file_id))
+    await session.execute(delete(GamelogFile).where(GamelogFile.file_id == file_id))
+    await session.flush()
+
+    if character_id is not None:
+        await _rebuild_buckets_for_pairs(session, {(fid, character_id) for fid in fight_ids})
+        if session_started_at is not None:
+            siblings = (
+                await session.execute(
+                    select(GamelogFile.file_id).where(
+                        GamelogFile.claimed_character_id == character_id,
+                        GamelogFile.session_started_at == session_started_at,
+                        GamelogFile.parse_status == "parsed",
+                    )
+                )
+            ).scalars()
+            for sibling_id in list(siblings):
+                await associate_file(session, sibling_id, dedupe_tackle=False)
+    await _dedupe_ewar_relationships(session, fight_ids)
+    log.info("gamelog.deleted", file_id=file_id, fights=len(fight_ids))
+    return stored_path
+
+
 async def associate_logs_for_br(session: AsyncSession, br_id: str) -> None:
     """Associate all uploaded files whose time range overlaps any of *br_id*'s fights.
 

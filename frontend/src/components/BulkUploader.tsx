@@ -22,6 +22,9 @@ function StatusChip({ result }: { result: LogUploadResult }) {
   if (result.status === 'unresolved') {
     return <span className="chip chip-unresolved">{result.filename}: character not matched</span>
   }
+  if (result.status === 'empty') {
+    return <span className="chip chip-empty">{result.filename}: no combat in this file</span>
+  }
   // error
   return <span className="chip chip-error">{result.filename}: {result.message ?? 'error'}</span>
 }
@@ -86,12 +89,14 @@ export function BulkUploader({ onUploaded }: Props) {
   const parsedCount = results?.filter((r) => r.status === 'parsed').length ?? 0
   const duplicateCount = results?.filter((r) => r.status === 'duplicate').length ?? 0
   const unresolvedCount = results?.filter((r) => r.status === 'unresolved').length ?? 0
+  const emptyCount = results?.filter((r) => r.status === 'empty').length ?? 0
   const errorCount = results?.filter((r) => r.status === 'error').length ?? 0
 
   const summaryParts: string[] = []
   if (parsedCount > 0) summaryParts.push(`${parsedCount} parsed`)
   if (duplicateCount > 0) summaryParts.push(`${duplicateCount} duplicate${duplicateCount !== 1 ? 's' : ''}`)
   if (unresolvedCount > 0) summaryParts.push(`${unresolvedCount} unresolved`)
+  if (emptyCount > 0) summaryParts.push(`${emptyCount} with no combat`)
   if (errorCount > 0) summaryParts.push(`${errorCount} error${errorCount !== 1 ? 's' : ''}`)
 
   return (

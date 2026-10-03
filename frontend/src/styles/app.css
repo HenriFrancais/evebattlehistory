@@ -316,6 +316,7 @@ a:hover { color: var(--link-hover); }
 .chip-parsed { background: rgba(76,175,80,0.2); color: var(--ok); border: 1px solid var(--ok); }
 .chip-unresolved { background: rgba(255,183,77,0.2); color: var(--warn); border: 1px solid var(--warn); }
 .chip-duplicate { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); }
+.chip-empty { background: transparent; color: var(--text-dim); border: 1px dashed var(--text-dim); }
 .chip-error { background: rgba(239,83,80,0.2); color: var(--bad); border: 1px solid var(--bad); }
 
 /* Drop zone */

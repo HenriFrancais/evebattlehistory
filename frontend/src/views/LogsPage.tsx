@@ -25,6 +25,7 @@ function fmtDate(s: string | null): string {
 export function LogsPage() {
   const [logs, setLogs] = useState<MyLogFile[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   const loadLogs = useCallback(() => {
     let cancelled = false
@@ -36,6 +37,23 @@ export function LogsPage() {
   }, [])
 
   useEffect(() => { return loadLogs() }, [loadLogs])
+
+  async function handleDelete(log: MyLogFile) {
+    const ok = window.confirm(
+      `Delete ${log.filename ?? 'this log'}? Its events are removed from every battle report.`,
+    )
+    if (!ok) return
+    setDeleting(log.file_id)
+    setError(null)
+    try {
+      await api.deleteLog(log.file_id)
+      loadLogs()
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message ?? e))
+    } finally {
+      setDeleting(null)
+    }
+  }
 
   return (
     <div className="page">
@@ -76,6 +94,7 @@ export function LogsPage() {
                 <th>Status</th>
                 <th>Events</th>
                 <th>Uploaded</th>
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -87,6 +106,17 @@ export function LogsPage() {
                   <td><StatusChip status={log.parse_status} /></td>
                   <td>{log.event_count}</td>
                   <td>{fmtDate(log.uploaded_at)}</td>
+                  <td>
+                    <button
+                      className="btn"
+                      style={{ fontSize: '0.8rem', padding: '0.1rem 0.45rem' }}
+                      disabled={deleting === log.file_id}
+                      onClick={() => { void handleDelete(log) }}
+                      aria-label={`Delete ${log.filename ?? 'log'}`}
+                    >
+                      {deleting === log.file_id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

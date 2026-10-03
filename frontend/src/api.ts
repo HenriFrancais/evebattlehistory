@@ -139,7 +139,8 @@ export interface CreateBrPayload {
 export interface LogUploadResult {
   filename: string
   file_id: string | null
-  status: 'parsed' | 'unresolved' | 'duplicate' | 'error'
+  // 'empty' = the log has no combat events; nothing was stored.
+  status: 'parsed' | 'unresolved' | 'duplicate' | 'error' | 'empty'
   event_count: number
   character_name: string | null
   message: string | null
@@ -879,6 +880,9 @@ export const api = {
     return res.json() as Promise<LogUploadResult[]>
   },
   myLogs: () => jsonFetch<MyLogFile[]>(`${API}/logs/mine`),
+  /** Delete one of your uploaded logs (FC/HC may delete any). */
+  deleteLog: (fileId: string | number) =>
+    jsonFetch<{ ok: boolean }>(`${API}/logs/${fileId}`, { method: 'DELETE' }),
   /** Download a character's gamelog for a battle (sliced to the battle window,
    * markup stripped). Returns the file blob + server-supplied filename. */
   downloadCharacterLog: async (

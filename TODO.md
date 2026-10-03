@@ -230,12 +230,12 @@ outside any fight window.
 
 ### 12. Members cannot manage their uploads, and empty logs look like failures
 
-- [ ] There is no delete or replace for an uploaded log (`app/api/logs.py`).
-- [ ] 1,406 of 2,722 files in the dev DB are "unresolved": sessions with no
+- [x] There is no delete or replace for an uploaded log (`app/api/logs.py`).
+- [x] 1,406 of 2,722 files in the dev DB are "unresolved": sessions with no
       `Listener` header and 49 events between them. They are stored and listed
       as "character not matched", which reads as an error. Reject or label
       them "no combat in this file" and keep them out of "My logs".
-- [ ] Character identity comes from the filename's character id with no check
+- [x] Character identity comes from the filename's character id with no check
       that the uploader owns it (`app/logs/filename.py:87-94`). Acceptable
       under the honest threat model; revisit if that changes.
 

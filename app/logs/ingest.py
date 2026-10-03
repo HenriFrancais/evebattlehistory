@@ -27,13 +27,18 @@ from app.db.models import GamelogFile, LogEvent
 from app.logs.entity import correct_ship_pilot_swap, split_entity
 from app.logs.filename import parse_filename, resolve_character
 from app.logs.parse import ParsedLogEvent, parse_log
-from app.logs.store import validate_and_store
+from app.logs.store import store_gamelog, validate_gamelog
 from app.observability.logging import log
 from app.sde.load import entity_name_set
 
+#: parse_status of a log that contains no combat effects at all (a login-screen
+#: session, a hauling trip). Nothing is stored for it — not on disk, not in the DB.
+EMPTY = "empty"
+
 
 class GamelogFileResult(NamedTuple):
-    file_id: int
+    #: None when nothing was stored (parse_status == EMPTY).
+    file_id: int | None
     duplicate: bool
     parse_status: str
     event_count: int
@@ -176,13 +181,30 @@ async def ingest_log(
             original_filename=existing.original_filename,
         )
 
-    # 2. Validate + store (raises ValueError on bad content or oversize)
-    store_result = validate_and_store(raw_bytes, settings, sha256=sha)
+    # 2. Validate (raises ValueError on bad content or oversize)
+    validate_gamelog(raw_bytes, settings)
 
     # 3. Parse — CPU-bound (regex over every line of a multi-MB file), so run it
     # in a worker thread instead of stalling every other request on the event loop.
     text = raw_bytes.decode("utf-8", errors="replace")
     parsed = await asyncio.to_thread(parse_log, text)
+
+    # A log with no combat effects has nothing to contribute: report it as such and
+    # store nothing, rather than keeping a row that reads as a failed upload.
+    if not any(e.effect_type is not None for e in parsed.events):
+        log.info("logs.ingest.empty", sha256=sha)
+        return GamelogFileResult(
+            file_id=None,
+            duplicate=False,
+            parse_status=EMPTY,
+            event_count=0,
+            character_id=None,
+            character_name=parsed.header.listener_name,
+            listener_name=parsed.header.listener_name,
+            original_filename=filename,
+        )
+
+    store_result = store_gamelog(raw_bytes, settings, sha256=sha)
 
     # 4. Resolve owning character
     filename_meta = parse_filename(filename)

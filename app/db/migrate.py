@@ -76,12 +76,19 @@ def _m003_effect_only_log_events(conn: Connection) -> None:
     )
 
 
+def _m004_drop_empty_gamelogs(conn: Connection) -> None:
+    """Remove stored logs with no combat events (login-screen sessions etc.). They
+    were listed to members as "unresolved" uploads; new ones are no longer stored."""
+    conn.exec_driver_sql("DELETE FROM gamelog_file WHERE event_count = 0")
+
+
 Migration = tuple[int, str, Callable[[Connection], None]]
 
 MIGRATIONS: list[Migration] = [
     (1, "legacy hand-altered columns", _m001_legacy_hand_altered_columns),
     (2, "battle_report ingest completeness", _m002_ingest_completeness),
     (3, "effect-only log events + parser stats", _m003_effect_only_log_events),
+    (4, "drop stored gamelogs with no combat events", _m004_drop_empty_gamelogs),
 ]
 
 LATEST_VERSION: int = MIGRATIONS[-1][0]
