@@ -137,8 +137,12 @@ class BrListSummary(BaseModel):
 
 
 class BrListResponse(BaseModel):
+    #: Aggregate over ALL battle reports (not just the returned page).
     summary: BrListSummary
+    #: One page of battle reports, newest battle first.
     brs: list[BrSummary]
+    #: Total number of battle reports, for paging.
+    total: int = 0
 
 
 # ---------------------------------------------------------------------------

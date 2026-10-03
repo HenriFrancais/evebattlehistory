@@ -137,4 +137,29 @@ describe('BrListPage', () => {
     expect(screen.queryByText('Filtered Battle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('filter-count')).not.toBeInTheDocument()
   })
+
+  it('pages the list: "Show older" fetches and appends the next page', async () => {
+    const older = { ...mockBr, br_id: 'older-1', title: 'Older Battle' }
+    vi.mocked(api.listBrs).mockImplementation(async (_limit?: number, offset = 0) =>
+      offset === 0
+        ? { ...mockList, total: 2 }
+        : { summary: mockList.summary, brs: [older], total: 2 },
+    )
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Test Battle')).toBeInTheDocument())
+    expect(screen.queryByText('Older Battle')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('show-older'))
+
+    await waitFor(() => expect(screen.getByText('Older Battle')).toBeInTheDocument())
+    expect(screen.getByText('Test Battle')).toBeInTheDocument()
+    expect(vi.mocked(api.listBrs).mock.calls.at(-1)?.[1]).toBe(1)
+    expect(screen.queryByTestId('show-older')).not.toBeInTheDocument()
+  })
+
+  it('shows no "Show older" button when everything fits on one page', async () => {
+    renderPage()
+    await waitFor(() => expect(screen.getByText('Test Battle')).toBeInTheDocument())
+    expect(screen.queryByTestId('show-older')).not.toBeInTheDocument()
+  })
 })

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.access import acting_user, can_view_character
 from app.api.auth import current_user
 from app.api.deps import SessionDep, SessionMakerDep
+from app.api.derived_cache import bump_derived
 from app.config import get_settings
 from app.db.models import GamelogFile, LogEvent
 from app.fights.offbr_cache import get_offbr_cache
@@ -68,6 +69,7 @@ async def _resolve_counterparties(
                 await session.commit()
                 # Newly known characters can surface as off-BR participants.
                 get_offbr_cache().clear()
+                bump_derived()
     except Exception as exc:
         log.warning("logs.upload.resolve_failed", error=str(exc))
 
@@ -127,6 +129,7 @@ async def upload_logs(
                 new_file_ids.append(result.file_id)
                 # New events can add off-BR participants to any BR they overlap.
                 get_offbr_cache().clear()
+                bump_derived()
 
             status = "duplicate" if result.duplicate else result.parse_status
             results.append(

@@ -6,7 +6,7 @@ import datetime as dt
 import uuid
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.analytics.sides_config import fight_side_losses, load_char_sides, load_
 from app.api.access import acting_user, require_elevated, viewer_scope
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
+from app.api.derived_cache import bump_derived, get_derived_cache
 from app.api.schemas import (
     AttackerDamageRowOut,
     BrCreate,
@@ -580,6 +581,7 @@ async def delete_br(
 
     await _delete_br_cascade(session, br_id)
     await session.commit()
+    bump_derived()
     log.info("brs.deleted", br_id=br_id, user=user.user_name)
 
 
@@ -630,13 +632,17 @@ async def enrich_summaries(
     user = await acting_user(request)
     cfg = get_app_config()
     settings = get_settings()
-    extras = await enrich_br_rows(
-        session,
-        settings,
-        [s.br_id for s in summaries],
-        user_name=user.user_name,
-        baseline_alliances=set(cfg.our_alliance_ids),
-        baseline_corps=set(cfg.our_corp_ids),
+    br_ids = [s.br_id for s in summaries]
+    extras = await get_derived_cache().get(
+        ("br-rows", user.user_name, tuple(br_ids)),
+        lambda: enrich_br_rows(
+            session,
+            settings,
+            br_ids,
+            user_name=user.user_name,
+            baseline_alliances=set(cfg.our_alliance_ids),
+            baseline_corps=set(cfg.our_corp_ids),
+        ),
     )
     out: list[BrSummary] = []
     for s in summaries:
@@ -649,8 +655,11 @@ async def enrich_summaries(
 async def list_brs(
     session: SessionDep,
     request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> BrListResponse:
-    """Return a list of all battle reports with aggregate summary."""
+    """Return one page of battle reports (newest battle first) plus the aggregate
+    summary over ALL of them. Only the returned page is enriched."""
     result = await session.execute(
         select(BattleReport).order_by(
             BattleReport.battle_at.desc().nulls_last(),
@@ -660,8 +669,9 @@ async def list_brs(
     brs = list(result.scalars())
 
     summary = compute_br_summary(brs)
-    br_list = await enrich_summaries(session, request, [_br_to_summary(b) for b in brs])
-    return BrListResponse(summary=summary, brs=br_list)
+    page = brs[offset : offset + limit]
+    br_list = await enrich_summaries(session, request, [_br_to_summary(b) for b in page])
+    return BrListResponse(summary=summary, brs=br_list, total=len(brs))
 
 
 @router.get("/api/brs/{br_id}")

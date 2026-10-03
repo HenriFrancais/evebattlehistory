@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -114,6 +115,8 @@ def create_app() -> FastAPI:
     prefix = settings.url_prefix
     app = FastAPI(title="NV Battle Reports", lifespan=lifespan)
     app.add_middleware(NVToolsAuthMiddleware)
+    # Timeline / snapshot payloads are hundreds of KB of repetitive JSON.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.include_router(health_router, prefix=prefix)
     app.include_router(meta_router, prefix=prefix)
     app.include_router(roster_router, prefix=prefix)

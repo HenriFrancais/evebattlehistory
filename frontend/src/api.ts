@@ -60,8 +60,11 @@ export interface BrSummary {
 }
 
 export interface BrListResponse {
+  /** Aggregate over ALL battle reports, not just this page. */
   summary: BrListSummary
   brs: BrSummary[]
+  /** Total number of battle reports (for paging). */
+  total?: number
 }
 
 export interface FightSideOut {
@@ -811,7 +814,9 @@ const API = `${import.meta.env.BASE_URL}api`
 export const api = {
   me: () => jsonFetch<MeResponse>(`${API}/me`),
   rosterUsers: () => jsonFetch<RosterUserOut[]>(`${API}/roster/users`),
-  listBrs: () => jsonFetch<BrListResponse>(`${API}/brs`),
+  /** One page of battle reports, newest battle first. */
+  listBrs: (limit = 50, offset = 0) =>
+    jsonFetch<BrListResponse>(`${API}/brs?limit=${limit}&offset=${offset}`),
   createBr: (payload: CreateBrPayload) =>
     jsonFetch<BrCreated>(`${API}/brs`, {
       method: 'POST',

@@ -6,6 +6,8 @@ import { BrTimelineTable } from '../components/BrTimelineTable'
 import { FilterBuilder } from '../components/FilterBuilder'
 import { WinRateSummary } from '../components/WinRateSummary'
 
+const PAGE_SIZE = 50
+
 export function BrListPage() {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [data, setData] = useState<BrListResponse | null>(null)
@@ -13,15 +15,31 @@ export function BrListPage() {
   const [filteredData, setFilteredData] = useState<FilteredBrResponse | null>(null)
   const [filterActive, setFilterActive] = useState(false)
   const [filterError, setFilterError] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([loadMe(), api.listBrs()]).then(
+    Promise.all([loadMe(), api.listBrs(PAGE_SIZE, 0)]).then(
       ([m, d]) => { if (!cancelled) { setMe(m); setData(d) } },
       (e: unknown) => { if (!cancelled) setError(String((e as Error)?.message ?? e)) },
     )
     return () => { cancelled = true }
   }, [])
+
+  // The list is paged server-side (newest battle first); the summary always covers
+  // every report. "Show older" appends the next page.
+  async function handleShowOlder() {
+    if (!data) return
+    setLoadingMore(true)
+    try {
+      const next = await api.listBrs(PAGE_SIZE, data.brs.length)
+      setData({ ...next, brs: [...data.brs, ...next.brs] })
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message ?? e))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   async function handleFilterApply(tree: FilterGroup) {
     setFilterError(null)
@@ -44,6 +62,8 @@ export function BrListPage() {
   if (!data || !me) return <div className="page"><p className="dim">Loading…</p></div>
 
   const displayData = filteredData ?? data
+  const total = data.total ?? data.brs.length
+  const remaining = total - data.brs.length
 
   return (
     <div className="page">
@@ -72,7 +92,7 @@ export function BrListPage() {
       {filterActive && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span className="dim" data-testid="filter-count">
-            Showing {filteredData?.brs.length ?? 0} of {data.brs.length} filtered results
+            Showing {filteredData?.brs.length ?? 0} of {total} filtered results
           </span>
           <button className="btn" onClick={handleFilterClear} data-testid="filter-clear-results">
             Clear filter
@@ -82,6 +102,18 @@ export function BrListPage() {
 
       <WinRateSummary summary={displayData.summary} />
       <BrTimelineTable brs={displayData.brs} />
+      {!filterActive && remaining > 0 && (
+        <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+          <button
+            className="btn"
+            data-testid="show-older"
+            disabled={loadingMore}
+            onClick={() => { void handleShowOlder() }}
+          >
+            {loadingMore ? 'Loading…' : `Show older (${remaining} more)`}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

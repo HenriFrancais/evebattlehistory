@@ -22,6 +22,10 @@ your-nvbr-hostname.example {
 	# changed APP_PORT because 8000 was taken on the VM, change it here too.
 	reverse_proxy http://127.0.0.1:8000
 
+	# The app gzips its own large JSON responses; this also compresses the SPA's
+	# static JS/CSS (already-compressed responses pass through untouched).
+	encode zstd gzip
+
 	# --- Hosting several apps behind ONE hostname? ---
 	# Replace the single reverse_proxy above with per-path matchers. Do NOT use
 	# `handle_path`, which strips the matched prefix the app needs. Each upstream

@@ -207,11 +207,11 @@ Warm timings on the largest dev BR (183k events), single request:
 | `/snapshot` (whole battle) | 1201 ms | 862 KB |
 | `/performance` | 270 ms | 26 KB |
 
-- [ ] No compression anywhere: no `GZipMiddleware` in `app/main.py`, no
+- [x] No compression anywhere: no `GZipMiddleware` in `app/main.py`, no
       `encode` in `deploy/Caddyfile`. Cheapest win available.
-- [ ] `/api/brs` re-derives sides, pilots and coverage for every BR on every
+- [x] `/api/brs` re-derives sides, pilots and coverage for every BR on every
       load, with no pagination (`app/api/brs.py:590`).
-- [ ] The aggregation is Python on the event loop, so one slow request blocks
+- [x] The aggregation is Python on the event loop, so one slow request blocks
       the worker. Cache per BR keyed on last ingest, or precompute at ingest.
 
 ### 11. `log_event` stores far more than is used

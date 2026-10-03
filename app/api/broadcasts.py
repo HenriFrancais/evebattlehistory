@@ -18,6 +18,7 @@ from app.analytics.performance import BrPerformance, compute_br_performance
 from app.api.access import acting_user, viewer_scope
 from app.api.auth import CurrentUser, can_create_br
 from app.api.deps import SessionDep
+from app.api.derived_cache import bump_derived
 from app.api.fleet import _require_br
 from app.api.logs import _build_roster_lookup
 from app.api.schemas import (
@@ -135,6 +136,7 @@ async def upload_broadcast(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await session.commit()
+    bump_derived()
     return BroadcastUploadResult(
         file_id=result.file_id,
         status="duplicate" if result.duplicate else result.parse_status,
@@ -265,5 +267,6 @@ async def delete_broadcast(
     if deleted_br is None or deleted_br != br_id:
         raise HTTPException(status_code=404, detail="Broadcast file not found")
     await session.commit()
+    bump_derived()
     log.info("broadcast.api.deleted", br_id=br_id, file_id=file_id)
     return {"ok": True}

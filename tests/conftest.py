@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.derived_cache import reset_derived_cache_for_tests
 from app.config import get_app_config, get_settings
 from app.db.engine import get_sessionmaker, init_models, reset_engine_for_tests
 from app.fights.offbr_cache import reset_offbr_cache_for_tests
@@ -83,6 +84,7 @@ def _isolate_from_real_environment(tmp_path_factory, monkeypatch):  # type: igno
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     get_app_config.cache_clear()
+    reset_derived_cache_for_tests()
     yield
     get_settings.cache_clear()
     get_app_config.cache_clear()

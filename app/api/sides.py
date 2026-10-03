@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.sides_config import br_entities, load_overrides
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
+from app.api.derived_cache import bump_derived
 from app.api.schemas import BrSidesOut, SideEntityOut, SideOverrideIn
 from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrSideOverride
@@ -100,4 +101,5 @@ async def set_side(
         our_corp_ids=cfg.our_corp_ids,
     )
     await session.commit()
+    bump_derived()
     return await _build_out(br_id, session, can_edit=True)

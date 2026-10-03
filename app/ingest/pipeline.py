@@ -354,6 +354,9 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
         from app.fights.offbr_cache import get_offbr_cache
 
         get_offbr_cache().invalidate(br_id)
+        from app.api.derived_cache import bump_derived
+
+        bump_derived()
 
         log.info("pipeline.ready", br_id=br_id)
 
@@ -369,5 +372,8 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                     br.status = "error"
                     br.error_text = str(exc)
                     await session.commit()
+            from app.api.derived_cache import bump_derived
+
+            bump_derived()
         except Exception as inner_exc:
             log.error("pipeline.error_update_failed", br_id=br_id, error=str(inner_exc))
