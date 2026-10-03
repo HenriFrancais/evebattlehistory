@@ -638,10 +638,15 @@ def _compute_reps(ctx: _Ctx) -> RepRequestMetrics:
             around = [
                 ts for ts, _ in dmg if abs((ts - b.ts).total_seconds()) <= JUSTIFICATION_WINDOW_S
             ]
-            justified = bool(around)
-            judged += 1
-            if not justified:
-                false_count += 1
+            # Only shield/armor calls are judged against incoming damage. A capacitor
+            # or generic repair request is about neuts / a dry cap / hull, so "no damage
+            # nearby" says nothing about whether it was warranted — leave it unjudged
+            # rather than count it against the pilot as a false broadcast.
+            if b.kind in ("needs_shield", "needs_armor"):
+                justified = bool(around)
+                judged += 1
+                if not justified:
+                    false_count += 1
             onset = [
                 ts for ts, _ in dmg if 0 <= (b.ts - ts).total_seconds() <= REACTION_LOOKBACK_S
             ]

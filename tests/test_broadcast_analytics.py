@@ -221,3 +221,34 @@ async def test_tackle_counts_as_fire_on_target(db_session_maker):
     row = m.targets.rows[0]
     assert row.first_fire_delta_s == 8.0
     assert row.complied is True
+
+
+@pytest.mark.asyncio
+async def test_cap_and_repair_requests_are_not_judged_by_incoming_damage(db_session_maker):
+    """A "needs capacitor" call is about being neuted / dry, not about taking damage,
+    so the absence of incoming damage must not make it a FALSE broadcast (that counts
+    against the pilot). Only shield/armor requests are judged that way."""
+    async with db_session_maker() as s:
+        await _seed(s)
+        # Alice has a log (one unrelated incoming hit far from the broadcasts).
+        await s.execute(insert(LogEvent), [
+            _ev(character_id=10, ts=_t(900), direction="in", effect_type="damage",
+                amount=100.0, other_name="Shooter"),
+        ])
+        await s.execute(insert(Broadcast), [
+            _bc(ts=_t(60), kind="needs_capacitor", subject_name="Alice",
+                subject_character_id=10, seq=2),
+            _bc(ts=_t(70), kind="repair", subject_name="Alice",
+                subject_character_id=10, seq=1),
+            _bc(ts=_t(80), kind="needs_armor", subject_name="Alice",
+                subject_character_id=10, seq=0),
+        ])
+        await s.commit()
+        m = await compute_broadcast_metrics(s, BR_ID)
+
+    by_resource = {r.resource: r for r in m.reps.rows}
+    assert by_resource["capacitor"].justified is None
+    assert by_resource["repair"].justified is None
+    # The armor call with no damage nearby IS still a false broadcast.
+    assert by_resource["armor"].justified is False
+    assert m.reps.false_broadcast_rate == 1.0  # 1 judged, 1 false — not 3 of 3
