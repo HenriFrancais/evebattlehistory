@@ -14,12 +14,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.models import Alliance, Character, Corporation, InventoryType, LogEvent
 from app.observability.logging import log
+
+#: Names per IN (...) lookup — well under SQLite's bound-parameter limit.
+_NAME_CHUNK = 500
 
 
 def _esi_client_for(settings: Settings) -> Any:
@@ -52,12 +55,19 @@ async def resolve_log_characters(
         return 0
 
     # Skip names we already have a character for (case-insensitive, EVE names unique).
-    known_lower = {
-        (nm or "").lower()
-        for (nm,) in (
-            await session.execute(select(Character.name).where(Character.name.is_not(None)))
-        ).all()
-    }
+    # Look up only the candidates (in chunks) rather than loading every character.
+    wanted_lower = sorted({n.lower() for n in candidates})
+    known_lower: set[str] = set()
+    for start in range(0, len(wanted_lower), _NAME_CHUNK):
+        chunk = wanted_lower[start : start + _NAME_CHUNK]
+        known_lower.update(
+            (nm or "").lower()
+            for (nm,) in (
+                await session.execute(
+                    select(Character.name).where(func.lower(Character.name).in_(chunk))
+                )
+            ).all()
+        )
     unresolved = sorted(n for n in candidates if n.lower() not in known_lower)
     if not unresolved:
         return 0

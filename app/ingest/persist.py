@@ -18,32 +18,30 @@ from app.db.models import (
     KillmailItem,
     SolarSystem,
 )
-from app.killmail.parse import ParsedKillmail, parse_killmail
+from app.killmail.parse import ParsedAttacker, ParsedKillmail, ParsedVictim, parse_killmail
 from app.observability.logging import log
 
 
-def _find_alliance_for_corp(parsed: list[ParsedKillmail], corp_id: int) -> int | None:
-    """Return the first alliance_id seen for *corp_id* across all killmails."""
-    for km in parsed:
-        if km.victim.corporation_id == corp_id and km.victim.alliance_id:
-            return km.victim.alliance_id
-        for att in km.attackers:
-            if att.corporation_id == corp_id and att.alliance_id:
-                return att.alliance_id
-    return None
+def _first_seen_affiliations(
+    parsed: list[ParsedKillmail],
+) -> tuple[dict[int, int], dict[int, tuple[int | None, int | None]]]:
+    """One pass over the killmails (victim, then attackers, in order) giving:
 
-
-def _find_corp_for_character(
-    parsed: list[ParsedKillmail], char_id: int
-) -> tuple[int | None, int | None]:
-    """Return the first (corporation_id, alliance_id) seen for *char_id*."""
+    * corp_id → the first NON-NULL alliance_id seen for that corp;
+    * character_id → the (corporation_id, alliance_id) of its first sighting.
+    """
+    corp_alliance: dict[int, int] = {}
+    char_affiliation: dict[int, tuple[int | None, int | None]] = {}
     for km in parsed:
-        if km.victim.character_id == char_id:
-            return km.victim.corporation_id, km.victim.alliance_id
-        for att in km.attackers:
-            if att.character_id == char_id:
-                return att.corporation_id, att.alliance_id
-    return None, None
+        parties: list[ParsedVictim | ParsedAttacker] = [km.victim, *km.attackers]
+        for party in parties:
+            if party.corporation_id and party.alliance_id:
+                corp_alliance.setdefault(party.corporation_id, party.alliance_id)
+            if party.character_id:
+                char_affiliation.setdefault(
+                    party.character_id, (party.corporation_id, party.alliance_id)
+                )
+    return corp_alliance, char_affiliation
 
 
 async def persist_killmails(
@@ -111,6 +109,8 @@ async def persist_killmails(
         for item in km.items:
             type_ids.add(item.type_id)
 
+    corp_alliance_by_id, char_affiliation = _first_seen_affiliations(parsed)
+
     # Upsert SolarSystem rows
     if solar_system_ids:
         ss_rows: list[dict[str, object]] = []
@@ -169,7 +169,7 @@ async def persist_killmails(
         co_rows: list[dict[str, object]] = []
         for cid in corporation_ids:
             info = names.get(cid, {})
-            corp_alliance = _find_alliance_for_corp(parsed, cid)
+            corp_alliance = corp_alliance_by_id.get(cid)
             co_rows.append({
                 "corporation_id": cid,
                 "name": info.get("name"),
@@ -192,7 +192,7 @@ async def persist_killmails(
         ch_rows: list[dict[str, object]] = []
         for chid in character_ids:
             info = names.get(chid, {})
-            char_corp, char_alliance = _find_corp_for_character(parsed, chid)
+            char_corp, char_alliance = char_affiliation.get(chid, (None, None))
             ch_rows.append({
                 "character_id": chid,
                 "name": info.get("name"),

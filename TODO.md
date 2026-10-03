@@ -328,7 +328,7 @@ outside any fight window.
       bearer comparison is not constant-time.
 - [x] `/healthz` does not touch the database and reports per-worker roster
       state.
-- [ ] `persist_killmails` looks up each corp and character by scanning every
+- [x] `persist_killmails` looks up each corp and character by scanning every
       killmail (`app/ingest/persist.py:25-46`), and `resolve_log_characters`
       loads every character name on each upload
       (`app/fights/offbr_resolve.py:54-59`).
