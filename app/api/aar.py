@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 from app.api.access import acting_user
 from app.api.auth import CurrentUser, can_create_br
 from app.api.deps import SessionDep
-from app.api.fleet import _require_br
+from app.api.deps import require_br as _require_br
 from app.api.schemas import (
     AAR_REACTIONS,
     AarBodyIn,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.fleet import build_kill_events
 from app.analytics.sides_config import load_side_resolver
@@ -14,6 +13,7 @@ from app.analytics.timeline import (
 )
 from app.api.access import acting_user, can_view_character
 from app.api.deps import SessionDep
+from app.api.deps import require_br as _require_br
 from app.api.schemas import (
     CharacterTimelineOut,
     KillEventOut,
@@ -23,18 +23,9 @@ from app.api.schemas import (
     TimelineSeriesOut,
 )
 from app.config import get_app_config
-from app.db.models import BattleReport, BrFight
+from app.db.models import BrFight
 
 router = APIRouter()
-
-
-async def _require_br(br_id: str, session: AsyncSession) -> None:
-    """Raise 404 if the BR does not exist."""
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
 
 
 @router.get("/api/brs/{br_id}/characters/{character_id}/timeline")

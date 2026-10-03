@@ -2,8 +2,6 @@
 cache-hit avoidance of recompute, and explicit invalidation."""
 from __future__ import annotations
 
-import pytest
-
 from tests.test_offbr_participants import _seed_offbr_br
 
 
@@ -30,8 +28,8 @@ async def test_cache_matches_direct_computation(db_session_maker) -> None:  # ty
 async def test_cache_hit_skips_recompute_until_invalidated(db_session_maker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Second get() for the same BR is served from cache (no recompute); after
     invalidate() it recomputes."""
-    from app.config import get_settings
     import app.fights.offbr_cache as cache_mod
+    from app.config import get_settings
 
     settings = get_settings()
     async with db_session_maker() as session:
@@ -62,8 +60,8 @@ async def test_cache_hit_skips_recompute_until_invalidated(db_session_maker, mon
 
 async def test_cache_ttl_backstop_expires(db_session_maker, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """An entry older than the TTL is recomputed even without explicit invalidation."""
-    from app.config import get_settings
     import app.fights.offbr_cache as cache_mod
+    from app.config import get_settings
 
     settings = get_settings()
     async with db_session_maker() as session:

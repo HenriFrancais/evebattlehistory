@@ -459,7 +459,7 @@ async def test_composition_reps_dedup_and_in_only_attribution(db_session_maker) 
     only from the recipient's log (repper who never uploaded their own)."""
     from app.analytics.composition import fleet_composition
     from app.config import get_settings
-    from app.db.models import Character, GamelogFile, KillmailAttacker, LogEvent
+    from app.db.models import GamelogFile, KillmailAttacker, LogEvent
     from tests.test_association import _insert_character
 
     async with db_session_maker() as session:
@@ -720,7 +720,11 @@ async def test_composition_includes_offbr_log_participant(db_session_maker) -> N
     from app.analytics.composition import fleet_composition
     from app.config import get_settings
     from tests.test_offbr_participants import (
-        GUARDIAN, HOSTILE_GUY, LOGI_ALLI, OFFBR_LOGI, _seed_offbr_br,
+        GUARDIAN,
+        HOSTILE_GUY,
+        LOGI_ALLI,
+        OFFBR_LOGI,
+        _seed_offbr_br,
     )
 
     async with db_session_maker() as session:

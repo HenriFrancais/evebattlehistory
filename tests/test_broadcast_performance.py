@@ -22,9 +22,9 @@ from app.analytics.composition import CompositionPilot
 from app.analytics.performance import assemble_performance
 from app.db.models import (
     BattleReport,
+    BrFight,
     Broadcast,
     BroadcastFile,
-    BrFight,
     Character,
     Fight,
     GamelogFile,

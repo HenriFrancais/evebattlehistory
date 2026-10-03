@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.sides_config import fight_side_losses, load_char_sides, load_overrides
 from app.api.access import acting_user, require_elevated, viewer_scope
 from app.api.auth import can_create_br, current_user
-from app.api.deps import SessionDep
+from app.api.deps import SessionDep, require_br
 from app.api.derived_cache import bump_derived, get_derived_cache
 from app.api.schemas import (
     AttackerDamageRowOut,
@@ -348,11 +348,7 @@ async def get_br_sources(
 ) -> list[BrSourceOut]:
     """Return all sources for a BR."""
     # Verify BR exists
-    br_check = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if br_check is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     rows = list(
         (
@@ -394,11 +390,7 @@ async def add_br_source(
     if not can_create_br(user):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    br_check = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if br_check is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     _validate_sources([body])
     await _resolve_window_system_names(session, [body])
@@ -423,11 +415,7 @@ async def delete_br_source(
     if not can_create_br(user):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    br_check = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if br_check is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     src = (
         await session.execute(
@@ -581,11 +569,7 @@ async def delete_br(
     if not can_create_br(user):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     broadcast_paths = await _delete_br_cascade(session, br_id)
     await session.commit()
@@ -857,11 +841,7 @@ async def get_br_damage_leaderboard(
     """
     from app.analytics.damage_attribution import br_damage_leaderboard
 
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     result = await br_damage_leaderboard(session, br_id)
     return BrDamageLeaderboardOut(
@@ -910,11 +890,7 @@ async def get_br_participants(
     settings = get_settings()
     viewer = await viewer_scope(request, settings)
 
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     participants = await br_participants(session, settings, br_id)
     return [_participant_to_dict(p, viewer.can_see(p.character_id)) for p in participants]
@@ -945,11 +921,7 @@ async def get_br_coverage(
     settings = get_settings()
     await require_elevated(request, settings)
 
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     coverage = await br_coverage(session, settings, br_id)
     return [_coverage_to_dict(uc) for uc in coverage]
@@ -968,11 +940,7 @@ async def get_my_br_coverage(
     user = await acting_user(request)
     settings = get_settings()
 
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     cov = await my_coverage(session, settings, br_id, user.user_name)
     if cov is None:

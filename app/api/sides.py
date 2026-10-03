@@ -3,30 +3,23 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import br_entities, load_overrides
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
+from app.api.deps import require_br as _require_br
 from app.api.derived_cache import bump_derived
 from app.api.schemas import BrSidesOut, SideEntityOut, SideOverrideIn
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrSideOverride
+from app.db.models import BrSideOverride
 from app.fights.aggregate import aggregate_br
 
 router = APIRouter()
 
 _VALID_TYPES = {"alliance", "corp"}
 _VALID_SIDES = {"friendly", "hostile", "unassigned"}
-
-
-async def _require_br(br_id: str, session: AsyncSession) -> None:
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
 
 
 async def _build_out(br_id: str, session: AsyncSession, can_edit: bool) -> BrSidesOut:

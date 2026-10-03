@@ -1178,15 +1178,15 @@ async def fleet_timeline(
         )
     ).all()
     for t_ts, t_effect, t_direction in tackle_rows:
-        idx = x_index.get((_epoch(t_ts) // BUCKET_SECONDS) * BUCKET_SECONDS)
-        if idx is None:
+        t_idx = x_index.get((_epoch(t_ts) // BUCKET_SECONDS) * BUCKET_SECONDS)
+        if t_idx is None:
             continue
         key = f"{t_effect}:{t_direction}"
         arr = series_values.get(key)
         if arr is None:
             arr = [None] * len(x)
             series_values[key] = arr
-        arr[idx] = (arr[idx] or 0.0) + 1.0
+        arr[t_idx] = (arr[t_idx] or 0.0) + 1.0
 
     series: list[FleetSeriesOut] = []
     for key in sorted(series_values, key=_series_sort_key):

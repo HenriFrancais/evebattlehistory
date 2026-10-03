@@ -294,17 +294,17 @@ outside any fight window.
 
 ### 18. Engineering hygiene
 
-- [ ] No CI. Add one running pytest, ruff, mypy, vitest and `tsc`, and make
+- [x] No CI. Add one running pytest, ruff, mypy, vitest and `tsc`, and make
       mypy and `ruff check tests` pass or stop claiming them.
-- [ ] The event-cleaning block is duplicated between `app/logs/ingest.py:161-206`
+- [x] The event-cleaning block is duplicated between `app/logs/ingest.py:161-206`
       and `app/logs/reparse.py:66-109`. A parser fix applied to one silently
       diverges from the other.
-- [ ] `frontend/src/api.ts` (1,032 lines) hand-mirrors `app/api/schemas.py`,
+- [x] `frontend/src/api.ts` (1,032 lines) hand-mirrors `app/api/schemas.py`,
       and several endpoints return untyped dicts. Generate the client types
       from the OpenAPI schema.
-- [ ] The backend suite takes 4.5 minutes and emits "Event loop is closed"
+- [x] The backend suite takes 4.5 minutes and emits "Event loop is closed"
       thread warnings; engines are not disposed between tests.
-- [ ] `_require_br` is defined three times and inlined about ten more.
+- [x] `_require_br` is defined three times and inlined about ten more.
       `FleetGraph.tsx` is 1,118 lines.
 
 ---

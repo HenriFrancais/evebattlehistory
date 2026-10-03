@@ -26,7 +26,7 @@ _MAX_RETRIES = 3
 @dataclass(slots=True)
 class DiscordMessage:
     content: str = ""
-    embeds: list[dict] = field(default_factory=list)
+    embeds: list[dict[str, object]] = field(default_factory=list)
 
 
 class DiscordSender:
@@ -130,7 +130,7 @@ class DiscordSender:
         content: str,
         *,
         mention_role_ids: list[str] | None = None,
-    ) -> dict | None:
+    ) -> dict[str, object] | None:
         """Create a forum-channel thread (Discord "Start Thread in Forum Channel").
 
         ``content`` should already contain any ``<@&id>`` role mentions; pass the

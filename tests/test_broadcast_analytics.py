@@ -14,9 +14,9 @@ from sqlalchemy import insert
 from app.analytics.broadcasts import compute_broadcast_metrics
 from app.db.models import (
     BattleReport,
+    BrFight,
     Broadcast,
     BroadcastFile,
-    BrFight,
     Character,
     Fight,
     FightKill,

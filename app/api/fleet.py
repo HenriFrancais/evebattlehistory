@@ -6,7 +6,6 @@ import datetime as dt
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
 from app.analytics.fleet import Contribution, Leaders, fleet_snapshot, fleet_timeline
@@ -14,6 +13,7 @@ from app.analytics.sides_config import load_overrides
 from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
+from app.api.deps import require_br as _require_br
 from app.api.derived_cache import bump_derived, get_derived_cache
 from app.api.schemas import (
     CharSideIn,
@@ -34,7 +34,7 @@ from app.api.schemas import (
     WeaponEffectOut,
 )
 from app.config import get_app_config, get_settings
-from app.db.models import BattleReport, BrCharShip, BrCharSide, InventoryType
+from app.db.models import BrCharShip, BrCharSide, InventoryType
 from app.fights.aggregate import aggregate_br
 from app.fights.offbr_cache import get_offbr_cache
 from app.observability.logging import log
@@ -101,15 +101,6 @@ def _contributions_out(from_ts: int, to_ts: int, contribs: list[Contribution]) -
             for c in contribs
         ],
     )
-
-
-async def _require_br(br_id: str, session: AsyncSession) -> None:
-    """Raise 404 if the BR does not exist."""
-    exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
 
 
 @router.get("/api/brs/{br_id}/fleet-timeline")

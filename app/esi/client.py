@@ -195,10 +195,10 @@ class EsiClient:
             try:
                 resp = await self._post(url, json=chunk, timeout=self._timeout_s)
                 resp.raise_for_status()
-                data: dict[str, object] = resp.json()
-                for ch in data.get("characters", []) or []:  # type: ignore[union-attr]
-                    name = str(ch["name"])  # type: ignore[index]
-                    out[name] = int(str(ch["id"]))  # type: ignore[index]
+                data: dict[str, list[dict[str, object]]] = resp.json()
+                for ch in data.get("characters", []) or []:
+                    name = str(ch["name"])
+                    out[name] = int(str(ch["id"]))
             except Exception as exc:
                 log.warning("esi.resolve_ids_failed", error=str(exc), n=len(chunk))
         return out
@@ -249,7 +249,7 @@ class EsiClient:
                 resp.raise_for_status()
                 rows: list[dict[str, object]] = resp.json()
                 for r in rows:
-                    cid = int(str(r["character_id"]))  # type: ignore[index]
+                    cid = int(str(r["character_id"]))
                     corp = r.get("corporation_id")
                     alli = r.get("alliance_id")
                     out[cid] = (

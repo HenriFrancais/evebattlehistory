@@ -18,8 +18,8 @@ from app.analytics.performance import BrPerformance, compute_br_performance
 from app.api.access import acting_user, viewer_scope
 from app.api.auth import CurrentUser, can_create_br
 from app.api.deps import SessionDep
+from app.api.deps import require_br as _require_br
 from app.api.derived_cache import bump_derived
-from app.api.fleet import _require_br
 from app.api.logs import _build_roster_lookup
 from app.api.schemas import (
     BroadcastFileOut,

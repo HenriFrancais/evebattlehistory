@@ -18,6 +18,7 @@ unreliable in messy wormhole brawls (it can merge both fleets onto one side).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,7 +131,7 @@ async def fight_side_losses(
     baseline_corps: set[int],
     overrides: dict[EntityKey, str],
     char_sides: dict[int, str] | None = None,
-) -> dict[int, dict[str, dict]]:
+) -> dict[int, dict[str, dict[str, Any]]]:
     """Per fight, aggregate losses/ISK/pilots by classified side.
 
     Returns {fight_id: {side: {"losses": int, "isk_lost": float, "pilots": int,
@@ -147,10 +148,10 @@ async def fight_side_losses(
         char_sides=char_sides or {},
     )
 
-    def _blank() -> dict:
+    def _blank() -> dict[str, Any]:
         return {"losses": 0, "isk_lost": 0.0, "pilots": 0, "isk_lost_to_friendly": 0.0}
 
-    out: dict[int, dict[str, dict]] = {fid: {} for fid in fight_ids}
+    out: dict[int, dict[str, dict[str, Any]]] = {fid: {} for fid in fight_ids}
     if not fight_ids:
         return out
 
@@ -296,7 +297,7 @@ async def br_entities(
     baseline_corps: set[int],
     overrides: dict[EntityKey, str],
     settings: Settings,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Enumerate the entities (alliances, and corps without an alliance) seen on
     the BR's killmails (victims + attackers) PLUS those of log-identified off-BR
     participants, each with its resolved name, current side classification, and
@@ -365,7 +366,7 @@ async def br_entities(
         ).scalars():
             corp_names[c.corporation_id] = c.name
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for aid in sorted(alliance_ids):
         side = classify_entity(
             aid, None, baseline_alliances=baseline_alliances,

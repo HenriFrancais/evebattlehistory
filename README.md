@@ -130,6 +130,10 @@ cd frontend && npx tsc --noEmit     # frontend types
 cd frontend && npm run build        # production SPA build
 ```
 
+The same checks run in CI on every push and pull request (`.github/workflows/ci.yml`).
+Tests never touch your `.env` or `var/`: an autouse fixture in `tests/conftest.py` points
+every setting at throwaway paths with demo data and empty credentials.
+
 ---
 
 ## Containerised deployment (VM)

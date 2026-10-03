@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.analytics.ewar import EwarRow, fight_ewar
 from app.analytics.reconcile import fight_damage_reconcile
 from app.api.access import viewer_scope
-from app.api.deps import SessionDep
+from app.api.deps import SessionDep, require_br
 from app.api.schemas import (
     CapRowOut,
     CharacterReconcileRowOut,
@@ -19,18 +19,14 @@ from app.api.schemas import (
     FightReconcileOut,
     LogiRowOut,
 )
-from app.db.models import BattleReport, BrFight
+from app.db.models import BrFight
 
 router = APIRouter()
 
 
 async def _require_br_fight(br_id: str, fight_id: int, session: AsyncSession) -> None:
     """Raise 404 if the BR does not exist OR if fight_id is not linked to br_id."""
-    br_exists = (
-        await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
-    ).scalar_one_or_none()
-    if br_exists is None:
-        raise HTTPException(status_code=404, detail="Battle report not found")
+    await require_br(br_id, session)
 
     fight_in_br = (
         await session.execute(

@@ -11,9 +11,9 @@ from sqlalchemy import func, select
 
 from app.db.models import (
     BattleReport,
+    BrFight,
     Broadcast,
     BroadcastFile,
-    BrFight,
     Character,
     Fight,
     SolarSystem,

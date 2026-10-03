@@ -232,7 +232,7 @@ async def test_item_loss_breakdown_item_rows_names(db_session_maker) -> None:  #
 
 @pytest.mark.asyncio
 async def test_item_loss_breakdown_slot_order(db_session_maker) -> None:  # type: ignore[no-untyped-def]
-    """Returned slots follow canonical order: high,med,low,rig,subsystem,drone_bay,cargo,implant,other."""  # noqa: E501
+    """Returned slots follow canonical order: high,med,low,rig,subsystem,drone_bay,cargo,implant,other."""
     from app.analytics.item_losses import item_loss_breakdown
 
     async with db_session_maker() as s:

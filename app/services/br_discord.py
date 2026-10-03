@@ -63,7 +63,7 @@ async def _run(settings: Settings, br_id: str, title: str | None) -> None:
                         update(BattleReport)
                         .where(BattleReport.br_id == br_id)
                         .values(
-                            discord_thread_id=int(thread["id"]),
+                            discord_thread_id=int(str(thread["id"])),
                             discord_thread_url=thread_url,
                         )
                     )

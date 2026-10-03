@@ -12,6 +12,7 @@ logged and yields no new rows rather than raising, so uploads never fail on ESI.
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,7 @@ from app.db.models import Alliance, Character, Corporation, InventoryType, LogEv
 from app.observability.logging import log
 
 
-def _esi_client_for(settings: Settings):  # type: ignore[no-untyped-def]
+def _esi_client_for(settings: Settings) -> Any:
     """Return the demo or real ESI client per settings.data_source."""
     if settings.data_source == "demo":
         from app.esi.demo import DemoEsiClient
@@ -42,7 +43,7 @@ async def resolve_log_characters(
     session: AsyncSession,
     settings: Settings,
     names: set[str],
-    esi=None,  # type: ignore[no-untyped-def]
+    esi: Any = None,
 ) -> int:
     """Resolve+persist any *names* not already a known ``Character``. Returns the
     count of newly-persisted characters. Caller commits."""
@@ -151,7 +152,7 @@ async def resolve_log_characters(
 
 
 async def backfill_log_characters(
-    session: AsyncSession, settings: Settings, esi=None  # type: ignore[no-untyped-def]
+    session: AsyncSession, settings: Settings, esi: Any = None
 ) -> int:
     """One-time backfill: resolve+persist every counterparty name across all stored
     LogEvents, so off-BR participants in BRs uploaded before this feature existed
