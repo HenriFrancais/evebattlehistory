@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.sides_config import fight_side_losses, load_overrides
+from app.analytics.sides_config import fight_side_losses, load_char_sides, load_overrides
 from app.api.access import acting_user, require_elevated, viewer_scope
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
@@ -1009,6 +1009,7 @@ async def _load_fights(session: AsyncSession, br_id: str) -> list[FightOut]:
         baseline_alliances=set(cfg.our_alliance_ids),
         baseline_corps=set(cfg.our_corp_ids),
         overrides=overrides,
+        char_sides=await load_char_sides(session, br_id),
     )
     _side_order = {"friendly": 0, "hostile": 1, "unassigned": 2}
 

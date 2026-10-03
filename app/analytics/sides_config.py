@@ -1,16 +1,23 @@
 """Per-BR side classification: baseline blues + FC/HC manual overrides.
 
-Classification precedence for an entity (a killmail victim or attacker), giving
-one of 'friendly' | 'hostile' | 'unassigned':
+Classification precedence for a pilot (a killmail victim/attacker or a
+log-identified participant), giving one of 'friendly' | 'hostile' | 'unassigned':
+  0. A per-BR override on the CHARACTER (FC/HC choice; BrCharSide).
   1. A per-BR override on its alliance, then on its corp (FC/HC choice).
   2. Baseline friendly blues (the permanent NV alliances/corps from config) → friendly.
   3. Otherwise unassigned — FC/HC place it via the per-BR sides UI.
+
+``SideResolver`` is the ONE implementation of that precedence; every reader
+(headline outcome, per-fight losses, kill markers, timeline leaders, the BR list)
+goes through it so they cannot disagree.
 
 This is deliberately independent of the killmail 2-colouring, which is
 unreliable in messy wormhole brawls (it can merge both fleets onto one side).
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +26,7 @@ from app.config import Settings
 from app.db.models import (
     Alliance,
     BattleReport,
+    BrCharSide,
     BrFight,
     BrSideOverride,
     Corporation,
@@ -51,6 +59,59 @@ def classify_entity(
     return "unassigned"
 
 
+@dataclass(frozen=True)
+class SideResolver:
+    """Resolves a pilot's side for one battle report. See module docstring."""
+
+    baseline_alliances: set[int] = field(default_factory=set)
+    baseline_corps: set[int] = field(default_factory=set)
+    overrides: dict[EntityKey, str] = field(default_factory=dict)
+    char_sides: dict[int, str] = field(default_factory=dict)
+
+    def entity(self, alliance_id: int | None, corp_id: int | None) -> str:
+        return classify_entity(
+            alliance_id,
+            corp_id,
+            baseline_alliances=self.baseline_alliances,
+            baseline_corps=self.baseline_corps,
+            overrides=self.overrides,
+        )
+
+    def character(
+        self, character_id: int | None, alliance_id: int | None, corp_id: int | None
+    ) -> str:
+        if character_id is not None:
+            forced = self.char_sides.get(character_id)
+            if forced is not None:
+                return forced
+        return self.entity(alliance_id, corp_id)
+
+
+async def load_char_sides(session: AsyncSession, br_id: str) -> dict[int, str]:
+    """Load FC/HC per-character side overrides for *br_id*."""
+    rows = (
+        await session.execute(
+            select(BrCharSide.character_id, BrCharSide.side).where(BrCharSide.br_id == br_id)
+        )
+    ).all()
+    return {int(cid): side for cid, side in rows}
+
+
+async def load_side_resolver(
+    session: AsyncSession,
+    br_id: str,
+    *,
+    baseline_alliances: set[int],
+    baseline_corps: set[int],
+) -> SideResolver:
+    return SideResolver(
+        baseline_alliances=set(baseline_alliances),
+        baseline_corps=set(baseline_corps),
+        overrides=await load_overrides(session, br_id),
+        char_sides=await load_char_sides(session, br_id),
+    )
+
+
 async def load_overrides(session: AsyncSession, br_id: str) -> dict[EntityKey, str]:
     """Load FC/HC side overrides for *br_id* into a {(entity_type, id): side} dict."""
     rows = (
@@ -68,13 +129,27 @@ async def fight_side_losses(
     baseline_alliances: set[int],
     baseline_corps: set[int],
     overrides: dict[EntityKey, str],
+    char_sides: dict[int, str] | None = None,
 ) -> dict[int, dict[str, dict]]:
     """Per fight, aggregate losses/ISK/pilots by classified side.
 
-    Returns {fight_id: {side: {"losses": int, "isk_lost": float, "pilots": int}}}
-    where side ∈ {'friendly','hostile','unassigned'}. Losses + ISK come from
-    victims; pilots counts distinct characters across victims and attackers.
+    Returns {fight_id: {side: {"losses": int, "isk_lost": float, "pilots": int,
+    "isk_lost_to_friendly": float}}} where side ∈ {'friendly','hostile','unassigned'}.
+    Losses + ISK come from victims; pilots counts distinct characters across
+    victims and attackers. ``isk_lost_to_friendly`` is the part of ``isk_lost``
+    from killmails that have at least one friendly attacker — i.e. kills we were
+    actually on (a third party dying to someone else is not our kill).
     """
+    resolver = SideResolver(
+        baseline_alliances=baseline_alliances,
+        baseline_corps=baseline_corps,
+        overrides=overrides,
+        char_sides=char_sides or {},
+    )
+
+    def _blank() -> dict:
+        return {"losses": 0, "isk_lost": 0.0, "pilots": 0, "isk_lost_to_friendly": 0.0}
+
     out: dict[int, dict[str, dict]] = {fid: {} for fid in fight_ids}
     if not fight_ids:
         return out
@@ -100,6 +175,25 @@ async def fight_side_losses(
             return
         pilots.setdefault((fid, side), set()).add(char_id)
 
+    # Attackers first → pilots, and which killmails a friendly pilot was on.
+    friendly_on_km: set[int] = set()
+    for kmid, alli, corp, char_id in (
+        await session.execute(
+            select(
+                KillmailAttacker.killmail_id,
+                KillmailAttacker.alliance_id,
+                KillmailAttacker.corporation_id,
+                KillmailAttacker.character_id,
+            ).where(KillmailAttacker.killmail_id.in_(km_ids))
+        )
+    ).all():
+        fid = km_to_fight[kmid]
+        side = resolver.character(char_id, alli, corp)
+        if side == "friendly":
+            friendly_on_km.add(kmid)
+        out[fid].setdefault(side, _blank())
+        _bump_pilot(fid, side, char_id)
+
     # Victims → losses, isk, pilots.
     for kmid, alli, corp, char_id, value in (
         await session.execute(
@@ -113,32 +207,12 @@ async def fight_side_losses(
         )
     ).all():
         fid = km_to_fight[kmid]
-        side = classify_entity(
-            alli, corp, baseline_alliances=baseline_alliances,
-            baseline_corps=baseline_corps, overrides=overrides,
-        )
-        agg = out[fid].setdefault(side, {"losses": 0, "isk_lost": 0.0, "pilots": 0})
+        side = resolver.character(char_id, alli, corp)
+        agg = out[fid].setdefault(side, _blank())
         agg["losses"] += 1
         agg["isk_lost"] += value or 0.0
-        _bump_pilot(fid, side, char_id)
-
-    # Attackers → pilots only.
-    for kmid, alli, corp, char_id in (
-        await session.execute(
-            select(
-                KillmailAttacker.killmail_id,
-                KillmailAttacker.alliance_id,
-                KillmailAttacker.corporation_id,
-                KillmailAttacker.character_id,
-            ).where(KillmailAttacker.killmail_id.in_(km_ids))
-        )
-    ).all():
-        fid = km_to_fight[kmid]
-        side = classify_entity(
-            alli, corp, baseline_alliances=baseline_alliances,
-            baseline_corps=baseline_corps, overrides=overrides,
-        )
-        out[fid].setdefault(side, {"losses": 0, "isk_lost": 0.0, "pilots": 0})
+        if kmid in friendly_on_km:
+            agg["isk_lost_to_friendly"] += value or 0.0
         _bump_pilot(fid, side, char_id)
 
     for (fid, side), chars in pilots.items():
@@ -161,8 +235,9 @@ async def recompute_br_outcome(
     Sides editor:
 
     - ``our_isk_lost``       = ISK lost by the **friendly** side ("us").
-    - ``our_isk_destroyed``  = ISK lost by **everyone else** (hostile + unassigned)
-      — i.e. what we killed in the "us vs them" model.
+    - ``our_isk_destroyed``  = ISK lost by non-friendly pilots (hostile + unassigned)
+      on killmails that carry **at least one friendly attacker** — what WE killed.
+      A third party dying to someone else in the same system is not our kill.
     - ``isk_efficiency``     = destroyed / (destroyed + lost), or ``None`` when 0.
     - ``result``             = win / tie / loss via :func:`classify_br_result`.
 
@@ -180,6 +255,7 @@ async def recompute_br_outcome(
         baseline_alliances=baseline_alliances,
         baseline_corps=baseline_corps,
         overrides=overrides,
+        char_sides=await load_char_sides(session, br_id),
     )
 
     our_lost = 0.0
@@ -189,7 +265,7 @@ async def recompute_br_outcome(
             if side == "friendly":
                 our_lost += agg["isk_lost"]
             else:
-                our_destroyed += agg["isk_lost"]
+                our_destroyed += agg["isk_lost_to_friendly"]
 
     denom = our_destroyed + our_lost
     isk_eff: float | None = our_destroyed / denom if denom > 0 else None

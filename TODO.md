@@ -169,15 +169,15 @@ already exists.
 
 ### 8. Side classification has several inconsistent implementations
 
-- [ ] `classify_entity` returns friendly/hostile/unassigned
+- [x] `classify_entity` returns friendly/hostile/unassigned
       (`app/analytics/sides_config.py:34`); the timeline leaders map unassigned
       to hostile (`app/analytics/fleet.py:693`); the BR list counts every
       non-friendly pilot as enemy (`app/fights/timeline_rows.py:263`).
-- [ ] Per-character overrides (`BrCharSide`) are honoured only by composition
+- [x] Per-character overrides (`BrCharSide`) are honoured only by composition
       and the BR list. Headline ISK, win/loss, kill markers and leaders ignore
       them, and `PUT …/participants/{id}/side` (`app/api/fleet.py:298`) does
       not recompute the outcome.
-- [ ] The headline counts unassigned losses as "our ISK destroyed"
+- [x] The headline counts unassigned losses as "our ISK destroyed"
       (`app/analytics/sides_config.py:187-192`), so third parties dying in a
       three-way fight inflate our efficiency and can flip a result to a win.
 

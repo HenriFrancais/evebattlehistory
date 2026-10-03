@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.sides_config import classify_entity
+from app.analytics.sides_config import SideResolver
 from app.config import Settings
 from app.db.models import (
     Alliance,
@@ -255,15 +255,16 @@ async def enrich_br_rows(
         friendly_pilots = enemy_pilots = 0
         friendly_groups: dict[_EntityKey, int] = {}
         enemy_groups: dict[_EntityKey, int] = {}
-        char_sides = char_side_by_br.get(br, {})
+        resolver = SideResolver(
+            baseline_alliances=baseline_alliances,
+            baseline_corps=baseline_corps,
+            overrides=overrides_by_br.get(br, {}),
+            char_sides=char_side_by_br.get(br, {}),
+        )
         # Count every participant — killmail + log-derived — once, by character.
         for char in km_chars[br] | log_chars[br]:
             alli, corp = char_entity[br].get(char) or log_char_aff.get(char, (None, None))
-            # A per-character FC/HC override wins over entity classification.
-            side = char_sides.get(char) or classify_entity(
-                alli, corp, baseline_alliances=baseline_alliances,
-                baseline_corps=baseline_corps, overrides=overrides_by_br.get(br, {}),
-            )
+            side = resolver.character(char, alli, corp)
             key = _entity_key(alli, corp)
             if side == "friendly":
                 friendly_pilots += 1

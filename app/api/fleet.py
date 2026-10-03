@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
 from app.analytics.fleet import Contribution, Leaders, fleet_snapshot, fleet_timeline
-from app.analytics.sides_config import load_overrides
+from app.analytics.sides_config import load_overrides, recompute_br_outcome
 from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
@@ -346,6 +346,15 @@ async def set_participant_side(
                 set_at=dt.datetime.now(dt.UTC),
             )
         )
+    await session.flush()
+    # Keep the BR headline (ISK destroyed/lost, win/loss) in step with the new side.
+    cfg = get_app_config()
+    await recompute_br_outcome(
+        session,
+        br_id,
+        baseline_alliances=set(cfg.our_alliance_ids),
+        baseline_corps=set(cfg.our_corp_ids),
+    )
     await session.commit()
     return {"ok": True}
 

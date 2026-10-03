@@ -34,7 +34,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.sides_config import classify_entity
+from app.analytics.sides_config import SideResolver, load_side_resolver
 from app.analytics.weapons import classify_weapon
 from app.config import Settings, get_settings
 from app.db.models import (
@@ -695,26 +695,24 @@ async def _resolve_char_ships(
 async def _build_char_side_map(
     session: AsyncSession,
     fight_ids: list[int],
-    friendly_alliances: set[int],
-    friendly_corps: set[int],
-    overrides: dict[tuple[str, int], str] | None = None,
+    resolver: SideResolver,
 ) -> dict[int, str]:
-    """Return character_id → 'friendly' | 'hostile' from killmail participants.
+    """Return character_id → 'friendly' | 'hostile' for the fights' participants.
 
-    Victims are checked first (authoritative hull source mirrors _resolve_char_ships).
-    Attacker rows supplement missing entries.  Characters with no alliance/corp info,
-    or whose alliance/corp is not in the friendly sets, are classified 'hostile' —
-    this avoids ever mislabelling a non-NV pilot as friendly.
+    Sides come from the BR's ``SideResolver`` (per-character FC/HC override, then
+    entity override, then baseline blues). The timeline leaders need a binary
+    split, so 'unassigned' maps to 'hostile' — this avoids ever mislabelling a
+    non-NV pilot as friendly.
 
-    FC/HC per-BR overrides (BrSideOverride table) are applied via classify_entity so
-    that manually overridden pilots are classified consistently with kill-side logic.
-
-    Log-only pilots (logi, links, support) who have no killmail presence are
-    supplemented from the Character table using their stored alliance_id/corp_id.
-    Without this step, friendly support pilots would default to 'hostile' via the
-    unknown→hostile policy.
+    Victims are checked first; attacker rows supplement missing entries. Log-only
+    pilots (logi, links, support) with no killmail presence are supplemented from
+    the Character table using their stored alliance/corp, and any character with
+    an explicit per-character override is always included.
     """
-    effective_overrides: dict[tuple[str, int], str] = overrides or {}
+
+    def _binary(char_id: int, alli_id: int | None, corp_id: int | None) -> str:
+        side = resolver.character(char_id, alli_id, corp_id)
+        return "friendly" if side == "friendly" else "hostile"
 
     km_ids: list[int] = list(
         (
@@ -740,13 +738,7 @@ async def _build_char_side_map(
     ).all():
         if char_id is None:
             continue
-        raw_side = classify_entity(
-            alli_id, corp_id,
-            baseline_alliances=friendly_alliances,
-            baseline_corps=friendly_corps,
-            overrides=effective_overrides,
-        )
-        char_side[char_id] = "friendly" if raw_side == "friendly" else "hostile"
+        char_side[char_id] = _binary(char_id, alli_id, corp_id)
 
     # Attackers (fill gaps — victim entry takes precedence via setdefault)
     for char_id, alli_id, corp_id in (
@@ -760,13 +752,7 @@ async def _build_char_side_map(
     ).all():
         if char_id is None:
             continue
-        raw_side = classify_entity(
-            alli_id, corp_id,
-            baseline_alliances=friendly_alliances,
-            baseline_corps=friendly_corps,
-            overrides=effective_overrides,
-        )
-        char_side.setdefault(char_id, "friendly" if raw_side == "friendly" else "hostile")
+        char_side.setdefault(char_id, _binary(char_id, alli_id, corp_id))
 
     # Supplement with Character table rows for log-only pilots (logi/links/support)
     # who have LogEventBucket rows but no killmail presence. Without this, those
@@ -791,14 +777,11 @@ async def _build_char_side_map(
                 ).where(Character.character_id.in_(missing_ids))
             )
         ).all():
-            side = classify_entity(
-                alli_id, corp_id,
-                baseline_alliances=friendly_alliances,
-                baseline_corps=friendly_corps,
-                overrides=effective_overrides,
-            )
-            # Map "unassigned" → "hostile" (unknown-side → hostile, same policy as killmail side)
-            char_side[char_id] = "friendly" if side == "friendly" else "hostile"
+            char_side[char_id] = _binary(char_id, alli_id, corp_id)
+
+    # A per-character override applies even to a pilot with no stored affiliation.
+    for char_id, forced in resolver.char_sides.items():
+        char_side[char_id] = "friendly" if forced == "friendly" else "hostile"
 
     return char_side
 
@@ -809,9 +792,7 @@ async def _compute_leaders(
     x: list[int],
     x_index: dict[int, int],
     settings: Settings,
-    friendly_alliances: set[int] | None = None,
-    friendly_corps: set[int] | None = None,
-    overrides: dict[tuple[str, int], str] | None = None,
+    resolver: SideResolver,
 ) -> list[Leaders]:
     """Return per-bucket Leaders aligned index-for-index to *x*.
 
@@ -829,13 +810,8 @@ async def _compute_leaders(
     if not x:
         return []
 
-    eff_friendly_alliances: set[int] = friendly_alliances or set()
-    eff_friendly_corps: set[int] = friendly_corps or set()
-
     # Build character → side map from killmail participants.
-    char_side_map = await _build_char_side_map(
-        session, fight_ids, eff_friendly_alliances, eff_friendly_corps, overrides=overrides
-    )
+    char_side_map = await _build_char_side_map(session, fight_ids, resolver)
 
     # Fetch per-(bucket_ts, character_id, effect_type, direction) aggregates.
     rows = (
@@ -999,9 +975,7 @@ async def _compute_leaders(
 async def build_kill_events(
     session: AsyncSession,
     fight_ids: list[int],
-    friendly_alliances: set[int],
-    friendly_corps: set[int],
-    overrides: dict[tuple[str, int], str],
+    resolver: SideResolver,
 ) -> list[KillEvent]:
     """Kill-marker overlay events for *fight_ids*, victim-side classified, ts-sorted.
 
@@ -1054,12 +1028,8 @@ async def build_kill_events(
         km = km_map.get(km_id)
         if km is None:
             continue
-        side_kind = classify_entity(
-            km.victim_alliance_id,
-            km.victim_corporation_id,
-            baseline_alliances=friendly_alliances,
-            baseline_corps=friendly_corps,
-            overrides=overrides,
+        side_kind = resolver.character(
+            km.victim_character_id, km.victim_alliance_id, km.victim_corporation_id
         )
         ship_name = (
             ship_name_map.get(km.victim_ship_type_id, "Unknown")
@@ -1107,9 +1077,19 @@ async def fleet_timeline(
     the baseline blues plus any per-BR FC/HC overrides (see analytics.sides_config).
     Returns empty arrays (not an error) when no buckets or kills exist.
     """
-    friendly_alliances = set(our_alliance_ids)
-    friendly_corps = set(our_corp_ids)
-    side_overrides = overrides or {}
+    resolver = await load_side_resolver(
+        session,
+        br_id,
+        baseline_alliances=set(our_alliance_ids),
+        baseline_corps=set(our_corp_ids),
+    )
+    if overrides is not None:  # explicit overrides (tests / callers) win over stored
+        resolver = SideResolver(
+            baseline_alliances=resolver.baseline_alliances,
+            baseline_corps=resolver.baseline_corps,
+            overrides=overrides,
+            char_sides=resolver.char_sides,
+        )
     # 1. Resolve BR fights ordered by seq -----------------------------------------
     bf_rows = list(
         (
@@ -1233,15 +1213,10 @@ async def fleet_timeline(
         )
 
     # 5. Build kills ----------------------------------------------------------------
-    kills = await build_kill_events(
-        session, fight_ids, friendly_alliances, friendly_corps, side_overrides
-    )
+    kills = await build_kill_events(session, fight_ids, resolver)
 
     leaders = await _compute_leaders(
-        session, fight_ids, x, x_index, settings or get_settings(),
-        friendly_alliances=friendly_alliances,
-        friendly_corps=friendly_corps,
-        overrides=side_overrides,
+        session, fight_ids, x, x_index, settings or get_settings(), resolver
     )
 
     return FleetTimeline(

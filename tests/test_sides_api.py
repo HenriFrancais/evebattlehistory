@@ -16,6 +16,7 @@ from app.db.models import (
     FightKill,
     InventoryType,
     Killmail,
+    KillmailAttacker,
     SolarSystem,
 )
 from tests.conftest import CREATOR_HEADERS, MEMBER_HEADERS, TEST_TOKEN
@@ -28,6 +29,7 @@ async def _seed(session) -> str:  # type: ignore[no-untyped-def]
     sid = 31009999
     session.add(SolarSystem(system_id=sid, name="J-SIDES", security=None))
     session.add(Alliance(alliance_id=ENEMY_ALLI, name="Enemy Alliance", last_seen_at=now))
+    session.add(Alliance(alliance_id=99006113, name="No Vacancies.", last_seen_at=now))
     session.add(Corporation(corporation_id=500, name="Enemy Corp",
                             alliance_id=ENEMY_ALLI, last_seen_at=now))
     session.add(InventoryType(type_id=1, name="TestShip"))
@@ -44,6 +46,9 @@ async def _seed(session) -> str:  # type: ignore[no-untyped-def]
                          victim_alliance_id=ENEMY_ALLI, victim_ship_type_id=1, total_value=1.0,
                          npc_kill=False, solo_kill=False))
     await session.flush()
+    # A baseline-blue pilot is on the mail, so the kill counts as ours when hostile.
+    session.add(KillmailAttacker(killmail_id=km_id, attacker_idx=0, character_id=None,
+                                 alliance_id=99006113, damage_done=1, final_blow=True))
     session.add(FightKill(fight_id=fight.fight_id, killmail_id=km_id, side_idx=0))
     br_id = str(uuid.uuid4())
     session.add(BattleReport(br_id=br_id, source="demo", source_url="x", source_ref="r",

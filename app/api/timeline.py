@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.fleet import build_kill_events
-from app.analytics.sides_config import load_overrides
+from app.analytics.sides_config import load_side_resolver
 from app.analytics.timeline import (
     character_timeline,
     character_timeline_events,
@@ -58,13 +58,14 @@ async def get_character_timeline(
 
     # Same BR-wide kill marks as the fleet view (overlay, not character-scoped).
     cfg = get_app_config()
-    overrides = await load_overrides(session, br_id)
+    resolver = await load_side_resolver(
+        session, br_id,
+        baseline_alliances=set(cfg.our_alliance_ids), baseline_corps=set(cfg.our_corp_ids),
+    )
     fight_ids = list(
         (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
     )
-    kills = await build_kill_events(
-        session, fight_ids, set(cfg.our_alliance_ids), set(cfg.our_corp_ids), overrides
-    )
+    kills = await build_kill_events(session, fight_ids, resolver)
 
     return CharacterTimelineOut(
         x=tl.x,

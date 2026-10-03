@@ -14,6 +14,7 @@ from app.db.models import (
     FightKill,
     InventoryType,
     Killmail,
+    KillmailAttacker,
     SolarSystem,
 )
 
@@ -52,6 +53,10 @@ async def _seed_br(  # type: ignore[no-untyped-def]
                          victim_alliance_id=ENEMY, victim_ship_type_id=1,
                          total_value=hostile_loss))
     await session.flush()
+    # We were on the hostile's killmail — only kills with a friendly attacker count
+    # as "destroyed by us".
+    session.add(KillmailAttacker(killmail_id=base_km + 2, attacker_idx=0, character_id=10,
+                                 alliance_id=OUR_ALLI, damage_done=1, final_blow=True))
     session.add(FightKill(fight_id=fight.fight_id, killmail_id=base_km + 1, side_idx=0))
     session.add(FightKill(fight_id=fight.fight_id, killmail_id=base_km + 2, side_idx=1))
     br_id = str(uuid.uuid4())
