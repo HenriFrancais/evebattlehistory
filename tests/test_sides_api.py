@@ -133,7 +133,7 @@ async def test_sides_override_updates_br_summary(tmp_path, monkeypatch) -> None:
         # Mark the alliance hostile → we destroyed it.
         client.put(f"/api/brs/{br_id}/sides", headers=CREATOR_HEADERS,
                    json={"entity_type": "alliance", "entity_id": ENEMY_ALLI, "side": "hostile"})
-        br = client.get(f"/api/brs/{br_id}").json()
+        br = client.get(f"/api/brs/{br_id}", headers=CREATOR_HEADERS).json()
         assert br["our_isk_destroyed"] == pytest.approx(1.0)
         assert br["our_isk_lost"] == pytest.approx(0.0)
         assert br["isk_efficiency"] == pytest.approx(1.0)
@@ -142,7 +142,7 @@ async def test_sides_override_updates_br_summary(tmp_path, monkeypatch) -> None:
         # Move it to friendly → that ISK now counts as our loss.
         client.put(f"/api/brs/{br_id}/sides", headers=CREATOR_HEADERS,
                    json={"entity_type": "alliance", "entity_id": ENEMY_ALLI, "side": "friendly"})
-        br = client.get(f"/api/brs/{br_id}").json()
+        br = client.get(f"/api/brs/{br_id}", headers=CREATOR_HEADERS).json()
         assert br["our_isk_destroyed"] == pytest.approx(0.0)
         assert br["our_isk_lost"] == pytest.approx(1.0)
         assert br["isk_efficiency"] == pytest.approx(0.0)

@@ -49,6 +49,45 @@ def _clear_caches() -> None:
     HEALTH.data_source = ""
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_real_environment(tmp_path_factory, monkeypatch):  # type: ignore[no-untyped-def]
+    """Every test starts from safe, throwaway settings.
+
+    Without this, ``Settings`` reads the developer's ``.env`` — so a test that
+    does not set ``DB_PATH`` writes into the real ``var/db/dev.db`` and a real
+    ``NV_API_TOKEN`` / ``DISCORD_BOT_TOKEN`` would reach real upstreams. Tests
+    that need something else just ``monkeypatch.setenv`` over these.
+    """
+    root = tmp_path_factory.mktemp("runtime")
+    safe = {
+        "DB_PATH": str(root / "db" / "test.db"),
+        "LOG_DIR": str(root / "logs"),
+        "ESI_CACHE_DIR": str(root / "esi"),
+        "SDE_DIR": str(root / "sde"),
+        "CONFIG_PATH": str(root / "config.toml"),
+        "CONFIG_LOCAL_PATH": str(root / "config.local.toml"),
+        "DATA_SOURCE": "demo",
+        "DEV_MODE": "0",
+        "NV_TOKEN": TEST_TOKEN,
+        "NV_API_TOKEN": "",
+        "URL_PREFIX": "",
+        "DISCORD_BOT_TOKEN": "",
+        "DISCORD_FORUM_CHANNEL_ID": "",
+        "DISCORD_MEMBER_CHANNEL_ID": "",
+        "DISCORD_ALERT_CHANNEL_ID": "",
+        "PUBLIC_BASE_URL": "",
+        "BACKUP_RCLONE_REMOTE": "",
+        "RESTORE_ON_START": "0",
+    }
+    for key, value in safe.items():
+        monkeypatch.setenv(key, value)
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+    yield
+    get_settings.cache_clear()
+    get_app_config.cache_clear()
+
+
 @pytest.fixture
 def make_client(monkeypatch):
     clients: list[TestClient] = []
