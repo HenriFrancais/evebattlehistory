@@ -79,10 +79,13 @@ def _leaders_out(ld: Leaders, *, elevated: bool, own_character_ids: set[int]) ->
     )
 
 
-def _contributions_out(from_ts: int, to_ts: int, contribs: list[Contribution]) -> ContributionsOut:
+def _contributions_out(
+    from_ts: int, to_ts: int, contribs: list[Contribution], scope: str
+) -> ContributionsOut:
     return ContributionsOut(
         from_ts=from_ts,
         to_ts=to_ts,
+        scope=scope,
         rows=[
             ContributionOut(
                 source_character_id=c.source_character_id,
@@ -189,7 +192,9 @@ async def get_snapshot(
                 await fleet_snapshot(session, br_id, from_ts, to_ts, settings, character_id=cid)
             )
         contribs.sort(key=lambda c: c.value, reverse=True)
-    return _contributions_out(from_ts, to_ts, contribs)
+    return _contributions_out(
+        from_ts, to_ts, contribs, scope="all" if viewer.elevated else "own"
+    )
 
 
 @router.get("/api/brs/{br_id}/characters/{character_id}/snapshot")
@@ -214,7 +219,7 @@ async def get_character_snapshot(
     contribs = await fleet_snapshot(
         session, br_id, from_ts, to_ts, settings, character_id=character_id
     )
-    return _contributions_out(from_ts, to_ts, contribs)
+    return _contributions_out(from_ts, to_ts, contribs, scope="character")
 
 
 @router.get("/api/brs/{br_id}/composition")

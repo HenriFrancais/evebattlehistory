@@ -148,4 +148,18 @@ describe('SnapshotPanel', () => {
     await waitFor(() => expect(api.characterSnapshot).toHaveBeenCalledWith('br1', '42', 1000, 1010))
     expect(api.snapshot).not.toHaveBeenCalled()
   })
+
+  it('explains a restricted (own characters only) snapshot', async () => {
+    vi.mocked(api.snapshot).mockResolvedValue({ ...resp, scope: 'own' })
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} />)
+    const note = await screen.findByTestId('snapshot-scope-note')
+    expect(note).toHaveTextContent(/your own characters/i)
+  })
+
+  it('shows no scope note for a full snapshot', async () => {
+    vi.mocked(api.snapshot).mockResolvedValue({ ...resp, scope: 'all' })
+    render(<SnapshotPanel brId="br1" range={{ from: 1000, to: 1010 }} />)
+    await screen.findAllByText(/Crash/)
+    expect(screen.queryByTestId('snapshot-scope-note')).not.toBeInTheDocument()
+  })
 })

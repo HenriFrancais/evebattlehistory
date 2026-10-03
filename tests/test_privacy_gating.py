@@ -111,13 +111,16 @@ async def test_snapshot_member_sees_only_own_characters(privacy_br) -> None:  # 
     ids = _source_ids(member.json()["rows"])
     assert MEMBER_CHAR in ids
     assert RAZOK_CHAR not in ids
+    # The response says it is restricted, so the UI can explain the smaller view.
+    assert member.json()["scope"] == "own"
 
 
 async def test_snapshot_elevated_sees_everyone(privacy_br) -> None:  # type: ignore[no-untyped-def]
     client, br_id, _ = privacy_br
     url = f"/api/brs/{br_id}/snapshot?from_ts={T0}&to_ts={T1}"
-    ids = _source_ids(client.get(url, headers=CREATOR_HEADERS).json()["rows"])
-    assert {MEMBER_CHAR, RAZOK_CHAR} <= ids
+    body = client.get(url, headers=CREATOR_HEADERS).json()
+    assert {MEMBER_CHAR, RAZOK_CHAR} <= _source_ids(body["rows"])
+    assert body["scope"] == "all"
 
 
 async def test_reconcile_member_sees_only_own_rows(privacy_br) -> None:  # type: ignore[no-untyped-def]

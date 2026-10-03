@@ -408,6 +408,9 @@ class ContributionsOut(BaseModel):
     from_ts: int
     to_ts: int
     rows: list[ContributionOut]
+    #: Whose logs the rows cover: "all" (FC/HC fleet view), "own" (a member's own
+    #: characters only — per-pilot detail is FC/HC-only) or "character" (one pilot).
+    scope: str = "all"
 
 
 class LeaderEntryOut(BaseModel):

@@ -411,6 +411,9 @@ export interface ContributionsResponse {
   from_ts: number
   to_ts: number
   rows: Contribution[]
+  // 'all' = whole fleet (FC/HC); 'own' = only the viewer's own characters;
+  // 'character' = one pilot's perspective.
+  scope?: 'all' | 'own' | 'character'
 }
 
 export interface WeaponEffect {
