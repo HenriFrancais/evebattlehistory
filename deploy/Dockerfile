@@ -97,6 +97,9 @@ USER appuser
 # more than one worker every one of those runs/diverges per process (concurrent
 # ingests of the same BR, "database is locked", stale caches). Do not raise -w
 # without first moving that coordination into the database.
+# --timeout 120: the worker heartbeat rides on the event loop, so with a single
+# worker a request that blocks the loop past gunicorn's default 30 s would get the
+# whole app killed and restarted mid-ingest.
 # Copy the baked SDE artifact into the runtime SDE_DIR (./var/sde under the data
 # volume) on EVERY boot — not only the first — so a rebuilt image with a newer CCP
 # build replaces the volume's copy; then start the server. The startup loader reads $SDE_DIR
@@ -106,4 +109,4 @@ CMD ["sh", "-c", \
       if [ -s /app/sde-baked/manifest.json ]; then \
         cp /app/sde-baked/inventory_types.jsonl /app/sde-baked/manifest.json /app/var/sde/; \
       fi; \
-      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 1 -b 0.0.0.0:8000"]
+      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 1 --timeout 120 --graceful-timeout 30 -b 0.0.0.0:8000"]

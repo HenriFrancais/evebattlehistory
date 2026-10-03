@@ -36,3 +36,11 @@ def test_log_upload_invalidates_offbr_cache(make_client, tmp_path) -> None:  # t
     assert resp.json()[0]["status"] == "parsed"
     # A new log can add off-BR participants to any BR whose fights it overlaps.
     assert cache._fresh("some-br") is None
+
+
+def test_worker_timeout_tolerates_a_slow_request() -> None:
+    """With one worker, gunicorn's default 30 s heartbeat timeout would kill the
+    whole app if a single request blocked the event loop that long."""
+    cmd = (ROOT / "deploy" / "Dockerfile").read_text()
+    timeouts = re.findall(r"gunicorn[^\n]*?--timeout (\d+)", cmd)
+    assert timeouts and int(timeouts[0]) >= 120
