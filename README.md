@@ -135,7 +135,8 @@ cd frontend && npm run build        # production SPA build
 ## Containerised deployment (VM)
 
 The app ships as a single multistage image: stage 1 builds the SPA, stage 2 is a Python
-runtime serving the API **and** the built SPA via gunicorn (uvicorn workers), listening on
+runtime serving the API **and** the built SPA via gunicorn (a **single** uvicorn worker — the
+ingest lock and caches are in-process, so do not raise `-w`), listening on
 `:8000` inside the container and running as a non-root user. Compose publishes that to the VM's
 loopback only (`127.0.0.1:${APP_PORT}`, default `8000`), and a host Caddy reverse proxy
 terminates TLS and forwards to it. **If 8000 is already taken on the VM, set `APP_PORT` in

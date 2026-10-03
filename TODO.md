@@ -69,16 +69,16 @@ events today.
 `deploy/Dockerfile:80` runs `-w 4`, but the app keeps coordination state in
 module globals:
 
-- [ ] The ingest lock and coalescing sets (`app/ingest/jobs.py:23`) are
+- [x] The ingest lock and coalescing sets (`app/ingest/jobs.py:23`) are
       per-process, so a refresh landing on another worker runs a second ingest
       of the same BR. This is the "database is locked" race the lock was added
       to stop.
-- [ ] `sweep_pending` runs in every worker's lifespan (`app/main.py:86`), so a
+- [x] `sweep_pending` runs in every worker's lifespan (`app/main.py:86`), so a
       BR interrupted by a restart is re-ingested four times concurrently.
-- [ ] `restore_if_empty`, `create_all` and the SDE load also run four times at
+- [x] `restore_if_empty`, `create_all` and the SDE load also run four times at
       boot (`app/main.py:69-80`). On a fresh VM that is four concurrent rclone
       pulls into the same DB file.
-- [ ] The off-BR cache is invalidated only in the worker that ran the ingest
+- [x] The off-BR cache is invalidated only in the worker that ran the ingest
       (`app/fights/offbr_cache.py`); the other three serve stale participants
       for up to 15 minutes. Log upload never invalidates it at all.
 

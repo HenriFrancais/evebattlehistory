@@ -16,6 +16,7 @@ from app.api.auth import current_user
 from app.api.deps import SessionDep, SessionMakerDep
 from app.config import get_settings
 from app.db.models import GamelogFile, LogEvent
+from app.fights.offbr_cache import get_offbr_cache
 from app.fights.offbr_resolve import resolve_log_characters
 from app.logs.associate import associate_file_to_all
 from app.logs.extract import build_battle_log
@@ -85,6 +86,9 @@ async def upload_logs(
                     except Exception as exc:
                         log.warning("logs.upload.resolve_failed", error=str(exc))
                 await session.commit()
+            if not result.duplicate and result.parse_status == "parsed":
+                # New events can add off-BR participants to any BR they overlap.
+                get_offbr_cache().clear()
 
             status = "duplicate" if result.duplicate else result.parse_status
             results.append(

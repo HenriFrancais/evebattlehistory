@@ -71,10 +71,16 @@ USER appuser
 # to the host's loopback only (127.0.0.1:${APP_PORT}:8000), so host-side Caddy can
 # reach it while the outside world cannot. Binding 127.0.0.1 here would make the
 # published port unreachable from the host.
+# ONE worker, deliberately. The app is async (one process handles concurrent
+# requests) and SQLite has a single writer; the ingest lock, the pending-ingest
+# sweep, restore-on-start and the off-BR cache all live in process memory. With
+# more than one worker every one of those runs/diverges per process (concurrent
+# ingests of the same BR, "database is locked", stale caches). Do not raise -w
+# without first moving that coordination into the database.
 # Seed the runtime SDE_DIR (./var/sde under the data volume) from the baked
 # artifact on first boot, then start the server. The startup loader reads $SDE_DIR
 # and loads the artifact into the DB if the build advanced.
 CMD ["sh", "-c", \
      "mkdir -p /app/var/sde \
       && cp -n /app/sde-baked/inventory_types.jsonl /app/sde-baked/manifest.json /app/var/sde/ 2>/dev/null || true; \
-      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8000"]
+      exec gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 1 -b 0.0.0.0:8000"]
