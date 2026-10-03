@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,7 +156,11 @@ async def persist_killmails(
         al_stmt = sqlite_insert(Alliance).values(al_rows)
         al_stmt = al_stmt.on_conflict_do_update(
             index_elements=["alliance_id"],
-            set_={"name": al_stmt.excluded.name, "last_seen_at": al_stmt.excluded.last_seen_at},
+            # coalesce: a failed ESI name lookup (name=None) must not erase a known name.
+            set_={
+                "name": func.coalesce(al_stmt.excluded.name, Alliance.name),
+                "last_seen_at": al_stmt.excluded.last_seen_at,
+            },
         )
         await session.execute(al_stmt)
 
@@ -176,7 +180,7 @@ async def persist_killmails(
         co_stmt = co_stmt.on_conflict_do_update(
             index_elements=["corporation_id"],
             set_={
-                "name": co_stmt.excluded.name,
+                "name": func.coalesce(co_stmt.excluded.name, Corporation.name),
                 "alliance_id": co_stmt.excluded.alliance_id,
                 "last_seen_at": co_stmt.excluded.last_seen_at,
             },
@@ -200,7 +204,7 @@ async def persist_killmails(
         ch_stmt = ch_stmt.on_conflict_do_update(
             index_elements=["character_id"],
             set_={
-                "name": ch_stmt.excluded.name,
+                "name": func.coalesce(ch_stmt.excluded.name, Character.name),
                 "corporation_id": ch_stmt.excluded.corporation_id,
                 "alliance_id": ch_stmt.excluded.alliance_id,
                 "last_seen_at": ch_stmt.excluded.last_seen_at,

@@ -80,7 +80,7 @@ def get_source(url: str, settings: Settings) -> BrSource:
         return DemoSource(settings.demo_data_dir)
     host = urlparse(url).netloc
     if "zkillboard.com" in host:
-        return ZkbSource()
+        return ZkbSource(user_agent=settings.esi_user_agent)
     if "evetools.org" in host:
         return AuroraSource()
     raise ValueError(f"Unknown BR source URL: {url}")
@@ -126,7 +126,8 @@ async def resolve_source(
         from app.ingest.sources.zkillboard import fetch_window_killmails
 
         async with httpx.AsyncClient(
-            headers={"User-Agent": "nv-br"}, timeout=30.0
+            headers={"User-Agent": settings.esi_user_agent, "Accept-Encoding": "gzip"},
+            timeout=30.0,
         ) as client:
             refs, values = await fetch_window_killmails(
                 client, source_system_id, source_window_start, source_window_end

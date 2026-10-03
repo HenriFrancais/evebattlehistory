@@ -13,6 +13,25 @@ from app.observability.logging import log
 
 ESI_BASE = "https://esi.evetech.net/latest"
 _KILLMAIL_ATTEMPTS = 3
+_LIMIT_ATTEMPTS = 3
+#: Below this many remaining errors / requests in the window, wait for the reset.
+_ERROR_BUDGET_FLOOR = 10.0
+
+
+def _to_float(value: str | None, default: float) -> float:
+    try:
+        return float(value) if value is not None else default
+    except ValueError:
+        return default
+
+
+def _header_seconds(resp: httpx.Response, *names: str, default: float) -> float:
+    """First parseable header among *names* as seconds, clamped to [0, 60]."""
+    for name in names:
+        raw = resp.headers.get(name)
+        if raw is not None:
+            return max(0.0, min(_to_float(raw, default), 60.0))
+    return default
 
 
 class EsiClient:
@@ -33,18 +52,38 @@ class EsiClient:
             headers={"User-Agent": user_agent}, timeout=timeout_s
         )
 
-    async def _get(self, url: str, **kwargs: object) -> httpx.Response:
-        """GET with rate-limit + 429 handling."""
-        resp = await self._http.get(url, **kwargs)  # type: ignore[arg-type]
-        rl_remaining = resp.headers.get("X-Ratelimit-Remaining")
-        if rl_remaining is not None and float(rl_remaining) < 10:
+    async def _request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+        """Send one ESI request, respecting ESI's rate and error limits.
+
+        Used for EVERY call (GET and POST). ESI bans clients that keep sending once
+        the error budget is spent, so:
+          * 420 (error-limited) / 429 → wait ``X-ESI-Error-Limit-Reset`` or
+            ``Retry-After`` and retry, up to ``_LIMIT_ATTEMPTS`` times;
+          * a nearly-spent budget on an otherwise fine response → wait out the
+            window before returning, so the next call starts with a fresh budget.
+        """
+        resp = await self._http.request(method, url, **kwargs)  # type: ignore[arg-type]
+        for _ in range(_LIMIT_ATTEMPTS - 1):
+            if resp.status_code not in (420, 429):
+                break
+            delay = _header_seconds(resp, "Retry-After", "X-ESI-Error-Limit-Reset", default=5.0)
+            log.warning("esi.rate_limited", status=resp.status_code, wait_s=delay, url=url)
+            await asyncio.sleep(delay)
+            resp = await self._http.request(method, url, **kwargs)  # type: ignore[arg-type]
+        else:
+            return resp
+        remain = resp.headers.get("X-ESI-Error-Limit-Remain")
+        if remain is not None and _to_float(remain, 100.0) < _ERROR_BUDGET_FLOOR:
+            await asyncio.sleep(_header_seconds(resp, "X-ESI-Error-Limit-Reset", default=5.0))
+        elif _to_float(resp.headers.get("X-Ratelimit-Remaining"), 100.0) < _ERROR_BUDGET_FLOOR:
             await asyncio.sleep(0.5)
-        if resp.status_code in (429, 420):
-            retry_after = float(resp.headers.get("Retry-After", "5"))
-            log.warning("esi.rate_limited", retry_after=retry_after, url=url)
-            await asyncio.sleep(retry_after)
-            resp = await self._http.get(url, **kwargs)  # type: ignore[arg-type]
         return resp
+
+    async def _get(self, url: str, **kwargs: object) -> httpx.Response:
+        return await self._request("GET", url, **kwargs)
+
+    async def _post(self, url: str, **kwargs: object) -> httpx.Response:
+        return await self._request("POST", url, **kwargs)
 
     async def fetch_killmail(self, km_id: int, km_hash: str) -> dict[str, object]:
         """Fetch a killmail, checking disk cache first."""
@@ -103,7 +142,7 @@ class EsiClient:
     ) -> dict[int, dict[str, str]]:
         """POST /universe/names/ for a chunk of ids. Returns {id: {name, category}}."""
         url = f"{ESI_BASE}/universe/names/"
-        resp = await self._http.post(url, json=ids, timeout=self._timeout_s)
+        resp = await self._post(url, json=ids, timeout=self._timeout_s)
         resp.raise_for_status()
         data: list[dict[str, object]] = resp.json()
         return {
@@ -154,7 +193,7 @@ class EsiClient:
             if not chunk:
                 continue
             try:
-                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp = await self._post(url, json=chunk, timeout=self._timeout_s)
                 resp.raise_for_status()
                 data: dict[str, object] = resp.json()
                 for ch in data.get("characters", []) or []:  # type: ignore[union-attr]
@@ -178,7 +217,7 @@ class EsiClient:
             if not chunk:
                 continue
             try:
-                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp = await self._post(url, json=chunk, timeout=self._timeout_s)
                 resp.raise_for_status()
                 data = resp.json()
                 systems = data.get("systems", []) if isinstance(data, dict) else []
@@ -206,7 +245,7 @@ class EsiClient:
             if not chunk:
                 continue
             try:
-                resp = await self._http.post(url, json=chunk, timeout=self._timeout_s)
+                resp = await self._post(url, json=chunk, timeout=self._timeout_s)
                 resp.raise_for_status()
                 rows: list[dict[str, object]] = resp.json()
                 for r in rows:

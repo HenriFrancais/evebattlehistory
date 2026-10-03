@@ -75,8 +75,10 @@ class Settings(BaseSettings):
     # Files accepted in ONE upload request (the SPA sends one file per request).
     max_upload_files: int = 50
 
-    # ESI / outbound etiquette.
-    esi_user_agent: str = "nv-br (NV Tools; contact admin)"
+    # ESI / zKillboard etiquette: both ask every client to identify itself with a
+    # way to reach the maintainer. Set ESI_USER_AGENT to include a contact (e-mail
+    # or Discord handle) for this deployment.
+    esi_user_agent: str = "nv-br/0.1 (+https://github.com/HenriFrancais/evebattlehistory)"
     upstream_timeout_s: float = 30.0
 
     # Stale-while-revalidate TTL for the roster snapshot.

@@ -151,6 +151,9 @@ def _extract_refs_from_related(
 class ZkbSource:
     """Resolves a zKillboard /related/ URL to a list of killmail refs."""
 
+    def __init__(self, user_agent: str = "nv-br") -> None:
+        self._user_agent = user_agent
+
     async def resolve(self, url: str) -> ResolvedBr:
         system_id, dt_str = parse_zkb_url(url)
 
@@ -158,7 +161,7 @@ class ZkbSource:
         values: dict[int, float | None] = {}
         title: str | None = None
         async with httpx.AsyncClient(
-            headers={"User-Agent": "nv-br"}, timeout=30.0
+            headers={"User-Agent": self._user_agent, "Accept-Encoding": "gzip"}, timeout=30.0
         ) as client:
             api_url = f"{ZKB_API}/related/{system_id}/{dt_str}/"
             data = await zkb_get_json(client, api_url)

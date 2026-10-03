@@ -259,13 +259,13 @@ outside any fight window.
 
 ### 15. Upstream API handling
 
-- [ ] The `/universe/names`, `/universe/ids` and `/characters/affiliation`
+- [x] The `/universe/names`, `/universe/ids` and `/characters/affiliation`
       POSTs bypass `_get`, so they have no 420/429 handling
       (`app/esi/client.py:93`, `:144`, `:168`, `:196`). `_get` retries once.
-- [ ] zKillboard requests send `User-Agent: nv-br` with no contact and no
+- [x] zKillboard requests send `User-Agent: nv-br` with no contact and no
       backoff (`app/ingest/sources/factory.py:129`,
       `app/ingest/sources/zkillboard.py:124`, `app/ingest/zkb_value.py:59`).
-- [ ] When ESI name resolution fails, the upserts overwrite existing alliance,
+- [x] When ESI name resolution fails, the upserts overwrite existing alliance,
       corporation and character names with NULL (`app/ingest/persist.py:153-208`).
 
 ### 16. Start-up and build safety

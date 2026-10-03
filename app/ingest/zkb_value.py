@@ -56,7 +56,8 @@ async def backfill_killmail_values(
 
     sem = asyncio.Semaphore(_MAX_CONCURRENCY)
     async with httpx.AsyncClient(
-        headers={"User-Agent": "nv-br", "Accept-Encoding": "gzip"}, timeout=30.0
+        headers={"User-Agent": settings.esi_user_agent, "Accept-Encoding": "gzip"},
+        timeout=30.0,
     ) as client:
         # Fetch concurrently (bounded), but DO NOT touch the shared AsyncSession
         # here — concurrent session.execute on one session is unsafe.
