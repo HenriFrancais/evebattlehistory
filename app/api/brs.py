@@ -55,6 +55,7 @@ from app.esi.demo import DemoEsiClient
 from app.fights.participants import ParticipantInfo, br_participants
 from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
+from app.ingest.sources.zkillboard import MAX_WINDOW_HOURS
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
 from app.services.br_discord import schedule_br_announce
@@ -91,6 +92,12 @@ def _validate_sources(sources: list[BrSourceIn]) -> None:
                 raise HTTPException(
                     status_code=400,
                     detail="window_start must be before window_end",
+                )
+            if src.window_end - src.window_start > dt.timedelta(hours=MAX_WINDOW_HOURS):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"window may span at most {MAX_WINDOW_HOURS} hours; "
+                    "add several window sources for a longer battle",
                 )
         else:
             raise HTTPException(status_code=400, detail=f"Unknown source kind: {src.kind!r}")
@@ -919,6 +926,9 @@ def _br_to_summary(br: BattleReport) -> BrSummary:
         fight_count=br.fight_count,
         battle_at=br.battle_at,
         created_at=br.created_at,
+        km_count=br.km_count,
+        km_expected=br.km_expected,
+        warning_text=br.warning_text,
     )
 
 

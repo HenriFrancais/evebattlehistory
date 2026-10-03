@@ -193,6 +193,35 @@ describe('BrDetailPage', () => {
     expect(screen.queryByTestId('coverage-matrix')).not.toBeInTheDocument()
   })
 
+  it('shows the ingest warning when killmails are missing', async () => {
+    vi.mocked(api.getBr).mockResolvedValue({
+      ...mockBr,
+      km_count: 4,
+      km_expected: 5,
+      warning_text: 'Only 4 of 5 killmails could be fetched from ESI; totals are incomplete.',
+    })
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+    renderBrDetailPage()
+
+    const banner = await screen.findByTestId('ingest-warning')
+    expect(banner).toHaveTextContent(/Only 4 of 5 killmails/)
+  })
+
+  it('shows no ingest warning for a complete battle report', async () => {
+    vi.mocked(api.getBr).mockResolvedValue(mockBr)
+    vi.mocked(api.me).mockResolvedValue(makeMeResponse(false))
+    vi.mocked(api.myBrCoverage).mockResolvedValue(mockMyCoverage)
+    vi.mocked(api.fleetTimeline).mockResolvedValue(emptyFleet)
+
+    renderBrDetailPage()
+
+    await screen.findByTestId('summary-section')
+    expect(screen.queryByTestId('ingest-warning')).not.toBeInTheDocument()
+  })
+
   it('FC (can_create_br=true) sees the full coverage matrix', async () => {
     vi.mocked(api.getBr).mockResolvedValue(mockBr)
     vi.mocked(api.me).mockResolvedValue(makeMeResponse(true))

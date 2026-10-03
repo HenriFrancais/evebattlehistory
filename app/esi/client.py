@@ -12,6 +12,7 @@ from app.config import Settings
 from app.observability.logging import log
 
 ESI_BASE = "https://esi.evetech.net/latest"
+_KILLMAIL_ATTEMPTS = 3
 
 
 class EsiClient:
@@ -51,15 +52,27 @@ class EsiClient:
         if cache_path.exists():
             return json.loads(cache_path.read_text())  # type: ignore[no-any-return]
         url = f"{ESI_BASE}/killmails/{km_id}/{km_hash}/"
-        try:
-            resp = await self._get(url)
-            resp.raise_for_status()
-            data: dict[str, object] = resp.json()
-            cache_path.write_text(json.dumps(data))
-            return data
-        except Exception as exc:
-            log.warning("esi.fetch_killmail_failed", km_id=km_id, error=str(exc))
-            raise
+        # Retry transient failures (network, 5xx) so one blip does not leave a hole
+        # in the battle report; a 4xx (bad id/hash) will not improve on retry.
+        last_exc: Exception | None = None
+        for attempt in range(_KILLMAIL_ATTEMPTS):
+            try:
+                resp = await self._get(url)
+                resp.raise_for_status()
+                data: dict[str, object] = resp.json()
+                cache_path.write_text(json.dumps(data))
+                return data
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code < 500:
+                    break
+            except httpx.RequestError as exc:
+                last_exc = exc
+            if attempt < _KILLMAIL_ATTEMPTS - 1:
+                await asyncio.sleep(float(2**attempt))
+        log.warning("esi.fetch_killmail_failed", km_id=km_id, error=str(last_exc))
+        assert last_exc is not None
+        raise last_exc
 
     async def fetch_killmails(
         self, refs: list[tuple[int, str]]

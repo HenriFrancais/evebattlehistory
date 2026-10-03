@@ -188,7 +188,12 @@ class BattleReport(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime)
     started_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    #: Killmails actually fetched + persisted for this BR.
     km_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: Killmails the sources said exist. km_count < km_expected ⇒ incomplete ingest.
+    km_expected: Mapped[int] = mapped_column(Integer, default=0)
+    #: Non-fatal ingest problem shown to users (e.g. "only 4 of 5 killmails fetched").
+    warning_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # BR-level fight rollup (populated by aggregate_br in Task 1.2)
     our_isk_destroyed: Mapped[float] = mapped_column(Float, default=0.0)

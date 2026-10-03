@@ -2,20 +2,57 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import re
 from urllib.parse import urlparse
 
 import httpx
 
-from app.ingest.sources.base import ResolvedBr
+from app.ingest.sources.base import BrUnavailable, ResolvedBr
 from app.observability.logging import log
 
 ZKB_API = "https://zkillboard.com/api"
 _RELATED_RE = re.compile(r"^/related/(\d+)/(\d{12})/?$")
 
-# Safety cap on hourly anchors queried per window (covers a 2-day window).
-_MAX_WINDOW_ANCHORS = 49
+#: Longest window source accepted (validated at the API; one /related/ call per hour).
+MAX_WINDOW_HOURS = 48
+# Hourly anchors needed to cover MAX_WINDOW_HOURS (inclusive of both ends).
+_MAX_WINDOW_ANCHORS = MAX_WINDOW_HOURS + 1
+
+_MAX_ATTEMPTS = 3
+
+
+async def zkb_get_json(client: httpx.AsyncClient, url: str) -> object:
+    """GET *url* from zKillboard and return its JSON, retrying transient failures.
+
+    429 → wait ``Retry-After``; 5xx / network error → short exponential backoff.
+    After ``_MAX_ATTEMPTS`` (or on any other status) raises ``BrUnavailable`` —
+    callers must never mistake "zKill did not answer" for "no kills happened".
+    """
+    last = "no response"
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = await client.get(url)
+        except httpx.RequestError as exc:
+            last = f"network error: {exc}"
+            await asyncio.sleep(float(2**attempt))
+            continue
+        if resp.status_code == 200:
+            return resp.json()
+        last = f"HTTP {resp.status_code}"
+        log.warning("zkb.api_error", status=resp.status_code, url=url, attempt=attempt + 1)
+        if resp.status_code == 429:
+            try:
+                delay = float(resp.headers.get("Retry-After", "5"))
+            except ValueError:
+                delay = 5.0
+            await asyncio.sleep(delay)
+        elif resp.status_code >= 500:
+            await asyncio.sleep(float(2**attempt))
+        else:
+            break  # other 4xx: retrying will not help
+    raise BrUnavailable(f"zKillboard request failed ({last}): {url}")
 
 
 def _as_utc(d: dt.datetime) -> dt.datetime:
@@ -124,22 +161,12 @@ class ZkbSource:
             headers={"User-Agent": "nv-br"}, timeout=30.0
         ) as client:
             api_url = f"{ZKB_API}/related/{system_id}/{dt_str}/"
-            resp = await client.get(api_url)
-            if resp.status_code == 200:
-                data = resp.json()
-                refs, values = _extract_refs_from_related(data)
-                if isinstance(data, dict):
-                    system_name = data.get("systemName")
-                    if isinstance(system_name, str) and system_name:
-                        title = f"{system_name} {dt_str}"
-            else:
-                log.warning(
-                    "zkb.api_error",
-                    status=resp.status_code,
-                    system_id=system_id,
-                    dt_str=dt_str,
-                )
-                values = {}
+            data = await zkb_get_json(client, api_url)
+            refs, values = _extract_refs_from_related(data)
+            if isinstance(data, dict):
+                system_name = data.get("systemName")
+                if isinstance(system_name, str) and system_name:
+                    title = f"{system_name} {dt_str}"
 
         return ResolvedBr(
             source="zkb",
@@ -168,6 +195,9 @@ async def fetch_window_killmails(
     wins), and filter each kill by its real ``killmail_time`` so the precise
     window — not just the hourly buckets — is respected. Kills whose time can't
     be parsed are kept (defensive: better an extra kill than a dropped one).
+
+    An hour that cannot be fetched (after retries) raises ``BrUnavailable`` rather
+    than being skipped, so a window is never silently missing part of the fight.
     """
     start = _as_utc(window_start)
     end = _as_utc(window_end)
@@ -180,17 +210,8 @@ async def fetch_window_killmails(
     while anchor <= end and queried < _MAX_WINDOW_ANCHORS:
         queried += 1
         api_url = f"{ZKB_API}/related/{system_id}/{anchor:%Y%m%d%H%M}/"
-        resp = await client.get(api_url)
-        if resp.status_code != 200:
-            log.warning(
-                "zkb.api_error",
-                status=resp.status_code,
-                system_id=system_id,
-                anchor=f"{anchor:%Y%m%d%H%M}",
-            )
-            anchor += dt.timedelta(hours=1)
-            continue
-        for km_id, (km_hash, value, ktime) in _extract_kills_detailed(resp.json()).items():
+        data = await zkb_get_json(client, api_url)
+        for km_id, (km_hash, value, ktime) in _extract_kills_detailed(data).items():
             if km_id in refs:
                 continue
             if ktime is not None and not (start <= ktime <= end):

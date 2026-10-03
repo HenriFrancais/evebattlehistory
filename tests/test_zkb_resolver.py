@@ -68,23 +68,6 @@ async def test_resolve_extracts_both_teams(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_resolve_non200_returns_empty_refs(monkeypatch: pytest.MonkeyPatch):
-    """resolve() returns empty refs (no crash) on non-200 response."""
-    pre_built = httpx.AsyncClient(transport=_make_transport(status=503, body={}))
-
-    import app.ingest.sources.zkillboard as _mod
-
-    monkeypatch.setattr(_mod.httpx, "AsyncClient", lambda **kwargs: pre_built)
-
-    source = _mod.ZkbSource()
-    result = await source.resolve(
-        f"https://zkillboard.com/related/{_SYSTEM_ID}/{_DT_STR}/"
-    )
-
-    assert result.refs == []
-
-
-@pytest.mark.asyncio
 async def test_resolve_missing_summary_returns_empty(monkeypatch: pytest.MonkeyPatch):
     """resolve() returns empty refs when response has no 'summary' key."""
     pre_built = httpx.AsyncClient(
@@ -125,25 +108,6 @@ async def test_fetch_window_killmails_extracts_both_teams():
         )
 
     assert set(refs) == _EXPECTED_REFS
-
-
-@pytest.mark.asyncio
-async def test_fetch_window_killmails_non200_empty():
-    """fetch_window_killmails returns [] on non-200."""
-    import datetime as dt
-
-    from app.ingest.sources.zkillboard import fetch_window_killmails
-
-    transport = _make_transport(status=404, body={})
-    async with httpx.AsyncClient(transport=transport) as client:
-        refs, _values = await fetch_window_killmails(
-            client,
-            _SYSTEM_ID,
-            dt.datetime(2025, 6, 17, 15, 0, tzinfo=dt.UTC),
-            dt.datetime(2025, 6, 17, 17, 0, tzinfo=dt.UTC),
-        )
-
-    assert refs == []
 
 
 def _dttm(ms: int) -> dict:

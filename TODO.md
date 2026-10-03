@@ -134,15 +134,15 @@ progress list.
 
 ### 6. Ingest reports "ready" when killmails are missing
 
-- [ ] `fetch_killmails` drops any killmail that fails (`app/esi/client.py:71-79`)
+- [x] `fetch_killmails` drops any killmail that fails (`app/esi/client.py:71-79`)
       while `km_count` is set from the requested refs
       (`app/ingest/pipeline.py:195`). The BR shows a full count with fewer
       kills, and nothing flags it.
-- [ ] A non-200 from zKillboard yields empty refs and the source is still
+- [x] A non-200 from zKillboard yields empty refs and the source is still
       marked `ok` (`app/ingest/sources/zkillboard.py:128-142`,
       `app/ingest/pipeline.py:135`). A rate-limited request produces an empty,
       "ready" BR.
-- [ ] Window sources skip failed hourly anchors and stop silently at 49
+- [x] Window sources skip failed hourly anchors and stop silently at 49
       (`app/ingest/sources/zkillboard.py:18`, `:184-192`).
 
 Fix: record fetched vs expected, surface "N of M killmails" and a

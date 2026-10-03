@@ -95,6 +95,11 @@ class BrSummary(BaseModel):
     fight_count: int
     battle_at: dt.datetime | None
     created_at: dt.datetime
+    #: Killmails fetched vs. killmails the sources listed; fewer ⇒ incomplete ingest.
+    km_count: int = 0
+    km_expected: int = 0
+    #: Non-fatal ingest problem to show the user (None when the ingest was clean).
+    warning_text: str | None = None
     # Timeline-list extras (populated by list/filter endpoints; default elsewhere).
     systems: list[str] = []
     #: Solar-system ids parallel to `systems` (same order/length); empty when

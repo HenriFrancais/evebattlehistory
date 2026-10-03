@@ -606,6 +606,17 @@ export function BrDetailPage() {
         </div>
       </div>
 
+      {br.warning_text && (
+        <div
+          className="panel"
+          role="alert"
+          data-testid="ingest-warning"
+          style={{ borderColor: 'var(--warn, #d9a441)', color: 'var(--warn, #d9a441)' }}
+        >
+          ⚠ {br.warning_text}
+        </div>
+      )}
+
       <div className="panel" data-testid="summary-section">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
           <div>

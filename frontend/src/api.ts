@@ -39,6 +39,11 @@ export interface BrSummary {
   fight_count: number
   battle_at: string | null
   created_at: string
+  // Killmails fetched vs. listed by the sources; fewer ⇒ incomplete ingest.
+  km_count?: number
+  km_expected?: number
+  // Non-fatal ingest problem to show the user (null when the ingest was clean).
+  warning_text?: string | null
   // Timeline-list extras (populated by list/filter endpoints).
   systems?: string[]
   // Solar-system ids parallel to `systems` (same order/length).

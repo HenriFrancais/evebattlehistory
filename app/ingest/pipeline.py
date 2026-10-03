@@ -192,7 +192,7 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 br.source_ref = primary_source_ref
             if primary_title and not br.title:
                 br.title = primary_title
-            br.km_count = len(refs)
+            br.km_expected = len(refs)
             br.progress_pct = 25
             await session.commit()
 
@@ -218,6 +218,26 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
             esi = get_esi_client(settings)  # type: ignore[assignment]
 
         killmails_json = await esi.fetch_killmails(refs)
+
+        # Never report a clean "ready" with killmails missing: record what was
+        # actually fetched against what the sources listed, and say so.
+        fetched = len(killmails_json)
+        warning: str | None = None
+        if not refs:
+            warning = "No killmails were found by any source."
+        elif fetched < len(refs):
+            warning = (
+                f"Only {fetched} of {len(refs)} killmails could be fetched from ESI; "
+                "totals are incomplete. Refresh this battle report to retry."
+            )
+            log.warning("pipeline.incomplete", br_id=br_id, fetched=fetched, expected=len(refs))
+        async with session_maker() as session:
+            br = (
+                await session.execute(select(BattleReport).where(BattleReport.br_id == br_id))
+            ).scalar_one()
+            br.km_count = fetched
+            br.warning_text = warning
+            await session.commit()
 
         # Collect all IDs that need name resolution
         ids_to_resolve: set[int] = set()

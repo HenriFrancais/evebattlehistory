@@ -52,10 +52,18 @@ def _m001_legacy_hand_altered_columns(conn: Connection) -> None:
     )
 
 
+def _m002_ingest_completeness(conn: Connection) -> None:
+    add_column_if_missing(conn, "battle_report", "km_expected", "INTEGER NOT NULL DEFAULT 0")
+    add_column_if_missing(conn, "battle_report", "warning_text", "TEXT")
+    # Existing BRs predate the distinction; assume they were complete.
+    conn.exec_driver_sql("UPDATE battle_report SET km_expected = km_count WHERE km_expected = 0")
+
+
 Migration = tuple[int, str, Callable[[Connection], None]]
 
 MIGRATIONS: list[Migration] = [
     (1, "legacy hand-altered columns", _m001_legacy_hand_altered_columns),
+    (2, "battle_report ingest completeness", _m002_ingest_completeness),
 ]
 
 LATEST_VERSION: int = MIGRATIONS[-1][0]
