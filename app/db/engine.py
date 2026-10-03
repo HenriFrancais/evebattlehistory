@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import Settings
+from app.db.migrate import (
+    LATEST_VERSION,
+    existing_db_version,
+    run_migrations,
+    snapshot_before_migrate,
+)
 from app.db.models import Base
 from app.observability.logging import log
 
@@ -57,10 +63,17 @@ def get_sessionmaker(settings: Settings) -> async_sessionmaker[AsyncSession]:
 
 
 async def init_models(settings: Settings) -> None:
+    """Create missing tables, then bring an existing database up to the latest
+    schema version (see app/db/migrate.py). A database with pending migrations
+    is snapshotted first."""
+    version = existing_db_version(settings.db_path)
+    if version is not None and version < LATEST_VERSION:
+        snapshot_before_migrate(settings.db_path, version)
     engine = get_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    log.info("db.models_initialized")
+        await conn.run_sync(run_migrations, version)
+    log.info("db.models_initialized", from_version=version, version=LATEST_VERSION)
 
 
 def reset_engine_for_tests() -> None:

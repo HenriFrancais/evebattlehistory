@@ -215,7 +215,9 @@ docker compose logs -f nvbr                        # watch startup
 
 `deploy/deploy.sh` does a full update in one command: `git pull`, rebuild the image
 (including the SPA), restart the container, wait until it's healthy, then run any data
-migrations. New DB tables (e.g. `br_char_ship`) are created automatically on startup.
+migrations. Schema changes are applied automatically on startup: new tables by `create_all`,
+changes to existing tables by the versioned runner in `app/db/migrate.py` (which first snapshots
+the database to `<db>.pre-v<N>` next to it).
 
 ```bash
 # Routine code-only deploy:

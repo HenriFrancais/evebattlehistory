@@ -113,7 +113,6 @@ class Killmail(Base):
     solo_kill: Mapped[bool] = mapped_column(Boolean, default=False)
     points: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # prod: ALTER TABLE killmail ADD COLUMN damage_taken INTEGER;
     # NOTE: damage_taken backfills only on killmail re-ingest (ESI/zKB pipeline re-run).
     # Running `python -m app.logs.reparse` does NOT backfill this column — reparse only
     # replays gamelogs and updates LogEvent columns (source_name, target_name, etc.).
@@ -202,8 +201,6 @@ class BattleReport(Base):
     # Discord forum thread opened when this BR was created (see app/services/
     # br_discord.py). thread_url is the FC/HC-only jump link surfaced in the UI;
     # thread_id doubles as an idempotency marker. BigInteger: snowflakes are 64-bit.
-    # prod: ALTER TABLE battle_report ADD COLUMN discord_thread_id BIGINT;
-    # prod: ALTER TABLE battle_report ADD COLUMN discord_thread_url TEXT;
     discord_thread_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     discord_thread_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -466,24 +463,8 @@ class GamelogFile(Base):
     )
 
 
-# Schema is created via Base.metadata.create_all (no Alembic).
-# An existing populated DB needs:
-#   ALTER TABLE log_event ADD COLUMN source_name VARCHAR(128);
-#   ALTER TABLE log_event ADD COLUMN target_name VARCHAR(128);
-#   ALTER TABLE log_event ADD COLUMN authoritative BOOLEAN DEFAULT 0;
-#   ALTER TABLE log_event ADD COLUMN dedupe_suppressed BOOLEAN DEFAULT 0;
-# Then reparse: python -m app.logs.reparse
-# For log-identified off-BR participants, an existing DB also needs:
-#   CREATE TABLE br_char_ship (
-#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
-#     character_id BIGINT NOT NULL, ship_type_id BIGINT NOT NULL,
-#     set_by_user VARCHAR(128), set_at DATETIME NOT NULL,
-#     PRIMARY KEY (br_id, character_id));
-#   CREATE TABLE br_char_side (
-#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
-#     character_id BIGINT NOT NULL, side VARCHAR(16) NOT NULL,
-#     set_by_user VARCHAR(128), set_at DATETIME NOT NULL,
-#     PRIMARY KEY (br_id, character_id));
+# New tables are created by Base.metadata.create_all; any change to an EXISTING
+# table (new column/index) must be added as a migration in app/db/migrate.py.
 class LogEvent(Base):
     __tablename__ = "log_event"
 
@@ -571,42 +552,6 @@ class LogEventBucket(Base):
 # So they get a parallel, thinner pipeline (app/logs/broadcast_*.py) anchored to a
 # user-supplied br_id, but reuse the time-window fight-stamping approach from
 # associate.py once absolute dates are reconstructed (see broadcast_parse.reconstruct_dates).
-#
-# An existing populated DB needs:
-#   CREATE TABLE broadcast_file (
-#     broadcast_file_id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     br_id VARCHAR(64) NOT NULL REFERENCES battle_report(br_id) ON DELETE CASCADE,
-#     uploaded_by_user VARCHAR(128) NOT NULL,
-#     original_filename VARCHAR(256),
-#     stored_path TEXT NOT NULL,
-#     sha256 VARCHAR(64) NOT NULL UNIQUE,
-#     mime VARCHAR(64) NOT NULL,
-#     size INTEGER NOT NULL,
-#     parse_status VARCHAR(16) NOT NULL,
-#     broadcast_count INTEGER NOT NULL DEFAULT 0,
-#     anchor_date DATE,
-#     log_start_at DATETIME,
-#     log_end_at DATETIME,
-#     superseded BOOLEAN NOT NULL DEFAULT 0,
-#     uploaded_at DATETIME NOT NULL);
-#   CREATE INDEX ix_broadcast_file_br_id ON broadcast_file (br_id);
-#   CREATE INDEX ix_broadcast_file_sha256 ON broadcast_file (sha256);
-#   CREATE TABLE broadcast (
-#     broadcast_id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     file_id INTEGER NOT NULL REFERENCES broadcast_file(broadcast_file_id) ON DELETE CASCADE,
-#     br_id VARCHAR(64) NOT NULL,
-#     fight_id INTEGER,
-#     ts DATETIME NOT NULL,
-#     kind VARCHAR(16) NOT NULL,
-#     subject_name VARCHAR(128) NOT NULL,
-#     subject_ship VARCHAR(128),
-#     subject_character_id BIGINT,
-#     seq INTEGER NOT NULL,
-#     raw_line TEXT NOT NULL);
-#   CREATE INDEX ix_broadcast_br_id ON broadcast (br_id);
-#   CREATE INDEX ix_broadcast_fight_id ON broadcast (fight_id);
-#   CREATE INDEX ix_broadcast_fight_kind ON broadcast (fight_id, kind);
-#   CREATE INDEX ix_broadcast_ts ON broadcast (ts);
 
 
 #: Broadcast kinds parsed from a fleet-broadcast log.
@@ -709,43 +654,6 @@ class Broadcast(Base):
 # comments and emoji reactions.  All three tables are BR-scoped and cascade on
 # BR delete.  The AAR is authored/edited/deleted by FC / High Command; comments
 # and reactions are open to all authenticated users (author-owned).
-#
-# Prod DDL (no Alembic — apply by hand to an existing DB; create_all handles
-# fresh DBs):
-#   -- FK clauses below carry ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
-#   --    (elided in-comment for width; use the same _FK options as sibling tables).
-#   CREATE TABLE aar (
-#     aar_id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     br_id VARCHAR(64) NOT NULL UNIQUE REFERENCES battle_report(br_id) ...,
-#     body TEXT NOT NULL,
-#     created_by_user VARCHAR(128) NOT NULL,
-#     created_by_char_id BIGINT,
-#     updated_by_user VARCHAR(128) NOT NULL,
-#     created_at DATETIME NOT NULL,
-#     updated_at DATETIME NOT NULL
-#   );
-#   CREATE TABLE aar_comment (
-#     comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     br_id VARCHAR(64) NOT NULL,
-#     aar_id INTEGER NOT NULL REFERENCES aar(aar_id) ...,
-#     author_user VARCHAR(128) NOT NULL,
-#     author_char_id BIGINT,
-#     body TEXT NOT NULL,
-#     created_at DATETIME NOT NULL,
-#     updated_at DATETIME
-#   );
-#   CREATE INDEX ix_aar_comment_aar_id ON aar_comment (aar_id);
-#   CREATE TABLE aar_reaction (
-#     reaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     aar_id INTEGER NOT NULL REFERENCES aar(aar_id) ...,
-#     target_type VARCHAR(16) NOT NULL,
-#     target_id INTEGER NOT NULL,
-#     user_name VARCHAR(128) NOT NULL,
-#     emoji VARCHAR(32) NOT NULL,
-#     created_at DATETIME NOT NULL,
-#     UNIQUE (target_type, target_id, user_name, emoji)
-#   );
-#   CREATE INDEX ix_aar_reaction_target ON aar_reaction (target_type, target_id);
 
 
 class Aar(Base):

@@ -87,7 +87,7 @@ move job claiming and locking into the database.
 
 ### 3. No schema migrations on a live database
 
-- [ ] Schema is `Base.metadata.create_all` only (`app/db/engine.py:62`). New
+- [x] Schema is `Base.metadata.create_all` only (`app/db/engine.py:62`). New
       tables appear, new columns do not; they are documented as hand-run
       `ALTER TABLE` in comments (`app/db/models.py:116`, `:205`, `:471`).
       `deploy/deploy.sh` promises an automatic update. Any deploy that adds a

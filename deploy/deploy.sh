@@ -6,7 +6,8 @@
 #
 # Default: pull latest code, rebuild the image (incl. the SPA) and restart the
 # container, wait until it's healthy, then run the off-BR counterparty backfill.
-# The new `br_char_ship` table is created automatically on startup.
+# Schema changes (new tables AND new columns) are applied automatically on
+# startup by app/db/migrate.py, which snapshots the DB to <db>.pre-v<N> first.
 #
 # Flags:
 #   --reparse         also re-parse all stored gamelogs first (one-time, after the
