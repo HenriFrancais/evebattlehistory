@@ -332,10 +332,10 @@ outside any fight window.
       killmail (`app/ingest/persist.py:25-46`), and `resolve_log_characters`
       loads every character name on each upload
       (`app/fights/offbr_resolve.py:54-59`).
-- [ ] README drift: the `config.toml` sample differs from the committed file;
+- [x] README drift: the `config.toml` sample differs from the committed file;
       it says cross-app links use `target="_top"` but the code uses `_blank`;
       the "Updating a deployment" section appears twice with different steps.
-- [ ] Repo hygiene: a real fleet-broadcast log sits untracked at the repo root
+- [x] Repo hygiene: a real fleet-broadcast log sits untracked at the repo root
       and `.gitignore` only covers digit-named gamelogs, so `git add -A` would
       commit player data. Move it under `var/` or ignore `/*.txt`.
 

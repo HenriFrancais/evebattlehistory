@@ -6,8 +6,9 @@ config.local.toml
 /var/
 rclone-config/
 
-# Raw EVE gamelogs dropped at the repo root (contain real player data — never commit)
-/[0-9]*_[0-9]*.txt
+# Raw EVE gamelogs / fleet-broadcast logs dropped at the repo root (contain real
+# player data — never commit). Any root-level .txt is treated as one.
+/*.txt
 
 # Python
 __pycache__/

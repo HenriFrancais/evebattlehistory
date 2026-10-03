@@ -57,6 +57,9 @@ Two layers:
 | `DB_PATH` | `./var/db/nvbr.db` | SQLite database file. |
 | `LOG_DIR` / `ESI_CACHE_DIR` / `SDE_DIR` | `./var/...` | Uploaded gamelogs, ESI cache, SDE artifacts. |
 | `MAX_LOG_MB` | `20` | Per-file gamelog upload cap. |
+| `MAX_UPLOAD_FILES` | `50` | Files accepted in one upload request (the SPA sends one per request). |
+| `ESI_USER_AGENT` | project URL | User-Agent sent to ESI and zKillboard; set one with a maintainer contact. |
+| `DISCORD_ALERT_CHANNEL_ID` | *(empty)* | Channel for ops alerts (a failed backup posts here). |
 | `BACKUP_RCLONE_REMOTE` / `BACKUP_KEEP` / `BACKUP_HOUR` / `RESTORE_ON_START` | see [Backups](#backups) | Daily rclone → Google Drive backups. |
 | `DEV_MODE` | `false` | **Local only.** Bypasses the bearer check and injects a synthetic user. The app refuses to start with `DEV_MODE=true` and a `URL_PREFIX`. |
 | `DEV_USER_RANK` / `DEV_USER_TEAMS` | *(empty)* | The synthetic user's rank/teams when `DEV_MODE=true` (e.g. `High Command` / `fc` to act as an FC). |
@@ -67,13 +70,14 @@ Two layers:
 ```toml
 create_ranks = ["CEO", "Director", "High Command"]   # who may CREATE a battle report …
 create_teams = ["fc"]                                # … OR any of these teams (case-insensitive)
-our_alliance_ids = [99006113, 99009324, 99014963]    # the "us" set for win/loss + side labelling
-our_corp_ids = []
+our_alliance_ids = []                                # EXTRA friendly alliances (see below)
+our_corp_ids = []                                    # extra friendly corps
 ```
 
 The three NV blue alliances (`99006113` No Vacancies., `99009324` Wardec Mechanics,
 `99014963` Intended Behavior) are an always-on baseline merged in by `get_app_config()`,
-so side labelling works even if the config file omits them.
+so the committed `config.toml` leaves `our_alliance_ids` empty; list only additional friendly
+entities there. `config.toml` is copied into the image, so changing it means a rebuild.
 
 ---
 
@@ -308,19 +312,10 @@ Then load it through the NV Tools portal in a browser. A **branded** 401/404 fro
 means the request reached you (a prefix/token question); a **generic** proxy 404 means it
 never did (DNS / Caddy / `:443` missing).
 
-### Updating a deployment
-
-```bash
-cd evebattlehistory && git pull
-cd deploy && docker compose up -d --build
-```
-
-The SQLite DB and uploaded logs live in the `nvbr_data` volume and survive rebuilds. Because raw
-logs are retained, parser improvements can be applied retroactively:
-
-```bash
-docker compose exec nvbr python -m app.logs.reparse     # re-parse all stored logs in place
-```
+To update a running deployment, use `deploy/deploy.sh` — see
+[Updating an existing deployment](#updating-an-existing-deployment) above. The SQLite DB and
+uploaded logs live in the `nvbr_data` volume and survive rebuilds; because raw logs are retained,
+parser improvements can be applied retroactively with `./deploy/deploy.sh --reparse`.
 
 ---
 
@@ -443,7 +438,7 @@ The app is a normal service behind the NV Tools authenticating proxy. The contra
 - **Embed script:** `frontend/index.html` includes
   `https://tools.novacancies.space/static/nv_embed.js` once in `<head>` — it mirrors the URL/title
   to the parent frame and re-auths on 401.
-- **Stateless:** no cookies/sessions (they don't round-trip through the iframe). Cross-app and
-  external links use `target="_top"`.
+- **Stateless:** no cookies/sessions (they don't round-trip through the iframe). External
+  links (zKillboard, Discord, the wiki) open in a new tab (`target="_blank" rel="noopener"`).
 - **`DEV_MODE=true`** bypasses the bearer and injects a synthetic user for local development —
   it must stay `false` on the VM.
