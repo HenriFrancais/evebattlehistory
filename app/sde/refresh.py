@@ -14,7 +14,7 @@ from app.sde.process import process_sde_lines, read_manifest_build
 
 MANIFEST_URL = "https://developers.eveonline.com/static-data/tranquility/latest.jsonl"
 ZIP_URL = "https://developers.eveonline.com/static-data/eve-online-static-data-latest-jsonl.zip"
-USER_AGENT = "nv-br (NV Tools; contact admin)"
+USER_AGENT = "nv-br/0.1 (+https://github.com/HenriFrancais/evebattlehistory)"
 
 
 def _cached_build(sde_dir: Path) -> int | None:

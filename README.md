@@ -49,7 +49,7 @@ Two layers:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `NV_TOKEN` | `dev-token-change-me` | **Inbound** bearer the NV Tools proxy must present; every non-health request without it gets 401. |
+| `NV_TOKEN` | `dev-token-change-me` | **Inbound** bearer the NV Tools proxy must present; every non-health request without it gets 401. The app **refuses to start** with the default/empty value unless `DEV_MODE=true`. |
 | `URL_PREFIX` | *(empty)* | Path the app mounts under (e.g. `/fc/br`). Empty = served at root (local dev). |
 | `DATA_SOURCE` | `real` | `real` = call NV Tools portal + ESI/zKill; `demo` = read `data_demo/` fixtures. |
 | `NV_API_URL` | `https://tools.novacancies.space/api` | **Outbound** NV Tools portal API (roster lookup). |
@@ -58,7 +58,7 @@ Two layers:
 | `LOG_DIR` / `ESI_CACHE_DIR` / `SDE_DIR` | `./var/...` | Uploaded gamelogs, ESI cache, SDE artifacts. |
 | `MAX_LOG_MB` | `20` | Per-file gamelog upload cap. |
 | `BACKUP_RCLONE_REMOTE` / `BACKUP_KEEP` / `BACKUP_HOUR` / `RESTORE_ON_START` | see [Backups](#backups) | Daily rclone → Google Drive backups. |
-| `DEV_MODE` | `false` | **Local only.** Bypasses the bearer check and injects a synthetic user. Never enable in production. |
+| `DEV_MODE` | `false` | **Local only.** Bypasses the bearer check and injects a synthetic user. The app refuses to start with `DEV_MODE=true` and a `URL_PREFIX`. |
 | `DEV_USER_RANK` / `DEV_USER_TEAMS` | *(empty)* | The synthetic user's rank/teams when `DEV_MODE=true` (e.g. `High Command` / `fc` to act as an FC). |
 | `LOG_LEVEL` | `INFO` | Structured-log level. |
 

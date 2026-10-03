@@ -270,17 +270,17 @@ outside any fight window.
 
 ### 16. Start-up and build safety
 
-- [ ] If `NV_TOKEN` is missing the default `dev-token-change-me` is accepted
+- [x] If `NV_TOKEN` is missing the default `dev-token-change-me` is accepted
       (`app/config.py:39`), and `DEV_MODE=true` bypasses auth with no guard
       (`app/middleware.py:53`). Refuse to start with either when
       `DATA_SOURCE=real` or `URL_PREFIX` is set.
-- [ ] `deploy/Dockerfile:55-58` chains `sde.refresh && mkdir && cp … || true`,
+- [x] `deploy/Dockerfile:55-58` chains `sde.refresh && mkdir && cp … || true`,
       which swallows an SDE download failure. The image then ships without the
       ship-name dictionary and pilot/ship splitting quietly degrades
       (`app/logs/ingest.py:166`).
-- [ ] The image installs unpinned dependencies; `uv.lock` is ignored
+- [x] The image installs unpinned dependencies; `uv.lock` is ignored
       (`deploy/Dockerfile:34-39`).
-- [ ] `config.toml` is not copied into the image, so `create_ranks` and
+- [x] `config.toml` is not copied into the image, so `create_ranks` and
       `create_teams` cannot be changed in production without a code change.
 
 ### 17. Timestamps

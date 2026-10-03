@@ -14,6 +14,7 @@ this app has no machine-to-machine callers yet).
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request
@@ -63,8 +64,14 @@ class NVToolsAuthMiddleware(BaseHTTPMiddleware):
                 for name, value in scope_headers
             }
 
-        if headers_lookup.get("authorization") != f"Bearer {settings.nv_token}":
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        presented = headers_lookup.get("authorization", "")
+        expected = f"Bearer {settings.nv_token}"
+        if not hmac.compare_digest(presented.encode(), expected.encode()):
+            return JSONResponse(
+                {"error": "unauthorized"},
+                status_code=401,
+                headers={"content-security-policy": _CSP},
+            )
 
         request.state.user_name = headers_lookup.get("x-user-name", "")
         request.state.user_rank = headers_lookup.get("x-user-rank", "")

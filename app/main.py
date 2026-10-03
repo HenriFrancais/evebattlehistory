@@ -31,7 +31,7 @@ from app.api.roster import router as roster_router
 from app.api.sides import router as sides_router
 from app.api.timeline import router as timeline_router
 from app.backup import restore_if_empty
-from app.config import get_settings
+from app.config import get_settings, validate_runtime_settings
 from app.db.engine import init_models
 from app.ingest.jobs import sweep_pending
 from app.middleware import NVToolsAuthMiddleware
@@ -84,6 +84,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         log.warning("sde.startup_load_failed", error=str(exc))
     try:
+        from sqlalchemy import func, select
+
+        from app.db.models import InventoryType
+        from app.sde.load import SHIP_LIKE_CATEGORIES
+
+        async with get_sessionmaker(settings)() as _s:
+            HEALTH.sde_types = int(
+                (
+                    await _s.execute(
+                        select(func.count())
+                        .select_from(InventoryType)
+                        .where(InventoryType.category_id.in_(SHIP_LIKE_CATEGORIES))
+                    )
+                ).scalar_one()
+            )
+        if HEALTH.sde_types == 0:
+            # Without the ship-name dictionary the parser cannot split "ShipType
+            # PilotName" counterparties — logs still ingest but names degrade.
+            log.error("sde.missing", hint="no ship types loaded; run python -m app.sde.refresh")
+    except Exception as exc:
+        log.warning("sde.count_failed", error=str(exc))
+    try:
         swept = await sweep_pending(settings)
         log.info("jobs.sweep_done", count=swept)
     except Exception as exc:
@@ -112,6 +134,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    validate_runtime_settings(settings)
     prefix = settings.url_prefix
     app = FastAPI(title="NV Battle Reports", lifespan=lifespan)
     app.add_middleware(NVToolsAuthMiddleware)

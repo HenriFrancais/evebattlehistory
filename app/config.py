@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     """Env-driven secrets and locations."""
 
     # Inbound bearer: proves a request came from the NV Tools proxy.
-    nv_token: str = "dev-token-change-me"
+    nv_token: str = "dev-token-change-me"  # == DEFAULT_NV_TOKEN; refused outside DEV_MODE
     # Path prefix the app is mounted under (e.g. "/br"). Empty = root (dev).
     url_prefix: str = ""
 
@@ -116,6 +116,34 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_public_base_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
+
+
+DEFAULT_NV_TOKEN = "dev-token-change-me"
+
+
+class ConfigError(RuntimeError):
+    """The environment describes a deployment that must not be started."""
+
+
+def validate_runtime_settings(settings: Settings) -> None:
+    """Refuse configurations that silently disable authentication.
+
+    * Outside DEV_MODE the inbound bearer must be a real secret — a missing
+      NV_TOKEN falls back to the well-known default, which anyone could present.
+    * DEV_MODE bypasses the bearer entirely, so it must never run behind the
+      NV Tools URL prefix (i.e. in a real deployment).
+    """
+    token = settings.nv_token.strip()
+    if not settings.dev_mode and token in ("", DEFAULT_NV_TOKEN):
+        raise ConfigError(
+            "NV_TOKEN is unset or still the default; set the shared secret the NV Tools "
+            "proxy presents (or DEV_MODE=true for local development)."
+        )
+    if settings.dev_mode and settings.url_prefix:
+        raise ConfigError(
+            "DEV_MODE=true bypasses authentication and must not be combined with "
+            f"URL_PREFIX={settings.url_prefix!r} (a deployed instance)."
+        )
 
 
 def load_app_config(path: Path) -> AppConfig:

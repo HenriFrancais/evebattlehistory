@@ -48,6 +48,7 @@ def _clear_caches() -> None:
     HEALTH.roster_version = 0
     HEALTH.roster_fetched_at = 0.0
     HEALTH.data_source = ""
+    HEALTH.sde_types = 0
 
 
 @pytest.fixture(autouse=True)

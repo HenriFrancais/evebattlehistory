@@ -1,0 +1,21 @@
+# Keep the build context small and free of local state / player data. The image
+# only COPYs pyproject.toml, uv.lock, config.toml, app/, scripts/, data/, frontend/.
+.git
+.venv
+.env
+config.local.toml
+var/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+tests/
+docs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+*.zip
+*.txt
+!frontend/**/*.txt
+deploy/.env
+deploy/rclone-config/
