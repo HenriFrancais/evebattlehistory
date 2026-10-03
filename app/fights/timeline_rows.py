@@ -41,7 +41,7 @@ from app.db.models import (
     LogEvent,
     SolarSystem,
 )
-from app.roster.snapshot import get_roster_store
+from app.roster.snapshot import get_roster_store, roster_or_empty
 
 # Entity key for naming a side: ('alliance', id) or ('corp', id).
 _EntityKey = tuple[str, int]
@@ -112,7 +112,7 @@ async def enrich_br_rows(
     if not br_ids:
         return {}
 
-    roster = await get_roster_store(settings).get()
+    roster = await roster_or_empty(get_roster_store(settings))
     char_to_user = roster.char_to_user
     your_char_ids = {cid for cid, un in char_to_user.items() if un == user_name}
 

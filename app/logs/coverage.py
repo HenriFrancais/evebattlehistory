@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.db.models import BrFight, GamelogFile, LogEvent
 from app.fights.participants import fight_participant_char_ids
-from app.roster.snapshot import get_roster_store
+from app.roster.snapshot import get_roster_store, roster_or_empty
 
 
 @dataclass
@@ -95,7 +95,7 @@ async def br_coverage(
         will have at most one entry.  When None (default), the full matrix is
         returned as before.
     """
-    roster = await get_roster_store(settings).get()
+    roster = await roster_or_empty(get_roster_store(settings))
 
     # 1. Collect all fight_ids in this BR
     fight_id_result = await session.execute(

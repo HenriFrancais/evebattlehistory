@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.models import BrFight, Character, FightKill, Killmail, KillmailAttacker, LogEvent
-from app.roster.snapshot import get_roster_store
+from app.roster.snapshot import get_roster_store, roster_or_empty
 
 
 async def fight_participant_char_ids(session: AsyncSession, fight_id: int) -> set[int]:
@@ -95,7 +95,7 @@ async def br_participants(
     Roster is consulted for user_name and character_name; falls back to the
     Character table for names not in the roster.
     """
-    roster = await get_roster_store(settings).get()
+    roster = await roster_or_empty(get_roster_store(settings))
 
     # 1. Collect fight_ids for this BR
     fight_id_result = await session.execute(

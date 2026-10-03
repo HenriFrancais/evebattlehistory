@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from app.config import Settings
 from app.observability.health import HEALTH
@@ -100,6 +101,12 @@ class RosterStore:
             return self._state
 
     def _set_state(self, snap: RosterSnapshot) -> None:
+        # Roster-derived columns are baked into cached reads (BR list presence,
+        # coverage); a new roster — notably the first one after an outage — must
+        # invalidate them.
+        from app.api.derived_cache import bump_derived
+
+        bump_derived()
         self._state = snap
         self._version = snap.version
         self._expires_at = time.monotonic() + self._settings.roster_ttl_s
@@ -112,6 +119,21 @@ class RosterStore:
         snap = build_roster_snapshot(payload.users, self._version + 1, time.time())
         log.info("roster.fetched", version=snap.version, users=len(snap.users))
         return snap
+
+
+class _HasGet(Protocol):
+    async def get(self) -> RosterSnapshot: ...
+
+
+async def roster_or_empty(store: _HasGet) -> RosterSnapshot:
+    """``store.get()`` that never raises: with no roster available (portal down at
+    cold start) return an empty snapshot so read endpoints degrade — no user
+    mapping, no "your characters" — instead of failing the whole page."""
+    try:
+        return await store.get()
+    except Exception as exc:
+        log.warning("roster.unavailable", error=str(exc))
+        return build_roster_snapshot([], 0, 0.0)
 
 
 _singleton: RosterStore | None = None

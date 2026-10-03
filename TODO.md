@@ -241,7 +241,7 @@ outside any fight window.
 
 ### 13. The home page depends on the NV Tools roster API
 
-- [ ] `enrich_br_rows`, `br_coverage` and `br_participants` call the roster
+- [x] `enrich_br_rows`, `br_coverage` and `br_participants` call the roster
       store unguarded (`app/fights/timeline_rows.py:115`,
       `app/logs/coverage.py:98`, `app/fights/participants.py:98`). If the
       portal API is down when a worker cold-starts, `/api/brs` returns 500.
