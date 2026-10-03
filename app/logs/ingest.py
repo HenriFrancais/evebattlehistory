@@ -12,6 +12,7 @@ no new events.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import hashlib
 from collections.abc import Callable
@@ -96,9 +97,10 @@ async def ingest_log(
     # 2. Validate + store (raises ValueError on bad content or oversize)
     store_result = validate_and_store(raw_bytes, settings, sha256=sha)
 
-    # 3. Parse
+    # 3. Parse — CPU-bound (regex over every line of a multi-MB file), so run it
+    # in a worker thread instead of stalling every other request on the event loop.
     text = raw_bytes.decode("utf-8", errors="replace")
-    parsed = parse_log(text)
+    parsed = await asyncio.to_thread(parse_log, text)
 
     # 4. Resolve owning character
     filename_meta = parse_filename(filename)

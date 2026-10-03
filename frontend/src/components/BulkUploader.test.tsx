@@ -32,35 +32,74 @@ function makeResult(overrides: Partial<LogUploadResult> = {}): LogUploadResult {
   }
 }
 
+/** Mock the per-file upload: each call carries ONE file; answer by its name. */
+function mockUploads(results: LogUploadResult[]) {
+  vi.mocked(api.uploadLogs).mockImplementation(async (files: File[]) => {
+    const r = results.find((x) => x.filename === files[0].name)
+    if (!r) throw new Error('network down')
+    return [r]
+  })
+}
+
 describe('BulkUploader', () => {
   beforeEach(() => {
     vi.mocked(api.uploadLogs).mockReset()
   })
 
-  it('selecting multiple files and submitting calls api.uploadLogs once with all files', async () => {
+  it('uploads each selected file in its own request', async () => {
     const onUploaded = vi.fn()
     const files = [makeFile('log1.txt'), makeFile('log2.txt')]
-    vi.mocked(api.uploadLogs).mockResolvedValue([
-      makeResult({ filename: 'log1.txt' }),
-      makeResult({ filename: 'log2.txt' }),
-    ])
+    mockUploads([makeResult({ filename: 'log1.txt' }), makeResult({ filename: 'log2.txt' })])
 
     render(<BulkUploader onUploaded={onUploaded} />)
 
     const input = screen.getByLabelText('Select log files')
     fireEvent.change(input, { target: { files } })
+    fireEvent.click(screen.getByRole('button', { name: /upload/i }))
 
-    const uploadBtn = screen.getByRole('button', { name: /upload/i })
-    fireEvent.click(uploadBtn)
+    await waitFor(() => expect(api.uploadLogs).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(api.uploadLogs).mock.calls.map((c) => c[0])).toEqual([[files[0]], [files[1]]])
+    await waitFor(() => expect(onUploaded).toHaveBeenCalledTimes(1))
+  })
 
-    await waitFor(() => expect(api.uploadLogs).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(api.uploadLogs)).toHaveBeenCalledWith(files)
-    expect(onUploaded).toHaveBeenCalled()
+  it('shows progress while files are still uploading', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    vi.mocked(api.uploadLogs).mockImplementation(async (files: File[]) => {
+      if (files[0].name === 'b.txt') await gate
+      return [makeResult({ filename: files[0].name })]
+    })
+
+    render(<BulkUploader onUploaded={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Select log files'), {
+      target: { files: [makeFile('a.txt'), makeFile('b.txt')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /upload/i }))
+
+    // First file is done and already shown; second is in flight.
+    await waitFor(() => expect(screen.getByText(/1 of 2/)).toBeInTheDocument())
+    expect(screen.getAllByText(/parsed/, { selector: '.chip-parsed' })).toHaveLength(1)
+    release()
+    await waitFor(() => expect(screen.getByText(/2 parsed/i)).toBeInTheDocument())
+  })
+
+  it('a file whose request fails becomes an error chip and the rest still upload', async () => {
+    mockUploads([makeResult({ filename: 'ok.txt' })]) // bad.txt → rejects
+    render(<BulkUploader onUploaded={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Select log files'), {
+      target: { files: [makeFile('bad.txt'), makeFile('ok.txt')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /upload/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/bad\.txt: network down/)).toHaveClass('chip-error')
+      expect(screen.getByText(/1 parsed/i)).toBeInTheDocument()
+    })
   })
 
   it('renders chip-duplicate chip for a duplicate result', async () => {
     const onUploaded = vi.fn()
-    vi.mocked(api.uploadLogs).mockResolvedValue([
+    mockUploads([
       makeResult({ filename: 'dup.txt', status: 'duplicate', file_id: null }),
     ])
 
@@ -79,7 +118,7 @@ describe('BulkUploader', () => {
 
   it('renders chip-parsed, chip-unresolved, chip-error chips', async () => {
     const onUploaded = vi.fn()
-    vi.mocked(api.uploadLogs).mockResolvedValue([
+    mockUploads([
       makeResult({ filename: 'a.txt', status: 'parsed' }),
       makeResult({ filename: 'b.txt', status: 'unresolved', file_id: null, character_name: null }),
       makeResult({ filename: 'c.txt', status: 'error', file_id: null, message: 'parse failed' }),
@@ -105,7 +144,7 @@ describe('BulkUploader', () => {
 
   it('shows summary counts', async () => {
     const onUploaded = vi.fn()
-    vi.mocked(api.uploadLogs).mockResolvedValue([
+    mockUploads([
       makeResult({ filename: 'a.txt', status: 'parsed' }),
       makeResult({ filename: 'b.txt', status: 'parsed' }),
       makeResult({ filename: 'c.txt', status: 'duplicate', file_id: null }),

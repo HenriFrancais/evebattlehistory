@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     esi_cache_dir: Path = Path("./var/esi")
     sde_dir: Path = Path("./var/sde")
     max_log_mb: int = 20
+    # Files accepted in ONE upload request (the SPA sends one file per request).
+    max_upload_files: int = 50
 
     # ESI / outbound etiquette.
     esi_user_agent: str = "nv-br (NV Tools; contact admin)"

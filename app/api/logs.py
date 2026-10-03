@@ -8,8 +8,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.access import acting_user, can_view_character
 from app.api.auth import current_user
@@ -38,22 +39,74 @@ async def _build_roster_lookup() -> Callable[[str], int | None]:
         return lambda name: None
 
 
+async def _resolve_counterparties(
+    session_maker: async_sessionmaker[AsyncSession], file_ids: list[int]
+) -> None:
+    """Resolve the uploaded files' counterparty names to characters via ESI and
+    persist them, so off-BR participants are identifiable on read.
+
+    Runs AFTER the response, in its own session: the names are read first (no
+    write lock), ESI is called, and only then is a short write transaction opened.
+    Best-effort — an ESI failure never affects the upload that triggered it.
+    """
+    settings = get_settings()
+    try:
+        async with session_maker() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        LogEvent.other_name, LogEvent.source_name, LogEvent.target_name
+                    )
+                    .where(LogEvent.file_id.in_(file_ids))
+                    .distinct()
+                )
+            ).all()
+            names = {v for row in rows for v in row if v}
+            if not names:
+                return
+            if await resolve_log_characters(session, settings, names):
+                await session.commit()
+                # Newly known characters can surface as off-BR participants.
+                get_offbr_cache().clear()
+    except Exception as exc:
+        log.warning("logs.upload.resolve_failed", error=str(exc))
+
+
 @router.post("/api/logs")
 async def upload_logs(
     request: Request,
     files: list[UploadFile],
     session_maker: SessionMakerDep,
+    background: BackgroundTasks,
 ) -> list[dict[str, Any]]:
-    """Bulk upload gamelog files.  Per-file results; never aborts on one bad file."""
+    """Bulk upload gamelog files.  Per-file results; never aborts on one bad file.
+
+    Each file is its own short transaction (parse → insert → associate → commit).
+    Counterparty-name resolution needs ESI, so it is deferred to a background task
+    that runs after the response — the SQLite write lock is never held across a
+    network call.
+    """
     user = current_user(request)
     settings = get_settings()
+    if len(files) > settings.max_upload_files:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many files in one request (max {settings.max_upload_files})",
+        )
     roster_lookup = await _build_roster_lookup()
+    max_bytes = settings.max_log_mb * 1024 * 1024
 
     results: list[dict[str, Any]] = []
+    new_file_ids: list[int] = []
 
     for upload in files:
         filename = upload.filename or "unknown.txt"
         try:
+            # Reject by declared size BEFORE reading the body into memory.
+            if upload.size is not None and upload.size > max_bytes:
+                raise ValueError(
+                    f"File too large: {upload.size} bytes exceeds {settings.max_log_mb} MB limit"
+                )
             raw_bytes = await upload.read()
             async with session_maker() as session:
                 result: GamelogFileResult = await ingest_log(
@@ -66,27 +119,12 @@ async def upload_logs(
                 )
                 # Wire-in: associate a resolved upload against all existing fights.
                 # associate_file_to_all is guarded; failure is logged, not raised.
-                if not result.duplicate and result.parse_status == "parsed":
+                fresh = not result.duplicate and result.parse_status == "parsed"
+                if fresh:
                     await associate_file_to_all(session, result.file_id)
-                    # Resolve this file's counterparty names to characters (ESI),
-                    # persisting them so off-BR participants are identifiable on
-                    # read. Best-effort: never fail an upload on ESI.
-                    try:
-                        rows = (
-                            await session.execute(
-                                select(
-                                    LogEvent.other_name,
-                                    LogEvent.source_name,
-                                    LogEvent.target_name,
-                                ).where(LogEvent.file_id == result.file_id)
-                            )
-                        ).all()
-                        names = {v for row in rows for v in row if v}
-                        await resolve_log_characters(session, settings, names)
-                    except Exception as exc:
-                        log.warning("logs.upload.resolve_failed", error=str(exc))
                 await session.commit()
-            if not result.duplicate and result.parse_status == "parsed":
+            if fresh:
+                new_file_ids.append(result.file_id)
                 # New events can add off-BR participants to any BR they overlap.
                 get_offbr_cache().clear()
 
@@ -114,6 +152,8 @@ async def upload_logs(
                 }
             )
 
+    if new_file_ids:
+        background.add_task(_resolve_counterparties, session_maker, new_file_ids)
     return results
 
 

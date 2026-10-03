@@ -1,5 +1,7 @@
 // Drop zone + multi-file input; pick one or more log files (or drag & drop them).
-// Shows per-file status chips after upload and summary counts.
+// Files are uploaded ONE PER REQUEST, in order, so a whole Gamelogs folder is many
+// short requests (no proxy timeout) with live progress: each file's status chip
+// appears as soon as it finishes, and one failed file never aborts the rest.
 // Props: onUploaded: () => void (called after successful upload to refresh table)
 
 import { useRef, useState } from 'react'
@@ -28,7 +30,7 @@ export function BulkUploader({ onUploaded }: Props) {
   const [files, setFiles] = useState<File[]>([])
   const [results, setResults] = useState<LogUploadResult[] | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [total, setTotal] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -36,7 +38,6 @@ export function BulkUploader({ onUploaded }: Props) {
     const arr = Array.from(newFiles)
     setFiles(arr)
     setResults(null)
-    setError(null)
   }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
@@ -58,18 +59,28 @@ export function BulkUploader({ onUploaded }: Props) {
 
   async function handleSubmit() {
     if (files.length === 0) return
+    const queue = files
     setUploading(true)
-    setError(null)
-    setResults(null)
-    try {
-      const res = await api.uploadLogs(files)
-      setResults(res)
-      onUploaded()
-    } catch (e: unknown) {
-      setError(String((e as Error)?.message ?? e))
-    } finally {
-      setUploading(false)
+    setTotal(queue.length)
+    setResults([])
+    for (const file of queue) {
+      let result: LogUploadResult
+      try {
+        result = (await api.uploadLogs([file]))[0]
+      } catch (e: unknown) {
+        result = {
+          filename: file.name,
+          file_id: null,
+          status: 'error',
+          event_count: 0,
+          character_name: null,
+          message: String((e as Error)?.message ?? e),
+        }
+      }
+      setResults((prev) => [...(prev ?? []), result])
     }
+    setUploading(false)
+    onUploaded()
   }
 
   const parsedCount = results?.filter((r) => r.status === 'parsed').length ?? 0
@@ -116,9 +127,12 @@ export function BulkUploader({ onUploaded }: Props) {
         >
           {uploading ? 'Uploading…' : 'Upload'}
         </button>
+        {uploading && (
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }} role="status">
+            {results?.length ?? 0} of {total} done
+          </span>
+        )}
       </div>
-
-      {error && <p className="error-text">{error}</p>}
 
       {results && (
         <div style={{ marginTop: '0.75rem' }}>

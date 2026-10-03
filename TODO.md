@@ -114,18 +114,18 @@ post failures to Discord.
 
 ### 5. Log upload holds the write lock across network calls and blocks the event loop
 
-- [ ] In `upload_logs` (`app/api/logs.py:57-87`) each file is flushed, then
+- [x] In `upload_logs` (`app/api/logs.py:57-87`) each file is flushed, then
       associated, then `resolve_log_characters` makes up to three ESI calls,
       and only then commits. The SQLite write lock is held for the whole ESI
       round trip, stalling every other write (comments, reactions, other
       uploads, ingest). Uploads are also outside the ingest lock.
-- [ ] `parse_log` is CPU-bound and runs on the event loop; one 20 MB log
+- [x] `parse_log` is CPU-bound and runs on the event loop; one 20 MB log
       freezes every request on that worker.
-- [ ] The uploader sends all files in a single request
+- [x] The uploader sends all files in a single request
       (`frontend/src/components/BulkUploader.tsx:65`) and they are processed
       one by one. A whole Gamelogs folder means one multi-minute request
       through two proxies with no progress shown.
-- [ ] The size limit is checked after the whole file is read into memory, and
+- [x] The size limit is checked after the whole file is read into memory, and
       there is no cap on file count.
 
 Fix: commit before ESI and resolve names in a background task; parse in
