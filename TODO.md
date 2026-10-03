@@ -216,12 +216,12 @@ Warm timings on the largest dev BR (183k events), single request:
 
 ### 11. `log_event` stores far more than is used
 
-- [ ] Every envelope line is persisted, including lines with no effect
+- [x] Every envelope line is persisted, including lines with no effect
       (`app/logs/parse.py:906-908`, `app/logs/ingest.py:209`): 147k of 1.05M
       rows have no effect type and 52% of rows are not in any fight.
       `log_event` plus its indexes is about 217 MB of a 277 MB database, and
       the raw files are kept anyway.
-- [ ] Parser quality stats (`unmatched_combat`) are computed and thrown away
+- [x] Parser quality stats (`unmatched_combat`) are computed and thrown away
       (`app/logs/parse.py:915-921`), so there is no way to see the miss rate
       per file or to notice a new log format.
 

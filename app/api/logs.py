@@ -181,6 +181,8 @@ async def get_my_logs(request: Request, session: SessionDep) -> list[dict[str, A
             "listener_name": f.listener_name,
             "parse_status": f.parse_status,
             "event_count": f.event_count,
+            "combat_lines": f.combat_lines,
+            "unmatched_combat": f.unmatched_combat,
             "log_start_at": f.log_start_at.isoformat() if f.log_start_at else None,
             "log_end_at": f.log_end_at.isoformat() if f.log_end_at else None,
             "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,

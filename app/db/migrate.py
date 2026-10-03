@@ -59,11 +59,29 @@ def _m002_ingest_completeness(conn: Connection) -> None:
     conn.exec_driver_sql("UPDATE battle_report SET km_expected = km_count WHERE km_expected = 0")
 
 
+def _m003_effect_only_log_events(conn: Connection) -> None:
+    """Stop storing envelope lines that parsed to no effect, and keep parser stats.
+
+    The dropped rows carry no content (the raw line was never stored) and no reader
+    uses them; the raw files are retained, so `python -m app.logs.reparse` can
+    recompute the new per-file stats for logs uploaded before this migration.
+    """
+    add_column_if_missing(conn, "gamelog_file", "combat_lines", "INTEGER NOT NULL DEFAULT 0")
+    add_column_if_missing(conn, "gamelog_file", "unmatched_combat", "INTEGER NOT NULL DEFAULT 0")
+    conn.exec_driver_sql("DELETE FROM log_event WHERE effect_type IS NULL")
+    conn.exec_driver_sql("DELETE FROM log_event_bucket WHERE effect_type = ''")
+    conn.exec_driver_sql(
+        "UPDATE gamelog_file SET event_count = "
+        "(SELECT count(*) FROM log_event WHERE log_event.file_id = gamelog_file.file_id)"
+    )
+
+
 Migration = tuple[int, str, Callable[[Connection], None]]
 
 MIGRATIONS: list[Migration] = [
     (1, "legacy hand-altered columns", _m001_legacy_hand_altered_columns),
     (2, "battle_report ingest completeness", _m002_ingest_completeness),
+    (3, "effect-only log events + parser stats", _m003_effect_only_log_events),
 ]
 
 LATEST_VERSION: int = MIGRATIONS[-1][0]

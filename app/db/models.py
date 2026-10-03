@@ -459,7 +459,12 @@ class GamelogFile(Base):
     size: Mapped[int] = mapped_column(Integer)
     # "parsed" | "unresolved" | "error"
     parse_status: Mapped[str] = mapped_column(String(16))
+    #: LogEvent rows stored for this file (lines that parsed to an effect).
     event_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: Parser quality: (combat)-tagged lines seen, and how many of them matched no
+    #: known effect. A high unmatched share signals a log format the parser misses.
+    combat_lines: Mapped[int] = mapped_column(Integer, default=0)
+    unmatched_combat: Mapped[int] = mapped_column(Integer, default=0)
     uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
