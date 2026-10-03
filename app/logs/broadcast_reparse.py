@@ -23,18 +23,30 @@ from app.logs.broadcast_parse import parse_broadcast, reconstruct_dates
 from app.observability.logging import log
 
 
-async def _roster_lookup_from_db(session: AsyncSession) -> Callable[[str], int | None]:
-    """A name->character_id lookup backed purely by the Character table.
+async def _previous_subject_ids(
+    session: AsyncSession, file_id: int
+) -> Callable[[str], int | None]:
+    """A name→character_id lookup built from the file's CURRENT rows.
 
-    Reparse is an offline maintenance pass; it avoids the live roster snapshot and
-    resolves against persisted characters, deferring to _resolve_subject_ids' fallback.
+    Reparse is an offline maintenance pass and deliberately avoids the live roster.
+    Subjects that were resolved through the roster at upload time have no Character
+    row to fall back on, so their ids are carried over from the existing rows
+    instead of being lost. Names not seen before still go through
+    ``_resolve_subject_ids``' Character-table fallback.
     """
-    return lambda name: None
+    rows = (
+        await session.execute(
+            select(Broadcast.subject_name, Broadcast.subject_character_id).where(
+                Broadcast.file_id == file_id, Broadcast.subject_character_id.is_not(None)
+            )
+        )
+    ).all()
+    known = {name.lower(): int(cid) for name, cid in rows if name and cid is not None}
+    return lambda name: known.get(name.strip().lower())
 
 
 async def reparse_broadcasts(session: AsyncSession, settings: Settings) -> int:
     """Re-parse every readable BroadcastFile. Returns the count re-parsed."""
-    roster_lookup = await _roster_lookup_from_db(session)
     files = list((await session.execute(select(BroadcastFile))).scalars())
     touched_brs: set[str] = set()
     done = 0
@@ -57,6 +69,7 @@ async def reparse_broadcasts(session: AsyncSession, settings: Settings) -> int:
                 else []
             )
             friendly = {b.subject_name for b in broadcasts if b.kind in _FRIENDLY_KINDS}
+            roster_lookup = await _previous_subject_ids(session, bf.broadcast_file_id)
             subject_ids = await _resolve_subject_ids(session, friendly, roster_lookup)
 
             await session.execute(

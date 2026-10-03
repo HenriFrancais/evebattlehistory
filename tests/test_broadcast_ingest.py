@@ -197,3 +197,82 @@ async def test_ingest_requires_anchor(db_session_maker, tmp_path):
         await s.commit()
         with pytest.raises(ValueError):
             await ingest_broadcast(s, _settings(tmp_path), "EMPTY", "fc", "bc.txt", RAW, lambda n: None)
+
+
+# ---------------------------------------------------------------------------
+# Same file on two BRs, reparse keeps roster-resolved ids, stored files cleaned up
+# ---------------------------------------------------------------------------
+
+BR_TWO = "SecondBR"
+
+
+async def _seed_second_br(session) -> None:
+    session.add(
+        BattleReport(
+            br_id=BR_TWO, source="x", source_url="", source_ref="", created_by_user="u",
+            created_at=dt.datetime(2026, 7, 12, 2, 0),
+            battle_at=dt.datetime(2026, 7, 12, 0, 0),
+        )
+    )
+    session.add(BrFight(br_id=BR_TWO, fight_id=1, seq=0))
+
+
+def _stored(tmp_path) -> list[Path]:
+    d = tmp_path / "logs"
+    return sorted(d.iterdir()) if d.exists() else []
+
+
+@pytest.mark.asyncio
+async def test_same_file_can_be_attached_to_a_second_br(db_session_maker, tmp_path):
+    async with db_session_maker() as s:
+        await _seed(s)
+        await _seed_second_br(s)
+        await s.commit()
+        r1 = await ingest_broadcast(s, _settings(tmp_path), BR_ID, "fc", "bc.txt", RAW, lambda n: None)
+        await s.commit()
+        r2 = await ingest_broadcast(s, _settings(tmp_path), BR_TWO, "fc", "bc.txt", RAW, lambda n: None)
+        await s.commit()
+        assert (r1.duplicate, r2.duplicate) == (False, False)
+        assert r2.br_id == BR_TWO
+        per_br = dict((await s.execute(
+            select(Broadcast.br_id, func.count()).group_by(Broadcast.br_id)
+        )).all())
+        assert per_br == {BR_ID: 7, BR_TWO: 7}
+        # Re-uploading to the SAME br is still a duplicate.
+        r3 = await ingest_broadcast(s, _settings(tmp_path), BR_TWO, "fc", "bc.txt", RAW, lambda n: None)
+        assert r3.duplicate is True and r3.br_id == BR_TWO
+    assert len(_stored(tmp_path)) == 1  # content stored once
+
+
+@pytest.mark.asyncio
+async def test_reparse_keeps_roster_resolved_subject_ids(db_session_maker, tmp_path):
+    # "Bob Logi" is known ONLY to the roster (no Character row) at upload time.
+    lookup = {"bob logi": 777}
+    raw = b"00:02:10 - Bob Logi needs armor (Guardian)\n"
+    async with db_session_maker() as s:
+        await _seed(s)
+        await s.commit()
+        await ingest_broadcast(s, _settings(tmp_path), BR_ID, "fc", "b.txt", raw,
+                               lambda n: lookup.get(n.lower()))
+        await s.commit()
+        await reparse_broadcasts(s, _settings(tmp_path))
+        await s.commit()
+        cid = (await s.execute(select(Broadcast.subject_character_id))).scalar_one()
+        assert cid == 777
+
+
+@pytest.mark.asyncio
+async def test_delete_unlinks_the_stored_file_unless_still_referenced(db_session_maker, tmp_path):
+    async with db_session_maker() as s:
+        await _seed(s)
+        await _seed_second_br(s)
+        await s.commit()
+        r1 = await ingest_broadcast(s, _settings(tmp_path), BR_ID, "fc", "bc.txt", RAW, lambda n: None)
+        r2 = await ingest_broadcast(s, _settings(tmp_path), BR_TWO, "fc", "bc.txt", RAW, lambda n: None)
+        await s.commit()
+        await delete_broadcast_file(s, r1.file_id)
+        await s.commit()
+        assert len(_stored(tmp_path)) == 1, "still used by the second BR"
+        await delete_broadcast_file(s, r2.file_id)
+        await s.commit()
+    assert _stored(tmp_path) == []

@@ -185,3 +185,31 @@ async def test_delete_br_api_gating(tmp_path, monkeypatch) -> None:  # type: ign
         assert client.delete("/api/brs/nope", headers=CREATOR_HEADERS).status_code == 404
 
     reset_engine_for_tests(); get_settings.cache_clear(); get_app_config.cache_clear()
+
+
+def test_deleting_a_br_removes_its_stored_broadcast_file(make_client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import sqlite3
+
+    db = tmp_path / "t.db"
+    logs = tmp_path / "logs"
+    client = make_client(DB_PATH=str(db), LOG_DIR=str(logs))
+    logs.mkdir(parents=True, exist_ok=True)
+    stored = logs / "abc.txt"
+    stored.write_text("00:02:10 - Target Enemy One (Rattlesnake)\n")
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "insert into battle_report (br_id, source, source_url, source_ref, created_by_user,"
+            " status, progress_pct, created_at, km_count, km_expected, our_isk_destroyed,"
+            " our_isk_lost, fight_count) values ('b1','zkb','x','r','t','ready',100,"
+            " '2026-01-01 00:00:00', 0, 0, 0, 0, 0)"
+        )
+        c.execute(
+            "insert into broadcast_file (br_id, uploaded_by_user, stored_path, sha256, mime,"
+            " size, parse_status, broadcast_count, superseded, uploaded_at)"
+            " values ('b1','fc',?,'abc','text/plain',1,'parsed',0,0,'2026-01-01 00:00:00')",
+            (str(stored),),
+        )
+    from tests.conftest import CREATOR_HEADERS
+
+    assert client.delete("/api/brs/b1", headers=CREATOR_HEADERS).status_code == 204
+    assert not stored.exists()

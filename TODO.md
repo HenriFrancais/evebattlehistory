@@ -249,13 +249,13 @@ outside any fight window.
 
 ### 14. Broadcast files
 
-- [ ] `sha256` is unique across all BRs, so uploading the same broadcast log to
+- [x] `sha256` is unique across all BRs, so uploading the same broadcast log to
       a second BR returns "duplicate" pointing at the first BR's file and
       attaches nothing (`app/logs/broadcast_ingest.py:164-178`).
-- [ ] Reparse uses a lookup that always returns `None`
+- [x] Reparse uses a lookup that always returns `None`
       (`app/logs/broadcast_reparse.py:26-32`), so subjects known only from the
       roster lose their `subject_character_id`.
-- [ ] Deleting a file or a BR leaves the stored file on disk.
+- [x] Deleting a file or a BR leaves the stored file on disk.
 
 ### 15. Upstream API handling
 

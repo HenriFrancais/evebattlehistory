@@ -42,6 +42,7 @@ from app.db.models import (
     BattleReport,
     BrFight,
     BrKillmail,
+    BroadcastFile,
     BrShipCount,
     BrSideOverride,
     BrSource,
@@ -57,6 +58,7 @@ from app.fights.participants import ParticipantInfo, br_participants
 from app.fights.timeline_rows import enrich_br_rows
 from app.ingest.jobs import schedule_ingest
 from app.ingest.sources.zkillboard import MAX_WINDOW_HOURS
+from app.logs.broadcast_ingest import unlink_if_unreferenced
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
 from app.services.br_discord import schedule_br_announce
@@ -476,7 +478,7 @@ async def refresh_br(
     )
 
 
-async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
+async def _delete_br_cascade(session: AsyncSession, br_id: str) -> list[str]:
     """Delete a BR and all of its scoped data, in FK-dependency order.
 
     SQLite runs with ``foreign_keys=ON`` and several BR-child FKs have no
@@ -484,7 +486,17 @@ async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
     are preserved: a Fight or Killmail still referenced by ANOTHER battle report
     is kept, and user-owned raw logs (GamelogFile/LogEvent) are retained — their
     fight stamps are cleared so they can re-associate to a future re-ingest.
+
+    Returns the stored paths of the BR's broadcast files (their rows cascade with
+    the BR) so the caller can unlink the now-unreferenced files after commit.
     """
+    broadcast_paths = list(
+        (
+            await session.execute(
+                select(BroadcastFile.stored_path).where(BroadcastFile.br_id == br_id)
+            )
+        ).scalars()
+    )
     # This BR's fights, and every killmail it references (via the link table and
     # via those fights) — captured before anything is deleted.
     fight_ids = list(
@@ -560,6 +572,7 @@ async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
 
     # Finally the BR row itself.
     await session.execute(delete(BattleReport).where(BattleReport.br_id == br_id))
+    return broadcast_paths
 
 
 @router.delete("/api/brs/{br_id}", status_code=204)
@@ -579,9 +592,11 @@ async def delete_br(
     if exists is None:
         raise HTTPException(status_code=404, detail="Battle report not found")
 
-    await _delete_br_cascade(session, br_id)
+    broadcast_paths = await _delete_br_cascade(session, br_id)
     await session.commit()
     bump_derived()
+    for path in set(broadcast_paths):
+        await unlink_if_unreferenced(session, path)
     log.info("brs.deleted", br_id=br_id, user=user.user_name)
 
 

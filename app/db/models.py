@@ -577,8 +577,10 @@ BROADCAST_KINDS: tuple[str, ...] = (
 class BroadcastFile(Base):
     """An uploaded fleet-broadcast log, mirrors GamelogFile but ownerless + BR-scoped.
 
-    Identity is (br_id): one canonical broadcast file per BR.  Re-uploading an
-    extended log produces a new row (different sha256); the less-complete siblings
+    Identity is (br_id): one canonical broadcast file per BR.  ``sha256`` holds a
+    dedupe key scoped to (br_id, content) — see broadcast_ingest._dedupe_key — so
+    the same log can be attached to several BRs; the stored file itself is
+    content-addressed.  Re-uploading an extended log produces a new row; the less-complete siblings
     are flagged ``superseded=True`` so analytics never double-count.  Deleting the
     parent BR cascades to the file and its broadcasts.
     """

@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 from collections.abc import Callable
+from pathlib import Path
 from typing import NamedTuple
 
 from sqlalchemy import delete, func, insert, select
@@ -57,6 +58,49 @@ class BroadcastFileResult(NamedTuple):
     broadcast_count: int
     br_id: str
     original_filename: str | None
+
+
+def _dedupe_key(br_id: str, content_sha: str) -> str:
+    """Value stored in ``BroadcastFile.sha256``: unique per (BR, content).
+
+    The column is globally unique, but the same fleet-broadcast log legitimately
+    belongs to every BR that covers that fight. Scoping the key by ``br_id`` lets
+    one file be attached to several reports while a re-upload to the SAME report is
+    still recognised as a duplicate. (Rows written before this carry the bare
+    content hash; ``_find_existing`` checks both.) The file on disk stays
+    content-addressed by the plain hash.
+    """
+    return hashlib.sha256(f"{br_id}:{content_sha}".encode()).hexdigest()
+
+
+async def _find_existing(
+    session: AsyncSession, br_id: str, content_sha: str
+) -> BroadcastFile | None:
+    return (
+        await session.execute(
+            select(BroadcastFile).where(
+                BroadcastFile.br_id == br_id,
+                BroadcastFile.sha256.in_([_dedupe_key(br_id, content_sha), content_sha]),
+            )
+        )
+    ).scalars().first()
+
+
+async def unlink_if_unreferenced(session: AsyncSession, stored_path: str) -> None:
+    """Remove a stored broadcast file once no BroadcastFile row points at it."""
+    still = (
+        await session.execute(
+            select(func.count()).select_from(BroadcastFile).where(
+                BroadcastFile.stored_path == stored_path
+            )
+        )
+    ).scalar_one()
+    if still:
+        return
+    try:
+        Path(stored_path).unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("broadcast.unlink_failed", path=stored_path, error=str(exc))
 
 
 def _as_naive_utc(value: dt.datetime | None) -> dt.datetime | None:
@@ -159,13 +203,9 @@ async def ingest_broadcast(
     """
     from app.logs.store import validate_and_store_broadcast
 
-    # 1. Dedupe on sha256 before any disk/DB writes.
+    # 1. Dedupe on (BR, content) before any disk/DB writes.
     sha = hashlib.sha256(raw_bytes).hexdigest()
-    existing = (
-        await session.execute(
-            select(BroadcastFile).where(BroadcastFile.sha256 == sha)
-        )
-    ).scalar_one_or_none()
+    existing = await _find_existing(session, br_id, sha)
     if existing is not None:
         log.info("broadcast.ingest.duplicate", sha256=sha, file_id=existing.broadcast_file_id)
         return BroadcastFileResult(
@@ -207,7 +247,7 @@ async def ingest_broadcast(
         uploaded_by_user=uploaded_by_user,
         original_filename=filename,
         stored_path=str(store_result.stored_path),
-        sha256=store_result.sha256,
+        sha256=_dedupe_key(br_id, sha),
         mime=store_result.mime,
         size=store_result.size,
         parse_status="parsed",
@@ -223,11 +263,9 @@ async def ingest_broadcast(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        existing = (
-            await session.execute(
-                select(BroadcastFile).where(BroadcastFile.sha256 == sha)
-            )
-        ).scalar_one()
+        existing = await _find_existing(session, br_id, sha)
+        if existing is None:
+            raise
         return BroadcastFileResult(
             file_id=existing.broadcast_file_id,
             duplicate=True,
@@ -296,12 +334,14 @@ async def delete_broadcast_file(session: AsyncSession, file_id: int) -> str | No
     if bf is None:
         return None
     br_id = bf.br_id
+    stored_path = bf.stored_path
     # Explicitly clear child rows (SQLite FK cascade is not always enabled), then the file.
     await session.execute(delete(Broadcast).where(Broadcast.file_id == file_id))
     await session.execute(
         delete(BroadcastFile).where(BroadcastFile.broadcast_file_id == file_id)
     )
     await session.flush()
+    await unlink_if_unreferenced(session, stored_path)
     # A previously-superseded sibling may now be the most complete file.
     await _apply_supersession(session, br_id)
     await associate_broadcasts_for_br(session, br_id)
