@@ -16,6 +16,7 @@ import datetime as dt
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.api.access import acting_user
 from app.api.auth import CurrentUser, can_create_br
@@ -338,6 +339,36 @@ async def delete_comment(
     return {"ok": True}
 
 
+async def _add_reaction(
+    session: SessionDep,
+    aar_id: int,
+    target_type: str,
+    target_id: int,
+    user_name: str,
+    emoji: str,
+) -> None:
+    """Insert a reaction unless it already exists.
+
+    Two quick toggles (a double click) can both observe "absent" and both insert;
+    ON CONFLICT DO NOTHING makes the second a no-op instead of a unique-constraint
+    500.
+    """
+    await session.execute(
+        sqlite_insert(AarReaction)
+        .values(
+            aar_id=aar_id,
+            target_type=target_type,
+            target_id=target_id,
+            user_name=user_name,
+            emoji=emoji,
+            created_at=_now(),
+        )
+        .on_conflict_do_nothing(
+            index_elements=["target_type", "target_id", "user_name", "emoji"]
+        )
+    )
+
+
 @router.post("/api/brs/{br_id}/aar/reactions")
 async def toggle_reaction(
     br_id: str, payload: ReactionIn, request: Request, session: SessionDep
@@ -378,15 +409,9 @@ async def toggle_reaction(
     if existing is not None:
         await session.delete(existing)
     else:
-        session.add(
-            AarReaction(
-                aar_id=aar.aar_id,
-                target_type=payload.target_type,
-                target_id=payload.target_id,
-                user_name=acting.user_name,
-                emoji=payload.emoji,
-                created_at=_now(),
-            )
+        await _add_reaction(
+            session, aar.aar_id, payload.target_type, payload.target_id,
+            acting.user_name, payload.emoji,
         )
     await session.commit()
 

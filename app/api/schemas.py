@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import BaseModel, field_validator, model_serializer
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from app.timeutil import as_utc
 
@@ -827,11 +827,11 @@ class AarPanelOut(BaseModel):
 
 
 class AarBodyIn(BaseModel):
-    body: str
+    body: str = Field(max_length=60_000)
 
 
 class CommentIn(BaseModel):
-    body: str
+    body: str = Field(max_length=5_000)
 
 
 class ReactionIn(BaseModel):

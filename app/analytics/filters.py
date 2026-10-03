@@ -1,10 +1,13 @@
 """Whitelisted predicate-tree compiler for fight and BR filters.
 
-Security: unknown field or op MUST raise FilterError, never reach the DB.
+Security: unknown field or op MUST raise FilterError, never reach the DB. Values
+are type-checked per field (a wrong type is a FilterError → 400, never a driver
+error → 500), the tree is bounded in depth and size, and results are capped.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select
@@ -24,10 +27,60 @@ from app.db.models import (
     Killmail,
     KillmailAttacker,
 )
+from app.timeutil import naive_utc
 
 
 class FilterError(ValueError):
     pass
+
+
+#: Hard caps so a request cannot build an arbitrarily expensive query / response.
+MAX_FILTER_DEPTH = 8
+MAX_FILTER_NODES = 100
+MAX_FILTER_RESULTS = 500
+
+
+def _number(value: Any, field: str) -> float | int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise FilterError(f"{field!r} needs a numeric value")
+    return value
+
+
+def _datetime(value: Any, field: str) -> dt.datetime:
+    """Parse an ISO-8601 string to the naive-UTC shape the DB stores."""
+    if not isinstance(value, str):
+        raise FilterError(f"{field!r} needs an ISO-8601 date/time string")
+    try:
+        parsed = dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise FilterError(f"{field!r}: {value!r} is not an ISO-8601 date/time") from exc
+    return naive_utc(parsed)
+
+
+def _datetime_clause(col: Any, op: str, value: Any, field: str) -> Any:
+    if op not in _DATETIME_OPS:
+        raise FilterError(f"Unknown datetime op {op!r}")
+    if op == "between":
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise FilterError("'between' op requires a [low, high] list")
+        return col.between(_datetime(value[0], field), _datetime(value[1], field))
+    return _apply_num_op(col, op, _datetime(value, field))
+
+
+def _check_tree(node: Any, depth: int = 1, counter: list[int] | None = None) -> None:
+    """Reject trees that are not dicts, too deep, or too large."""
+    counter = counter if counter is not None else [0]
+    if not isinstance(node, dict):
+        raise FilterError("filter node must be an object")
+    counter[0] += 1
+    if depth > MAX_FILTER_DEPTH:
+        raise FilterError(f"filter is nested deeper than {MAX_FILTER_DEPTH} levels")
+    if counter[0] > MAX_FILTER_NODES:
+        raise FilterError(f"filter has more than {MAX_FILTER_NODES} clauses")
+    clauses = node.get("clauses")
+    if isinstance(clauses, list):
+        for child in clauses:
+            _check_tree(child, depth + 1, counter)
 
 
 _NUMERIC_OPS = {">=", "<=", ">", "<", "==", "!="}
@@ -147,20 +200,15 @@ def _compile_node_fight(node: dict[str, Any]) -> Any:
     if field in numeric_fields:
         if op not in _NUMERIC_OPS:
             raise FilterError(f"Unknown op {op!r} for field {field!r}")
-        return _apply_num_op(col, op, value)
+        return _apply_num_op(col, op, _number(value, field))
     elif field == "capitals_involved":
         if op != "==":
             raise FilterError(f"Op {op!r} not valid for capitals_involved; use '=='")
+        if not isinstance(value, bool):
+            raise FilterError("capitals_involved needs true or false")
         return col == value
     elif field == "started_at":
-        if op not in _DATETIME_OPS:
-            raise FilterError(f"Unknown datetime op {op!r}")
-        if op == "between":
-            if not isinstance(value, (list, tuple)) or len(value) < 2:
-                raise FilterError("'between' op requires a [low, high] list")
-            lo, hi = value[0], value[1]
-            return col.between(lo, hi)
-        return _apply_num_op(col, op, value)
+        return _datetime_clause(col, op, value, field)
 
     raise FilterError(f"Unhandled field: {field!r}")
 
@@ -200,8 +248,14 @@ def _compile_ship_count_leaf(node: dict[str, Any]) -> Any:
 
 
 def compile_fight_filter(tree: dict[str, Any]) -> Select:  # type: ignore[type-arg]
+    _check_tree(tree)
     where_clause = _compile_node_fight(tree)
-    return select(Fight).where(where_clause)
+    return (
+        select(Fight)
+        .where(where_clause)
+        .order_by(Fight.started_at.desc())
+        .limit(MAX_FILTER_RESULTS)
+    )
 
 
 def _compile_node_br(node: dict[str, Any]) -> Any:
@@ -237,25 +291,20 @@ def _compile_node_br(node: dict[str, Any]) -> Any:
     if field in ("our_isk_destroyed", "our_isk_lost", "isk_efficiency", "fight_count"):
         if op not in _NUMERIC_OPS:
             raise FilterError(f"Unknown op {op!r} for field {field!r}")
-        return _apply_num_op(col, op, value)
+        return _apply_num_op(col, op, _number(value, field))
     elif field in ("result", "source"):
         if op not in _ENUM_OPS:
             raise FilterError(f"Unknown op {op!r} for field {field!r}")
         if op == "==":
+            if not isinstance(value, str):
+                raise FilterError(f"{field!r} needs a string value")
             return col == value
         else:  # in
-            if not isinstance(value, list):
-                raise FilterError("'in' op requires a list value")
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise FilterError("'in' op requires a list of strings")
             return col.in_(value)
     elif field == "battle_at":
-        if op not in _DATETIME_OPS:
-            raise FilterError(f"Unknown datetime op {op!r}")
-        if op == "between":
-            if not isinstance(value, (list, tuple)) or len(value) < 2:
-                raise FilterError("'between' op requires a [low, high] list")
-            lo, hi = value[0], value[1]
-            return col.between(lo, hi)
-        return _apply_num_op(col, op, value)
+        return _datetime_clause(col, op, value, field)
 
     raise FilterError(f"Unhandled BR field: {field!r}")
 
@@ -291,5 +340,11 @@ def _compile_ship_fielded_leaf(node: dict[str, Any]) -> Any:
 
 
 def compile_br_filter(tree: dict[str, Any]) -> Select:  # type: ignore[type-arg]
+    _check_tree(tree)
     where_clause = _compile_node_br(tree)
-    return select(BattleReport).where(where_clause)
+    return (
+        select(BattleReport)
+        .where(where_clause)
+        .order_by(BattleReport.battle_at.desc().nulls_last(), BattleReport.created_at.desc())
+        .limit(MAX_FILTER_RESULTS)
+    )

@@ -318,15 +318,15 @@ outside any fight window.
       (`frontend/src/views/BrDetailPage.tsx:652`) and link sources accept any
       URL (`app/api/brs.py:70-78`). Host matching is a substring test
       (`app/ingest/sources/factory.py:82-85`).
-- [ ] The filter API passes unvalidated value types to SQL operators (500
+- [x] The filter API passes unvalidated value types to SQL operators (500
       instead of 400), allows unbounded nesting, and `/api/fights/filter` has
       no result limit (`app/analytics/filters.py`).
-- [ ] AAR and comment bodies have no length cap (`app/api/schemas.py:808-813`).
-- [ ] Two simultaneous reaction toggles hit the unique constraint and return
+- [x] AAR and comment bodies have no length cap (`app/api/schemas.py:808-813`).
+- [x] Two simultaneous reaction toggles hit the unique constraint and return
       500 (`app/api/aar.py:368-391`).
-- [ ] The 401 response carries no CSP header (`app/middleware.py:67`), and the
+- [x] The 401 response carries no CSP header (`app/middleware.py:67`), and the
       bearer comparison is not constant-time.
-- [ ] `/healthz` does not touch the database and reports per-worker roster
+- [x] `/healthz` does not touch the database and reports per-worker roster
       state.
 - [ ] `persist_killmails` looks up each corp and character by scanning every
       killmail (`app/ingest/persist.py:25-46`), and `resolve_log_characters`
