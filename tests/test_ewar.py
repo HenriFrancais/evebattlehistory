@@ -34,7 +34,7 @@ from app.db.models import (
     BrFight,
     LogEvent,
 )
-from tests.conftest import TEST_TOKEN
+from tests.conftest import CREATOR_HEADERS, TEST_TOKEN
 from tests.test_association import (
     CHAR_A,
     CHAR_B,
@@ -333,7 +333,7 @@ async def test_api_ewar_returns_expected_shape(tmp_path, monkeypatch) -> None:  
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/fights/{fight_id}/ewar", headers=hdrs)
 
@@ -392,7 +392,7 @@ async def test_api_ewar_404_fight_not_in_br(tmp_path, monkeypatch) -> None:  # t
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/fights/{other_fight_id}/ewar", headers=hdrs)
 
@@ -421,7 +421,7 @@ async def test_api_ewar_404_unknown_br(tmp_path, monkeypatch) -> None:  # type: 
     get_app_config.cache_clear()
 
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get("/api/brs/no-such-br/fights/1/ewar", headers=hdrs)
 

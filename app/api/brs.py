@@ -12,7 +12,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.sides_config import fight_side_losses, load_overrides
-from app.api.access import acting_user
+from app.api.access import acting_user, require_elevated, viewer_scope
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import (
@@ -826,10 +826,11 @@ async def get_br_participants(
     """Return the union of killmail participants and logged characters for a BR.
 
     Each entry has: character_id, character_name, user_name, on_killmail, has_logs, fight_ids.
-    404 if the BR doesn't exist.  Requires authentication.
+    404 if the BR doesn't exist. ``user_name`` and ``has_logs`` are FC/HC-only for
+    characters the viewer does not own (returned as null / false).
     """
-    current_user(request)  # auth check
     settings = get_settings()
+    viewer = await viewer_scope(request, settings)
 
     exists = (
         await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))
@@ -838,16 +839,16 @@ async def get_br_participants(
         raise HTTPException(status_code=404, detail="Battle report not found")
 
     participants = await br_participants(session, settings, br_id)
-    return [_participant_to_dict(p) for p in participants]
+    return [_participant_to_dict(p, viewer.can_see(p.character_id)) for p in participants]
 
 
-def _participant_to_dict(p: ParticipantInfo) -> dict:  # type: ignore[type-arg]
+def _participant_to_dict(p: ParticipantInfo, visible: bool = True) -> dict:  # type: ignore[type-arg]
     return {
         "character_id": p.character_id,
         "character_name": p.character_name,
-        "user_name": p.user_name,
+        "user_name": p.user_name if visible else None,
         "on_killmail": p.on_killmail,
-        "has_logs": p.has_logs,
+        "has_logs": p.has_logs if visible else False,
         "fight_ids": p.fight_ids,
     }
 
@@ -860,10 +861,11 @@ async def get_br_coverage(
 ) -> list[dict]:  # type: ignore[type-arg]
     """Return per-user/character log coverage matrix for a battle report.
 
-    404 if the BR doesn't exist.  Requires authentication (all members may read).
+    404 if the BR doesn't exist. FC / High Command only: the matrix maps users to
+    their characters. Members use /my-coverage.
     """
-    current_user(request)  # auth check
     settings = get_settings()
+    await require_elevated(request, settings)
 
     exists = (
         await session.execute(select(BattleReport.br_id).where(BattleReport.br_id == br_id))

@@ -910,7 +910,7 @@ def _roster_with_char_a(monkeypatch):  # type: ignore[no-untyped-def]
     return snap
 
 
-from tests.conftest import TEST_TOKEN  # noqa: E402
+from tests.conftest import CREATOR_HEADERS, TEST_TOKEN  # noqa: E402
 
 
 def test_api_coverage_404_unknown_br(make_client, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -918,7 +918,7 @@ def test_api_coverage_404_unknown_br(make_client, tmp_path) -> None:  # type: ig
     client = make_client(DB_PATH=str(tmp_path / "test.db"), LOG_DIR=str(tmp_path / "logs"))
     resp = client.get(
         "/api/brs/no-such-br/coverage",
-        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        headers=CREATOR_HEADERS,
     )
     assert resp.status_code == 404
 
@@ -973,7 +973,7 @@ async def test_api_coverage_returns_matrix(tmp_path, monkeypatch, _roster_with_c
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/coverage", headers=hdrs)
 

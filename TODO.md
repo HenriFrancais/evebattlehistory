@@ -31,28 +31,28 @@ Only the per-character timeline, events, character snapshot and log download
 call `can_view_character`. The same data, and the user↔character mapping, is
 served ungated elsewhere:
 
-- [ ] `GET /api/brs/{id}/snapshot` (`app/api/fleet.py:132`) returns every
+- [x] `GET /api/brs/{id}/snapshot` (`app/api/fleet.py:132`) returns every
       pilot's source→target rows with `source_character_id`. It makes the gate
       on its per-character twin (`app/api/fleet.py:162`) bypassable.
-- [ ] `GET /api/brs/{id}/fights/{fid}/reconcile` and `/ewar`
+- [x] `GET /api/brs/{id}/fights/{fid}/reconcile` and `/ewar`
       (`app/api/analytics.py:46`, `:85`) return per-character log damage, reps
       and cap totals with no user check at all.
-- [ ] `GET /api/brs/{id}/coverage` (`app/api/brs.py:855`) returns the full
+- [x] `GET /api/brs/{id}/coverage` (`app/api/brs.py:855`) returns the full
       user → characters matrix. It is gated only in the UI
       (`frontend/src/views/BrDetailPage.tsx:501`).
-- [ ] `GET /api/brs/{id}/participants` (`app/api/brs.py:820`) returns
+- [x] `GET /api/brs/{id}/participants` (`app/api/brs.py:820`) returns
       `user_name` for every roster character.
-- [ ] `GET /api/brs/{id}/broadcasts` (`app/api/broadcasts.py:192`) returns raw
+- [x] `GET /api/brs/{id}/broadcasts` (`app/api/broadcasts.py:192`) returns raw
       named "needs armor/shield/cap" lines, although `_metrics_out` hides the
       same named rows from non-elevated users (`app/api/broadcasts.py:86`).
-- [ ] `GET /api/roster/users` (`app/api/roster.py:20`) returns the whole roster
+- [x] `GET /api/roster/users` (`app/api/roster.py:20`) returns the whole roster
       with ranks. It exists for the dev impersonation picker and should be
       DEV_MODE-only.
-- [ ] Decide whether two "public by design" payloads fit the strict policy:
+- [x] Decide whether two "public by design" payloads fit the strict policy:
       `leaders` in the fleet timeline name the top friendly pilot per 5s bucket
       (`app/analytics/fleet.py:804`), and `/composition` returns per-pilot
       `reps_out`, `has_logs` and weapons to everyone (`app/api/fleet.py:246`).
-- [ ] `current_user(request)  # auth check` (`app/api/brs.py:831`, `:865`) is a
+- [x] `current_user(request)  # auth check` (`app/api/brs.py:831`, `:865`) is a
       no-op; it checks nothing.
 
 Fix: one shared dependency that yields `(acting_user, elevated,

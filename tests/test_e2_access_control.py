@@ -470,13 +470,13 @@ async def test_me_impersonation_available_false_in_prod(tmp_path, monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_roster_users_returns_demo_users(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """GET /api/roster/users returns the demo roster sorted by user_name."""
+    """GET /api/roster/users (DEV_MODE only) returns the demo roster sorted by user_name."""
     from app.config import get_app_config, get_settings
     from app.db.engine import init_models, reset_engine_for_tests
     from app.main import create_app
     from app.roster.snapshot import reset_roster_store_for_tests
 
-    monkeypatch.setenv("DEV_MODE", "0")
+    monkeypatch.setenv("DEV_MODE", "1")
     monkeypatch.setenv("DATA_SOURCE", "demo")
     monkeypatch.setenv("NV_TOKEN", TEST_TOKEN)
     monkeypatch.setenv("DB_PATH", str(tmp_path / "roster_test.db"))

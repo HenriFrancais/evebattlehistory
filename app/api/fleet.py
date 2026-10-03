@@ -9,9 +9,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
-from app.analytics.fleet import fleet_snapshot, fleet_timeline
+from app.analytics.fleet import Contribution, Leaders, fleet_snapshot, fleet_timeline
 from app.analytics.sides_config import load_overrides
-from app.api.access import acting_user, can_view_character
+from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
 from app.api.schemas import (
@@ -53,6 +53,53 @@ def _leader_out(e: object) -> LeaderEntryOut | None:
     )
 
 
+def _leaders_out(ld: Leaders, *, elevated: bool, own_character_ids: set[int]) -> LeadersOut:
+    """Serialise one bucket's leaders. Friendly leaders name a pilot from log
+    data, so non-elevated viewers only get them when the leader is their own
+    character; hostile leaders (enemy pilots) are public."""
+
+    def _friendly(e: object) -> LeaderEntryOut | None:
+        cid = getattr(e, "character_id", None)
+        if not elevated and cid not in own_character_ids:
+            return None
+        return _leader_out(e)
+
+    return LeadersOut(
+        top_friendly_dmg_taken=_friendly(ld.top_friendly_dmg_taken),
+        top_hostile_dmg_taken=_leader_out(ld.top_hostile_dmg_taken),
+        top_friendly_rep_recv=_friendly(ld.top_friendly_rep_recv),
+        top_hostile_cap_pressure=_leader_out(ld.top_hostile_cap_pressure),
+        top_friendly_cap_pressure=_friendly(ld.top_friendly_cap_pressure),
+        top_friendly_cap_recv=_friendly(ld.top_friendly_cap_recv),
+        top_hostile_tackle_taken=_leader_out(ld.top_hostile_tackle_taken),
+        top_friendly_tackle_taken=_friendly(ld.top_friendly_tackle_taken),
+    )
+
+
+def _contributions_out(from_ts: int, to_ts: int, contribs: list[Contribution]) -> ContributionsOut:
+    return ContributionsOut(
+        from_ts=from_ts,
+        to_ts=to_ts,
+        rows=[
+            ContributionOut(
+                source_character_id=c.source_character_id,
+                source_name=c.source_name,
+                target_name=c.target_name,
+                target_ship=c.target_ship,
+                effect_type=c.effect_type,
+                direction=c.direction,
+                group=c.group,
+                value=c.value,
+                module_name=c.module_name,
+                icon_type_id=c.icon_type_id,
+                weapon_category=c.weapon_category,
+                quality=c.quality,
+            )
+            for c in contribs
+        ],
+    )
+
+
 async def _require_br(br_id: str, session: AsyncSession) -> None:
     """Raise 404 if the BR does not exist."""
     exists = (
@@ -63,12 +110,16 @@ async def _require_br(br_id: str, session: AsyncSession) -> None:
 
 
 @router.get("/api/brs/{br_id}/fleet-timeline")
-async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOut:
+async def get_fleet_timeline(
+    br_id: str, request: Request, session: SessionDep
+) -> FleetTimelineOut:
     """Return the aggregated fleet timeline for *br_id*.
 
-    No per-character access gate — visible to all authenticated users.
+    The series are fleet aggregates, visible to all authenticated users. The
+    per-bucket friendly leaders name pilots and are redacted for non-FC/HC.
     """
     await _require_br(br_id, session)
+    viewer = await viewer_scope(request, get_settings())
     cfg = get_app_config()
     overrides = await load_overrides(session, br_id)
     tl = await fleet_timeline(
@@ -114,15 +165,8 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
         t_start=tl.t_start,
         t_end=tl.t_end,
         leaders=[
-            LeadersOut(
-                top_friendly_dmg_taken=_leader_out(ld.top_friendly_dmg_taken),
-                top_hostile_dmg_taken=_leader_out(ld.top_hostile_dmg_taken),
-                top_friendly_rep_recv=_leader_out(ld.top_friendly_rep_recv),
-                top_hostile_cap_pressure=_leader_out(ld.top_hostile_cap_pressure),
-                top_friendly_cap_pressure=_leader_out(ld.top_friendly_cap_pressure),
-                top_friendly_cap_recv=_leader_out(ld.top_friendly_cap_recv),
-                top_hostile_tackle_taken=_leader_out(ld.top_hostile_tackle_taken),
-                top_friendly_tackle_taken=_leader_out(ld.top_friendly_tackle_taken),
+            _leaders_out(
+                ld, elevated=viewer.elevated, own_character_ids=viewer.character_ids
             )
             for ld in tl.leaders
         ],
@@ -131,32 +175,26 @@ async def get_fleet_timeline(br_id: str, session: SessionDep) -> FleetTimelineOu
 
 @router.get("/api/brs/{br_id}/snapshot")
 async def get_snapshot(
-    br_id: str, session: SessionDep, from_ts: int, to_ts: int
+    br_id: str, request: Request, session: SessionDep, from_ts: int, to_ts: int
 ) -> ContributionsOut:
-    """All source→target activity in the half-open window [from_ts, to_ts)."""
+    """Source→target activity in the half-open window [from_ts, to_ts).
+
+    FC/HC get every pilot's rows. Other viewers get only their own characters'
+    log perspective (the same rows the per-character snapshot would return).
+    """
     await _require_br(br_id, session)
-    contribs = await fleet_snapshot(session, br_id, from_ts, to_ts, get_settings())
-    return ContributionsOut(
-        from_ts=from_ts,
-        to_ts=to_ts,
-        rows=[
-            ContributionOut(
-                source_character_id=c.source_character_id,
-                source_name=c.source_name,
-                target_name=c.target_name,
-                target_ship=c.target_ship,
-                effect_type=c.effect_type,
-                direction=c.direction,
-                group=c.group,
-                value=c.value,
-                module_name=c.module_name,
-                icon_type_id=c.icon_type_id,
-                weapon_category=c.weapon_category,
-                quality=c.quality,
+    settings = get_settings()
+    viewer = await viewer_scope(request, settings)
+    if viewer.elevated:
+        contribs = await fleet_snapshot(session, br_id, from_ts, to_ts, settings)
+    else:
+        contribs = []
+        for cid in sorted(viewer.character_ids):
+            contribs.extend(
+                await fleet_snapshot(session, br_id, from_ts, to_ts, settings, character_id=cid)
             )
-            for c in contribs
-        ],
-    )
+        contribs.sort(key=lambda c: c.value, reverse=True)
+    return _contributions_out(from_ts, to_ts, contribs)
 
 
 @router.get("/api/brs/{br_id}/characters/{character_id}/snapshot")
@@ -181,38 +219,21 @@ async def get_character_snapshot(
     contribs = await fleet_snapshot(
         session, br_id, from_ts, to_ts, settings, character_id=character_id
     )
-    return ContributionsOut(
-        from_ts=from_ts,
-        to_ts=to_ts,
-        rows=[
-            ContributionOut(
-                source_character_id=c.source_character_id,
-                source_name=c.source_name,
-                target_name=c.target_name,
-                target_ship=c.target_ship,
-                effect_type=c.effect_type,
-                direction=c.direction,
-                group=c.group,
-                value=c.value,
-                module_name=c.module_name,
-                icon_type_id=c.icon_type_id,
-                weapon_category=c.weapon_category,
-                quality=c.quality,
-            )
-            for c in contribs
-        ],
-    )
+    return _contributions_out(from_ts, to_ts, contribs)
 
 
 @router.get("/api/brs/{br_id}/composition")
 async def get_composition(
     br_id: str, request: Request, session: SessionDep
 ) -> CompositionOut:
-    """Per-side fleet composition. Elevated callers (FC/HC) also get char→user."""
+    """Per-side fleet composition. Elevated callers (FC/HC) also get char→user and
+    every pilot's log-derived fields (reps_out, has_logs); other viewers get those
+    only for their own characters."""
     await _require_br(br_id, session)
     cfg = get_app_config()
     settings = get_settings()
-    acting = await acting_user(request, settings)
+    viewer = await viewer_scope(request, settings)
+    acting = viewer.user
     char_to_user: dict[int, str] | None = None
     by_user_available = False
     if can_create_br(acting):
@@ -251,8 +272,9 @@ async def get_composition(
                                             user_name=p.user_name,
                                             damage_done=p.damage_done,
                                             kill_count=p.kill_count,
-                                            reps_out=p.reps_out,
-                                            has_logs=p.has_logs,
+                                            reps_out=(p.reps_out if viewer.can_see(p.character_id)
+                                                      else 0.0),
+                                            has_logs=p.has_logs and viewer.can_see(p.character_id),
                                             from_logs=p.from_logs,
                                             weapons=[WeaponEffectOut(type_id=w.type_id,
                                                                      name=w.name,

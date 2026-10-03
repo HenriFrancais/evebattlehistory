@@ -626,7 +626,7 @@ async def test_api_br_participants_endpoint(tmp_path, monkeypatch) -> None:  # t
     from app.main import create_app
     from app.roster.models import RosterCharacter, RosterUser
     from app.roster.snapshot import build_roster_snapshot, reset_roster_store_for_tests
-    from tests.conftest import TEST_TOKEN
+    from tests.conftest import CREATOR_HEADERS, TEST_TOKEN
 
     snap = build_roster_snapshot(
         users=[
@@ -676,7 +676,7 @@ async def test_api_br_participants_endpoint(tmp_path, monkeypatch) -> None:  # t
     monkeypatch.setattr(participants_module, "get_roster_store", lambda s: _FakeStore())
 
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/participants", headers=hdrs)
 

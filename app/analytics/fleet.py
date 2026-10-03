@@ -554,6 +554,8 @@ class LeaderEntry:
     ship: str | None
     amount: float
     ship_type_id: int | None = None
+    #: Internal (not serialised): lets the API redact friendly leaders per viewer.
+    character_id: int | None = None
 
 
 @dataclass
@@ -973,6 +975,7 @@ async def _compute_leaders(
             ship=hull[1] if hull else None,
             ship_type_id=hull[0] if hull else None,
             amount=best_amt,
+            character_id=best_id,
         )
 
     leaders: list[Leaders] = []

@@ -78,7 +78,7 @@ async def test_upload_gate_and_flow(tmp_path, monkeypatch) -> None:  # type: ign
         assert "summary" in mj and "deaths" in mj
 
         # Raw list feeds the timeline overlay.
-        lst = client.get(f"/api/brs/{BR_ID}/broadcasts", headers=MEMBER_HEADERS)
+        lst = client.get(f"/api/brs/{BR_ID}/broadcasts", headers=CREATOR_HEADERS)
         assert lst.status_code == 200
         assert len(lst.json()) == 7
 

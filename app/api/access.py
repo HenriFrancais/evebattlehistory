@@ -17,7 +17,9 @@ identity is used.
 
 from __future__ import annotations
 
-from fastapi import Request
+from dataclasses import dataclass, field
+
+from fastapi import HTTPException, Request
 
 from app.api.auth import CurrentUser, can_create_br, current_user
 from app.config import Settings, get_settings
@@ -93,3 +95,50 @@ async def can_view_character(
     # Fallback: check user_to_chars (redundant but defensive).
     owned_ids = {c.character_id for c in roster.user_to_chars.get(acting.user_name, [])}
     return character_id in owned_ids
+
+
+@dataclass(frozen=True)
+class Viewer:
+    """Who is looking, and which pilots' log-derived data they may see.
+
+    Elevated viewers (FC / HC) see everyone. Everyone else sees fleet aggregates
+    plus rows about their OWN characters only.
+    """
+
+    user: CurrentUser
+    elevated: bool
+    character_ids: set[int] = field(default_factory=set)
+    character_names: set[str] = field(default_factory=set)
+
+    def can_see(self, character_id: int | None) -> bool:
+        return self.elevated or (character_id is not None and character_id in self.character_ids)
+
+    def can_see_name(self, name: str | None) -> bool:
+        return self.elevated or (name is not None and name.lower() in self.character_names)
+
+
+async def viewer_scope(request: Request, settings: Settings | None = None) -> Viewer:
+    """Resolve the acting user's visibility scope. Roster failure → own main only."""
+    cfg = settings or get_settings()
+    acting = await acting_user(request, cfg)
+    elevated = can_create_br(acting)
+    ids: set[int] = set()
+    names: set[str] = set()
+    if acting.main_character_id and acting.main_character_id.isdigit():
+        ids.add(int(acting.main_character_id))
+    try:
+        roster = await get_roster_store(cfg).get()
+    except Exception:
+        return Viewer(user=acting, elevated=elevated, character_ids=ids)
+    for c in roster.user_to_chars.get(acting.user_name, []):
+        ids.add(c.character_id)
+        names.add(c.character_name.strip().lower())
+    return Viewer(user=acting, elevated=elevated, character_ids=ids, character_names=names)
+
+
+async def require_elevated(request: Request, settings: Settings | None = None) -> CurrentUser:
+    """403 unless the acting user is FC / High Command. Returns the acting user."""
+    acting = await acting_user(request, settings or get_settings())
+    if not can_create_br(acting):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return acting

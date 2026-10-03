@@ -39,7 +39,7 @@ from app.db.models import (
     LogEvent,
     LogEventBucket,
 )
-from tests.conftest import TEST_TOKEN
+from tests.conftest import CREATOR_HEADERS, TEST_TOKEN
 from tests.test_association import (
     _SHIP_TYPE_ID,
     CHAR_A,
@@ -375,7 +375,7 @@ async def test_api_reconcile_returns_expected_shape(tmp_path, monkeypatch) -> No
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/fights/{fight_id}/reconcile", headers=hdrs)
 
@@ -438,7 +438,7 @@ async def test_api_reconcile_404_fight_not_in_br(tmp_path, monkeypatch) -> None:
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/fights/{other_fight_id}/reconcile", headers=hdrs)
 
@@ -467,7 +467,7 @@ async def test_api_reconcile_404_unknown_br(tmp_path, monkeypatch) -> None:  # t
     get_app_config.cache_clear()
 
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get("/api/brs/no-such-br/fights/1/reconcile", headers=hdrs)
 
@@ -503,7 +503,7 @@ async def test_api_reconcile_character_name_populated(tmp_path, monkeypatch) -> 
 
     get_app_config.cache_clear()
     app = create_app()
-    hdrs = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    hdrs = CREATOR_HEADERS
     with TestClient(app) as client:
         resp = client.get(f"/api/brs/{br_id}/fights/{fight_id}/reconcile", headers=hdrs)
 

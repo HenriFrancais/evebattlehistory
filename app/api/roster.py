@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -21,10 +21,12 @@ class RosterUserOut(BaseModel):
 async def get_roster_users() -> list[RosterUserOut]:
     """Return all roster users (lightweight) sorted by user_name.
 
-    Used by the frontend impersonation picker.  Bearer-authenticated like
-    everything else; only meaningfully populated in dev but harmless in prod.
+    Used only by the frontend impersonation picker, so it exists in DEV_MODE
+    alone: in production the full roster (with ranks) is not member-visible.
     """
     settings = get_settings()
+    if not settings.dev_mode:
+        raise HTTPException(status_code=404, detail="Not found")
     roster = await get_roster_store(settings).get()
     return sorted(
         [

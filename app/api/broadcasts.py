@@ -15,7 +15,7 @@ from app.analytics.broadcasts import (
     compute_broadcast_metrics,
 )
 from app.analytics.performance import BrPerformance, compute_br_performance
-from app.api.access import acting_user
+from app.api.access import acting_user, viewer_scope
 from app.api.auth import CurrentUser, can_create_br
 from app.api.deps import SessionDep
 from app.api.fleet import _require_br
@@ -190,9 +190,16 @@ async def get_performance(
 
 
 @router.get("/api/brs/{br_id}/broadcasts")
-async def list_broadcasts(br_id: str, session: SessionDep) -> list[BroadcastRawItemOut]:
-    """Raw broadcast markers for the timeline overlay (canonical file only)."""
+async def list_broadcasts(
+    br_id: str, request: Request, session: SessionDep
+) -> list[BroadcastRawItemOut]:
+    """Raw broadcast markers for the timeline overlay (canonical file only).
+
+    Target calls name enemies and are public. Rep/cap requests name a friendly
+    pilot, so non-elevated viewers only get the ones about their own characters.
+    """
     await _require_br(br_id, session)
+    viewer = await viewer_scope(request, get_settings())
     rows = (
         await session.execute(
             select(
@@ -202,6 +209,7 @@ async def list_broadcasts(br_id: str, session: SessionDep) -> list[BroadcastRawI
                 Broadcast.subject_name,
                 Broadcast.subject_ship,
                 Broadcast.fight_id,
+                Broadcast.subject_character_id,
             )
             .join(BroadcastFile, BroadcastFile.broadcast_file_id == Broadcast.file_id)
             .where(Broadcast.br_id == br_id)
@@ -218,7 +226,8 @@ async def list_broadcasts(br_id: str, session: SessionDep) -> list[BroadcastRawI
             subject_ship=sship,
             fight_id=fid,
         )
-        for (bid, ts, kind, sname, sship, fid) in rows
+        for (bid, ts, kind, sname, sship, fid, scid) in rows
+        if kind == "target" or viewer.can_see(scid) or viewer.can_see_name(sname)
     ]
 
 
