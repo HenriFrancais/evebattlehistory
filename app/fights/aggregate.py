@@ -104,50 +104,58 @@ class _AttackerWrapper:
         self.ship_type_id = att.ship_type_id
 
 
-async def _clear_derived_rows(session: AsyncSession, br_id: str) -> None:
-    """Delete all derived rows for this BR so re-aggregation is idempotent.
+async def _drop_fights(session: AsyncSession, fight_ids: list[int]) -> None:
+    """Delete fights and everything derived from them.
 
-    Before deleting Fight rows we null-out LogEvent.fight_id and delete
-    LogEventBucket rows that reference those fight_ids.  Fight.fight_id is
-    autoincrement, so re-running aggregate_br mints NEW fight_ids; without
-    this cleanup LogEvent/LogEventBucket rows would point at deleted fights
-    (orphaned foreign-key-equivalent references).  associate_logs_for_br is
-    called after aggregate_br and re-stamps + rebuilds buckets for the new
-    fight_ids, so clearing them here is safe.
+    LogEvent.fight_id is nulled (the raw events are kept and re-stamped by the
+    next association pass) and the per-fight buckets are removed, so nothing is
+    left pointing at a deleted fight.
     """
-    fight_id_result = await session.execute(
-        select(BrFight.fight_id).where(BrFight.br_id == br_id)
+    if not fight_ids:
+        return
+    await session.execute(
+        update(LogEvent).where(LogEvent.fight_id.in_(fight_ids)).values(fight_id=None)
     )
-    fight_ids = list(fight_id_result.scalars())
+    await session.execute(delete(LogEventBucket).where(LogEventBucket.fight_id.in_(fight_ids)))
+    await _clear_fight_children(session, fight_ids)
+    await session.execute(delete(Fight).where(Fight.fight_id.in_(fight_ids)))
 
-    if fight_ids:
-        # Null out LogEvent.fight_id for events stamped to these fights so that
-        # re-association (associate_logs_for_br) can re-stamp them to the new
-        # fight_ids produced by the next clustering pass.
-        await session.execute(
-            update(LogEvent)
-            .where(LogEvent.fight_id.in_(fight_ids))
-            .values(fight_id=None)
-        )
-        # Remove stale buckets — they will be rebuilt by associate_logs_for_br.
-        await session.execute(
-            delete(LogEventBucket).where(LogEventBucket.fight_id.in_(fight_ids))
-        )
-        await session.execute(
-            delete(FightShipCount).where(FightShipCount.fight_id.in_(fight_ids))
-        )
-        await session.execute(
-            delete(FightKill).where(FightKill.fight_id.in_(fight_ids))
-        )
-        await session.execute(
-            delete(FightSide).where(FightSide.fight_id.in_(fight_ids))
-        )
-        await session.execute(
-            delete(Fight).where(Fight.fight_id.in_(fight_ids))
-        )
 
-    await session.execute(delete(BrFight).where(BrFight.br_id == br_id))
-    await session.execute(delete(BrShipCount).where(BrShipCount.br_id == br_id))
+async def _clear_fight_children(session: AsyncSession, fight_ids: list[int]) -> None:
+    """Remove a fight's derived side / kill / ship-count rows (they are rebuilt)."""
+    if not fight_ids:
+        return
+    await session.execute(delete(FightShipCount).where(FightShipCount.fight_id.in_(fight_ids)))
+    await session.execute(delete(FightKill).where(FightKill.fight_id.in_(fight_ids)))
+    await session.execute(delete(FightSide).where(FightSide.fight_id.in_(fight_ids)))
+
+
+async def _fights_by_kill_set(
+    session: AsyncSession, km_ids: list[int]
+) -> dict[frozenset[int], int]:
+    """Existing fights that involve any of *km_ids*, keyed by their exact killmail set.
+
+    A fight is identified by the killmails it contains: two battle reports whose
+    clustering yields the same set are looking at the SAME engagement and must
+    share one Fight row — LogEvent carries a single fight_id, so competing copies
+    would leave one report without logs. Lowest fight_id wins on a tie.
+    """
+    if not km_ids:
+        return {}
+    candidate = select(FightKill.fight_id).where(FightKill.killmail_id.in_(km_ids))
+    kills: dict[int, set[int]] = defaultdict(set)
+    for fid, kmid in (
+        await session.execute(
+            select(FightKill.fight_id, FightKill.killmail_id).where(
+                FightKill.fight_id.in_(candidate)
+            )
+        )
+    ).all():
+        kills[fid].add(kmid)
+    out: dict[frozenset[int], int] = {}
+    for fid in sorted(kills):
+        out.setdefault(frozenset(kills[fid]), fid)
+    return out
 
 
 def _build_label_input(
@@ -183,19 +191,40 @@ async def aggregate_br(
 ) -> None:
     """Orchestrate fight analysis and persist derived tables for one BR.
 
-    Idempotent: clears previously derived rows before inserting.
+    Idempotent, and STABLE: a cluster whose killmail set matches an existing
+    fight (this BR's from a previous run, or another BR's) reuses that Fight row,
+    so fight ids — and the logs stamped to them — survive a refresh and are
+    shared by every report covering the same engagement. Fights this BR no
+    longer uses are dropped only when no other BR references them.
     """
     our_alliance_set = set(our_alliance_ids)
     our_corp_set = set(our_corp_ids)
 
     log.info("aggregate_br.start", br_id=br_id)
 
-    # 1. Clear old derived rows
-    await _clear_derived_rows(session, br_id)
+    # 1. Unlink this BR's fights (the Fight rows themselves are reused below).
+    previous_fight_ids = list(
+        (await session.execute(select(BrFight.fight_id).where(BrFight.br_id == br_id))).scalars()
+    )
+    await session.execute(delete(BrFight).where(BrFight.br_id == br_id))
+    await session.execute(delete(BrShipCount).where(BrShipCount.br_id == br_id))
+    used_fight_ids: set[int] = set()
+
+    async def _drop_unused() -> None:
+        stale = [f for f in previous_fight_ids if f not in used_fight_ids]
+        if not stale:
+            return
+        still_linked = set(
+            (
+                await session.execute(select(BrFight.fight_id).where(BrFight.fight_id.in_(stale)))
+            ).scalars()
+        )
+        await _drop_fights(session, [f for f in stale if f not in still_linked])
 
     # 2. Load killmails
     killmails = await _load_killmails(session, br_id)
     if not killmails:
+        await _drop_unused()
         log.info("aggregate_br.no_killmails", br_id=br_id)
         return
 
@@ -209,6 +238,7 @@ async def aggregate_br(
 
     # 3. Cluster into fights
     clusters: list[FightCluster] = cluster_kills(wrapped)  # type: ignore[arg-type]
+    existing_by_kills = await _fights_by_kill_set(session, km_ids)
 
     # 4. Process each fight cluster
     fight_seq = 0
@@ -255,20 +285,37 @@ async def aggregate_br(
             default=0,
         )
 
-        # Persist Fight
-        fight = Fight(
-            system_id=cluster_wrapped[0].solar_system_id,
-            started_at=started_at,
-            ended_at=ended_at,
-            isk_destroyed_total=isk_destroyed_total,
-            largest_side_pilots=largest_side_pilots,
-            capitals_involved=False,
-            distinct_alliance_count=len(all_alliance_ids),
-        )
-        session.add(fight)
+        # Persist Fight — reuse the row when this exact engagement already exists.
+        reuse_id = existing_by_kills.get(frozenset(cluster_ids))
+        fight: Fight | None = None
+        if reuse_id is not None:
+            fight = (
+                await session.execute(select(Fight).where(Fight.fight_id == reuse_id))
+            ).scalar_one_or_none()
+        if fight is not None:
+            await _clear_fight_children(session, [fight.fight_id])
+            fight.system_id = cluster_wrapped[0].solar_system_id
+            fight.started_at = started_at
+            fight.ended_at = ended_at
+            fight.isk_destroyed_total = isk_destroyed_total
+            fight.largest_side_pilots = largest_side_pilots
+            fight.capitals_involved = False
+            fight.distinct_alliance_count = len(all_alliance_ids)
+        else:
+            fight = Fight(
+                system_id=cluster_wrapped[0].solar_system_id,
+                started_at=started_at,
+                ended_at=ended_at,
+                isk_destroyed_total=isk_destroyed_total,
+                largest_side_pilots=largest_side_pilots,
+                capitals_involved=False,
+                distinct_alliance_count=len(all_alliance_ids),
+            )
+            session.add(fight)
         await session.flush()  # get fight_id
 
         fight_id = fight.fight_id
+        used_fight_ids.add(fight_id)
 
         # Persist FightSide rows
         for side_idx, sd in per_side_stats.items():
@@ -338,6 +385,7 @@ async def aggregate_br(
                     br_ship_accumulator[(side_kind, ship_id)] += cnt
 
     await session.flush()
+    await _drop_unused()
 
     # Persist br_ship_count
     for (side_kind, ship_id), cnt in br_ship_accumulator.items():

@@ -174,6 +174,45 @@ async def _resolve_window_system_names(
         s.system_id = sys_id
 
 
+def _link_key(url: str | None) -> str:
+    """Normalise a source link for duplicate detection (scheme/www/slash/case)."""
+    parsed = urlparse((url or "").strip())
+    return f"{parsed.netloc.lower().removeprefix('www.')}{parsed.path.rstrip('/').lower()}"
+
+
+async def _existing_br_for_sources(
+    session: AsyncSession, sources: list[BrSourceIn]
+) -> BattleReport | None:
+    """The battle report that already uses one of *sources*, if any."""
+    link_keys = {_link_key(s.url) for s in sources if s.kind == "link" and s.url}
+    windows = {
+        (s.system_id, s.window_start, s.window_end) for s in sources if s.kind == "window"
+    }
+    rows = (await session.execute(select(BrSource))).scalars()
+    for row in rows:
+        if row.kind == "link" and _link_key(row.url) in link_keys:
+            hit = row.br_id
+        elif row.kind == "window" and any(
+            row.system_id == sid
+            and _naive_utc(row.window_start) == _naive_utc(start)
+            and _naive_utc(row.window_end) == _naive_utc(end)
+            for sid, start, end in windows
+        ):
+            hit = row.br_id
+        else:
+            continue
+        return (
+            await session.execute(select(BattleReport).where(BattleReport.br_id == hit))
+        ).scalar_one_or_none()
+    return None
+
+
+def _naive_utc(value: dt.datetime | None) -> dt.datetime | None:
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(dt.UTC).replace(tzinfo=None)
+
+
 def _add_br_sources(
     session: AsyncSession,
     br_id: str,
@@ -229,6 +268,19 @@ async def create_br(
         sources = [BrSourceIn(kind="link", url=body.url)]
     else:
         raise HTTPException(status_code=400, detail="Provide either 'url' or 'sources'")
+
+    if not body.allow_duplicate:
+        existing = await _existing_br_for_sources(session, sources)
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This source is already in battle report "
+                    f"{existing.title or 'untitled'} ({existing.br_id}). Two reports of the "
+                    "same fight split its logs; open that one, or resend with "
+                    "allow_duplicate=true to create another anyway."
+                ),
+            )
 
     settings = get_settings()
     br_id = str(uuid.uuid4())
@@ -453,16 +505,6 @@ async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
             ).scalars()
         )
 
-    # Detach user-owned logs from this BR's fights (keep the raw uploads) and drop
-    # the derived per-fight buckets.
-    if fight_ids:
-        await session.execute(
-            update(LogEvent).where(LogEvent.fight_id.in_(fight_ids)).values(fight_id=None)
-        )
-        await session.execute(
-            delete(LogEventBucket).where(LogEventBucket.fight_id.in_(fight_ids))
-        )
-
     # BR-scoped tables.
     await session.execute(delete(BrSideOverride).where(BrSideOverride.br_id == br_id))
     await session.execute(delete(BrShipCount).where(BrShipCount.br_id == br_id))
@@ -470,8 +512,11 @@ async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
     await session.execute(delete(BrKillmail).where(BrKillmail.br_id == br_id))
     await session.execute(delete(BrFight).where(BrFight.br_id == br_id))
 
-    # Fights no longer referenced by any BR → delete (cascades FightSide / FightKill
-    # / FightShipCount via their ON DELETE CASCADE on fight_id).
+    # Fights are shared between reports covering the same engagement. Only fights
+    # no OTHER report references are removed: their log stamps are cleared (the raw
+    # uploads are kept and can re-associate later), their buckets dropped, and the
+    # Fight deleted (cascading FightSide / FightKill / FightShipCount). A fight
+    # another report still uses keeps its logs untouched.
     if fight_ids:
         still_fights = set(
             (
@@ -482,6 +527,12 @@ async def _delete_br_cascade(session: AsyncSession, br_id: str) -> None:
         )
         orphan_fights = [f for f in fight_ids if f not in still_fights]
         if orphan_fights:
+            await session.execute(
+                update(LogEvent).where(LogEvent.fight_id.in_(orphan_fights)).values(fight_id=None)
+            )
+            await session.execute(
+                delete(LogEventBucket).where(LogEventBucket.fight_id.in_(orphan_fights))
+            )
             await session.execute(delete(Fight).where(Fight.fight_id.in_(orphan_fights)))
 
     # Killmails no longer referenced by any BR link or fight → delete (cascades

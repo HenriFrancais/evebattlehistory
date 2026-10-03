@@ -150,13 +150,13 @@ partial/warning status, raise on non-200, retry with backoff.
 
 ### 7. A log event can belong to only one fight
 
-- [ ] `LogEvent.fight_id` is single-valued and stamped only when NULL, over
+- [x] `LogEvent.fight_id` is single-valued and stamped only when NULL, over
       fights fetched with no `ORDER BY` (`app/logs/associate.py:422-450`).
       Every BR mints its own `Fight` rows (`app/fights/aggregate.py:259`), so
       two BRs covering the same engagement compete and one shows no log data.
-- [ ] Refreshing a BR deletes and re-creates its fights with higher ids
+- [x] Refreshing a BR deletes and re-creates its fights with higher ids
       (`app/fights/aggregate.py:107-150`), so its logs can move to the other BR.
-- [ ] Nothing prevents creating the same BR twice. The dev DB has one duplicate
+- [x] Nothing prevents creating the same BR twice. The dev DB has one duplicate
       pair, giving 3 overlapping fight pairs.
 
 Fix: a `log_event_fight` link table (or resolve by time range at read time), or

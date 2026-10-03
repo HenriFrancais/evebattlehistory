@@ -866,10 +866,20 @@ async def test_aggregate_br_rerun_clears_log_orphans(tmp_path):
     assert stamped_count >= 1, "Events should be stamped to first_fight_id before re-aggregate"
     assert bucket_count >= 1, "Buckets should exist for first_fight_id before re-aggregate"
 
-    # 3. Re-run aggregate_br (simulates sweep_pending re-running interrupted ingest).
-    #    _clear_derived_rows should null out LogEvent.fight_id and delete
-    #    LogEventBucket rows BEFORE deleting Fight rows.
+    # 3. Change the BR's kill set (drop one killmail) and re-run aggregate_br. The
+    #    old fight no longer matches any cluster, so it is dropped: LogEvent.fight_id
+    #    must be nulled and its LogEventBucket rows deleted BEFORE the Fight row goes.
+    #    (An UNCHANGED kill set reuses the fight — see tests/test_shared_fights.py.)
+    from sqlalchemy import delete as sa_delete
+
+    from app.db.models import BrKillmail
+
     async with session_maker() as session:
+        await session.execute(
+            sa_delete(BrKillmail).where(
+                BrKillmail.br_id == "demo-br-001", BrKillmail.killmail_id == 105
+            )
+        )
         await aggregate_br(
             session,
             br_id="demo-br-001",
@@ -897,10 +907,10 @@ async def test_aggregate_br_rerun_clears_log_orphans(tmp_path):
             )
         ).scalar_one()
     assert events_still_stamped == 0, (
-        "_clear_derived_rows must null LogEvent.fight_id before deleting Fight rows"
+        "a dropped fight must have its LogEvent.fight_id stamps nulled"
     )
     assert bucket_total == 0, (
-        "_clear_derived_rows must delete LogEventBucket rows before deleting Fight rows"
+        "a dropped fight must have its LogEventBucket rows deleted"
     )
 
     # 4. Re-associate logs → events re-stamped to new fight_id, buckets rebuilt.

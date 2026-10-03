@@ -27,6 +27,8 @@ class BrCreate(BaseModel):
     url: str | None = None
     title: str | None = None
     sources: list[BrSourceIn] | None = None
+    #: Create even when a source is already used by another battle report.
+    allow_duplicate: bool = False
 
 
 class BrSourceOut(BaseModel):

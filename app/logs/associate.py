@@ -420,10 +420,14 @@ async def associate_file(
     log_start_padded = log_start - pad
     log_end_padded = log_end + pad
     fight_result = await session.execute(
-        select(Fight).where(
+        select(Fight)
+        .where(
             Fight.started_at <= log_end_padded,
             Fight.ended_at >= log_start_padded,
         )
+        # Deterministic owner when two DIFFERENT fights overlap in time (an event
+        # holds one fight_id): the lowest fight_id always wins.
+        .order_by(Fight.fight_id)
     )
     # All fights whose padded window overlaps the file's log window are candidates.
     # Killmail participation is not required — it is a flag, not a filter.

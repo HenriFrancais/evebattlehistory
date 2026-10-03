@@ -844,7 +844,7 @@ async def test_gating_on_all_mutations(tmp_path, monkeypatch):
         # Add a source as creator so we have a source_id to attempt deleting
         r6_create = client.post(
             "/api/brs",
-            json={"sources": [_DEMO_LINK_SOURCE, _DEMO_WINDOW]},
+            json={"sources": [_DEMO_LINK_SOURCE, _DEMO_WINDOW], "allow_duplicate": True},
             headers=CREATOR_HEADERS,
         )
         br_id2 = r6_create.json()["br_id"]
