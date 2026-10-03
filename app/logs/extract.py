@@ -17,18 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import BrFight, Fight, GamelogFile, LogEvent
 from app.logs.parse import _ENVELOPE_RE, _parse_ts, strip_eve_markup
 from app.observability.logging import log
+from app.timeutil import naive_utc as _to_naive_utc
 
 # Combat reps/ewar often bracket the first/last killmail; fight bounds are derived
 # from killmail times, so pad the window slightly when selecting raw lines.
 PAD = dt.timedelta(seconds=60)
-
-
-def _to_naive_utc(ts: dt.datetime) -> dt.datetime:
-    """Normalise to naive-UTC so comparisons against parsed (naive-UTC) line
-    timestamps never mix aware/naive operands."""
-    if ts.tzinfo is not None:
-        ts = ts.astimezone(dt.UTC).replace(tzinfo=None)
-    return ts
 
 
 def clean_and_slice_gamelog(text: str, start: dt.datetime, end: dt.datetime) -> str:

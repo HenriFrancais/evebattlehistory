@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import LogEvent
+from app.timeutil import as_utc as _as_utc
 
 # ---------------------------------------------------------------------------
 # Categorisation constants
@@ -36,12 +37,6 @@ _CAP_TYPES: frozenset[str] = frozenset({"neut", "nos", "cap_transfer"})
 # EVE gamelogs do NOT emit "hull repaired" as a combat line (no remote hull rep
 # effect type appears in 14k+ real gamelogs), so "rep_hull" is excluded.
 _LOGI_TYPES: frozenset[str] = frozenset({"rep_armor", "rep_shield"})
-
-
-def _as_utc(ts: dt.datetime) -> dt.datetime:
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=dt.UTC)
-    return ts
 
 
 # ---------------------------------------------------------------------------

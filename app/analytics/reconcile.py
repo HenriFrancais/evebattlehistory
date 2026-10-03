@@ -11,26 +11,16 @@ It does NOT re-parse logs or modify Phase 2/3 data.
 
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Character, FightKill, KillmailAttacker, LogEvent, LogEventBucket
+from app.timeutil import epoch as _epoch
 
 #: EWAR / non-damage effect types — excluded from log damage tallies.
 _DAMAGE_EFFECT = "damage"
-
-
-def _as_utc(ts: dt.datetime) -> dt.datetime:
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=dt.UTC)
-    return ts
-
-
-def _epoch(ts: dt.datetime) -> int:
-    return int(_as_utc(ts).timestamp())
 
 
 # ---------------------------------------------------------------------------

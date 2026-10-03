@@ -46,6 +46,7 @@ from app.logs.broadcast_parse import (
     reconstruct_dates,
 )
 from app.observability.logging import log
+from app.timeutil import naive_utc as _as_naive_utc
 
 #: Broadcast kinds whose subject is a friendly fleet member (resolvable to a character).
 _FRIENDLY_KINDS = frozenset({"needs_shield", "needs_armor", "needs_capacitor", "repair"})
@@ -101,14 +102,6 @@ async def unlink_if_unreferenced(session: AsyncSession, stored_path: str) -> Non
         Path(stored_path).unlink(missing_ok=True)
     except OSError as exc:
         log.warning("broadcast.unlink_failed", path=stored_path, error=str(exc))
-
-
-def _as_naive_utc(value: dt.datetime | None) -> dt.datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is not None:
-        return value.replace(tzinfo=None)
-    return value
 
 
 async def _br_reference_end(session: AsyncSession, br_id: str) -> dt.datetime | None:

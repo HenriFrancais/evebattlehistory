@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, field_validator, model_serializer
+
+from app.timeutil import as_utc
 
 
 class BrSourceIn(BaseModel):
@@ -20,6 +22,14 @@ class BrSourceIn(BaseModel):
     window_start: dt.datetime | None = None
     window_end: dt.datetime | None = None
     label: str | None = None
+
+    @field_validator("window_start", "window_end", mode="after")
+    @classmethod
+    def _to_utc(cls, v: dt.datetime | None) -> dt.datetime | None:
+        """Normalise to tz-aware UTC (naive ⇒ UTC). SQLite drops tzinfo on write, so
+        an offset that survived to the ORM would be stored as local wall-clock and
+        later read back as if it were UTC."""
+        return as_utc(v) if v is not None else None
 
 
 class BrCreate(BaseModel):

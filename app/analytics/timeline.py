@@ -24,6 +24,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import BUCKET_SECONDS, BrFight, Character, Fight, LogEvent, LogEventBucket
+from app.timeutil import epoch as _epoch
 
 #: Remote-assistance effects that friendly counterparties also witness. These are
 #: reconstructed from every friendly log that names the character (not just their
@@ -34,23 +35,6 @@ _REMOTE_ASSIST = ("rep_armor", "rep_shield", "cap_transfer")
 EVENTS_CAP: int = 1000
 
 _UNKNOWN = "unknown"
-
-
-def _as_utc(ts: dt.datetime) -> dt.datetime:
-    """Ensure *ts* is UTC-aware.
-
-    SQLite stores datetimes as naive strings; SQLAlchemy reads them back without
-    tzinfo.  All timestamps in this app are UTC, so we attach UTC when tzinfo is
-    missing.
-    """
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=dt.UTC)
-    return ts
-
-
-def _epoch(ts: dt.datetime) -> int:
-    """Return epoch-seconds for *ts*, normalising naive datetimes to UTC first."""
-    return int(_as_utc(ts).timestamp())
 
 
 def _label(raw: str) -> str | None:

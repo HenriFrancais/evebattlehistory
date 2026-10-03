@@ -11,6 +11,7 @@ import httpx
 
 from app.ingest.sources.base import BrUnavailable, ResolvedBr
 from app.observability.logging import log
+from app.timeutil import as_utc as _as_utc
 
 ZKB_API = "https://zkillboard.com/api"
 _RELATED_RE = re.compile(r"^/related/(\d+)/(\d{12})/?$")
@@ -53,11 +54,6 @@ async def zkb_get_json(client: httpx.AsyncClient, url: str) -> object:
         else:
             break  # other 4xx: retrying will not help
     raise BrUnavailable(f"zKillboard request failed ({last}): {url}")
-
-
-def _as_utc(d: dt.datetime) -> dt.datetime:
-    """Treat a naive datetime as UTC; pass aware datetimes through unchanged."""
-    return d if d.tzinfo is not None else d.replace(tzinfo=dt.UTC)
 
 
 def _kill_time(kill_obj: dict[str, object]) -> dt.datetime | None:

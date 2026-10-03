@@ -62,6 +62,7 @@ from app.logs.broadcast_ingest import unlink_if_unreferenced
 from app.logs.coverage import _coverage_to_dict, br_coverage, my_coverage
 from app.observability.logging import log
 from app.services.br_discord import schedule_br_announce
+from app.timeutil import naive_utc as _naive_utc
 
 SUPPORTED_HOSTS = {"zkillboard.com", "br.evetools.org"}
 
@@ -208,12 +209,6 @@ async def _existing_br_for_sources(
             await session.execute(select(BattleReport).where(BattleReport.br_id == hit))
         ).scalar_one_or_none()
     return None
-
-
-def _naive_utc(value: dt.datetime | None) -> dt.datetime | None:
-    if value is None or value.tzinfo is None:
-        return value
-    return value.astimezone(dt.UTC).replace(tzinfo=None)
 
 
 def _add_br_sources(

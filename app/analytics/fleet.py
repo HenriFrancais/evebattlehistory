@@ -51,6 +51,7 @@ from app.db.models import (
 )
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
+from app.timeutil import epoch as _epoch
 
 # Effect → panel group (matches the frontend grouping).
 _EFFECT_GROUP: dict[str, str] = {
@@ -502,18 +503,6 @@ def _series_sort_key(key: str) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 # Datetime helpers
 # ---------------------------------------------------------------------------
-
-
-def _as_utc(ts: dt.datetime) -> dt.datetime:
-    """Ensure *ts* is UTC-aware; SQLite reads datetimes back without tzinfo."""
-    if ts.tzinfo is None:
-        return ts.replace(tzinfo=dt.UTC)
-    return ts
-
-
-def _epoch(ts: dt.datetime) -> int:
-    """Return epoch-seconds for *ts*, normalising naive datetimes to UTC first."""
-    return int(_as_utc(ts).timestamp())
 
 
 # ---------------------------------------------------------------------------

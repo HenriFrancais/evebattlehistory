@@ -285,11 +285,11 @@ outside any fight window.
 
 ### 17. Timestamps
 
-- [ ] SQLite drops tzinfo on write, and naive values are read back as UTC. A
+- [x] SQLite drops tzinfo on write, and naive values are read back as UTC. A
       window source sent with a non-UTC offset is stored as wall-clock and then
       queried an offset off (`app/ingest/sources/zkillboard.py:21`). The
       frontend sends `Z` today; the API does not enforce it.
-- [ ] `_as_utc` / `_epoch` are copy-pasted in six modules. Normalise once at
+- [x] `_as_utc` / `_epoch` are copy-pasted in six modules. Normalise once at
       the schema boundary with a UTC column type.
 
 ### 18. Engineering hygiene
