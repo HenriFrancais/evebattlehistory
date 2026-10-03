@@ -113,3 +113,60 @@ def test_derived_cache_version_bump_and_ttl() -> None:
         return out
 
     assert asyncio.run(run()) == [1, 1, 2, 3]
+
+
+async def test_composition_is_cached_per_audience(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import app.api.fleet as fleet_api
+    from app.main import create_app
+    from tests.conftest import MEMBER_HEADERS
+
+    br_id = await _boot(tmp_path, monkeypatch)
+    calls: list[bool] = []
+    real = fleet_api.fleet_composition
+
+    async def spy(session, br, **kw):  # type: ignore[no-untyped-def]
+        calls.append(kw.get("char_to_user") is not None)
+        return await real(session, br, **kw)
+
+    monkeypatch.setattr(fleet_api, "fleet_composition", spy)
+    url = f"/api/brs/{br_id}/composition"
+    with TestClient(create_app()) as client:
+        fc1 = client.get(url, headers=CREATOR_HEADERS).json()
+        fc2 = client.get(url, headers=CREATOR_HEADERS).json()
+        member = client.get(url, headers=MEMBER_HEADERS).json()
+        client.get(url, headers=MEMBER_HEADERS)
+    assert fc1 == fc2
+    # One computation with the user mapping (FC/HC) and one without (members).
+    assert calls == [True, False]
+    assert fc1["by_user_available"] is True and member["by_user_available"] is False
+
+
+async def test_pre_migration_snapshot_runs_off_the_event_loop(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import sqlite3
+    import threading
+
+    import app.db.engine as engine_mod
+    from app.config import get_settings
+    from app.db.engine import init_models, reset_engine_for_tests
+
+    db = tmp_path / "old.db"
+    monkeypatch.setenv("DB_PATH", str(db))
+    get_settings.cache_clear()
+    reset_engine_for_tests()
+    await init_models(get_settings())
+    reset_engine_for_tests()
+    with sqlite3.connect(db) as c:
+        c.execute("pragma user_version = 1")
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    real = engine_mod.snapshot_before_migrate
+
+    def spy(path, version):  # type: ignore[no-untyped-def]
+        seen.append(threading.get_ident())
+        return real(path, version)
+
+    monkeypatch.setattr(engine_mod, "snapshot_before_migrate", spy)
+    await init_models(get_settings())
+    reset_engine_for_tests()
+    assert seen and seen[0] != loop_thread

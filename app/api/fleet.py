@@ -241,11 +241,17 @@ async def get_composition(
             char_to_user = None
             by_user_available = False
     overrides = await load_overrides(session, br_id)
-    result = await fleet_composition(
-        session, br_id,
-        baseline_alliances=set(cfg.our_alliance_ids),
-        baseline_corps=set(cfg.our_corp_ids),
-        overrides=overrides, settings=settings, char_to_user=char_to_user,
+    # Cold, this walks every log event of the BR (seconds on a large fight) on the
+    # single worker's event loop — cache it. Two audiences: with the user mapping
+    # (FC/HC) and without; per-viewer redaction is applied below, after the cache.
+    result = await get_derived_cache().get(
+        ("composition", br_id, char_to_user is not None),
+        lambda: fleet_composition(
+            session, br_id,
+            baseline_alliances=set(cfg.our_alliance_ids),
+            baseline_corps=set(cfg.our_corp_ids),
+            overrides=overrides, settings=settings, char_to_user=char_to_user,
+        ),
     )
     return CompositionOut(
         by_user_available=by_user_available,

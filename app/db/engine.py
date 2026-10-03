@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 
 from sqlalchemy import event
@@ -68,7 +69,9 @@ async def init_models(settings: Settings) -> None:
     is snapshotted first."""
     version = existing_db_version(settings.db_path)
     if version is not None and version < LATEST_VERSION:
-        snapshot_before_migrate(settings.db_path, version)
+        # Copying a multi-hundred-MB database is blocking I/O: run it in a thread so
+        # the event loop (and gunicorn's worker heartbeat) keeps turning at startup.
+        await asyncio.to_thread(snapshot_before_migrate, settings.db_path, version)
     engine = get_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
