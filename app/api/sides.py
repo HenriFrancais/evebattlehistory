@@ -6,12 +6,13 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.sides_config import br_entities, load_overrides, recompute_br_outcome
+from app.analytics.sides_config import br_entities, load_overrides
 from app.api.auth import can_create_br, current_user
 from app.api.deps import SessionDep
 from app.api.schemas import BrSidesOut, SideEntityOut, SideOverrideIn
 from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrSideOverride
+from app.fights.aggregate import aggregate_br
 
 router = APIRouter()
 
@@ -88,14 +89,15 @@ async def set_side(
         )
     await session.flush()
 
-    # Keep the BR headline stats (result / efficiency / ISK) in step with the
-    # new side allocation, so the timeline + summary reflect the change.
+    # Re-derive everything that depends on side allocation — the headline (result /
+    # efficiency / ISK) and the stored per-side rollups the filters query. Fight ids
+    # are stable across this, so logs stay attached.
     cfg = get_app_config()
-    await recompute_br_outcome(
+    await aggregate_br(
         session,
-        br_id,
-        baseline_alliances=set(cfg.our_alliance_ids),
-        baseline_corps=set(cfg.our_corp_ids),
+        br_id=br_id,
+        our_alliance_ids=cfg.our_alliance_ids,
+        our_corp_ids=cfg.our_corp_ids,
     )
     await session.commit()
     return await _build_out(br_id, session, can_edit=True)

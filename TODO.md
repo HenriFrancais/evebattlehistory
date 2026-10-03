@@ -185,10 +185,10 @@ Fix: one per-BR side resolver used by every reader.
 
 ### 9. The legacy 2-colouring is still stored and still drives filters
 
-- [ ] `assign_sides` recolours every alliance of a colour, not just one
+- [x] `assign_sides` recolours every alliance of a colour, not just one
       component, when co-attackers disagree (`app/fights/sides.py:114-121`),
       which collapses both fleets onto one side.
-- [ ] Its output (`FightSide.side_kind`, `BrShipCount`, `FightShipCount`) feeds
+- [x] Its output (`FightSide.side_kind`, `BrShipCount`, `FightShipCount`) feeds
       the ship filters (`app/analytics/filters.py:194`, `:285`) and is returned
       directly by `/api/fights/filter` (`app/api/filters.py:44-70`), so filter
       results disagree with the sides shown in the UI. Overrides never update

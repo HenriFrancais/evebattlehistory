@@ -13,9 +13,10 @@
 #   --reparse         also re-parse all stored gamelogs first (one-time, after the
 #                     custom-ship-name fix; cleans stored names so the backfill
 #                     matches more counterparties). Slow on large datasets.
-#   --recompute       re-derive every BR's stored win/tie/loss + ISK rollups from
-#                     current side allocation (one-time, after a win/tie threshold
-#                     change). Idempotent.
+#   --recompute       re-derive every BR's fights, per-side rollups and stored
+#                     win/tie/loss + ISK headline from current side allocation
+#                     (one-time, after a change to side or outcome rules). Fight
+#                     ids and attached logs are preserved. Idempotent.
 #   --skip-backfill   don't run the ESI counterparty backfill (code-only deploy).
 #   --no-pull         don't run `git pull` (deploy whatever is checked out).
 #
@@ -89,8 +90,8 @@ if [ "$REPARSE" = 1 ]; then
 fi
 
 if [ "$RECOMPUTE" = 1 ]; then
-  echo "==> recomputing BR outcomes (win/tie/loss + ISK rollups)"
-  $DC exec -T "$SERVICE" python -m app.analytics.recompute
+  echo "==> re-aggregating BRs (side rollups + win/tie/loss + ISK headline)"
+  $DC exec -T "$SERVICE" python -m app.fights.aggregate
 fi
 
 if [ "$BACKFILL" = 1 ]; then

@@ -5,7 +5,8 @@ This is the only module in app/fights/ that touches the database.
 Flow:
   1. Load the BR's killmails (via br_killmail join).
   2. Cluster kills into fights (cluster_kills).
-  3. For each fight: assign sides, compute outcomes, label sides.
+  3. For each fight: place every pilot by the BR's side classification
+     (app/fights/classified.py) and roll up per-side stats.
   4. Persist Fight / FightSide / FightKill / BrFight / fight_ship_count rows.
   5. Roll up BR-level ISK and result onto BattleReport.
   6. Build br_ship_count rollup.
@@ -22,7 +23,7 @@ from collections import defaultdict
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analytics.sides_config import recompute_br_outcome
+from app.analytics.sides_config import load_side_resolver, recompute_br_outcome
 from app.db.models import (
     BattleReport,
     BrFight,
@@ -39,10 +40,8 @@ from app.db.models import (
     LogEventBucket,
 )
 from app.fights.capitals import is_capital_type_name
+from app.fights.classified import SIDE_IDX, classified_fight_sides
 from app.fights.cluster import FightCluster, cluster_kills
-from app.fights.labelling import SideInfo, label_sides
-from app.fights.outcomes import SideStats, compute_fight_sides
-from app.fights.sides import SideResult, assign_sides
 from app.observability.logging import log
 
 
@@ -158,31 +157,6 @@ async def _fights_by_kill_set(
     return out
 
 
-def _build_label_input(
-    per_side_stats: dict[int, SideStats],
-    side_result: SideResult,
-) -> dict[int, SideInfo]:
-    """Build the per_side dict for label_sides from SideStats + SideResult."""
-    all_side_idxs = set(side_result.alliance_sides.values()) | set(per_side_stats.keys())
-    label_input: dict[int, SideInfo] = {
-        idx: {
-            "alliance_ids": per_side_stats[idx].alliance_ids
-            if idx in per_side_stats
-            else set(),
-            "corp_ids": per_side_stats[idx].corp_ids
-            if idx in per_side_stats
-            else set(),
-        }
-        for idx in all_side_idxs
-    }
-    # Ensure alliance_ids from the graph are represented (in case they're
-    # not in per_side_stats because all kills were on one side)
-    for aid, sidx in side_result.alliance_sides.items():
-        label_input.setdefault(sidx, {"alliance_ids": set(), "corp_ids": set()})
-        label_input[sidx]["alliance_ids"].add(aid)
-    return label_input
-
-
 async def aggregate_br(
     session: AsyncSession,
     br_id: str,
@@ -196,9 +170,17 @@ async def aggregate_br(
     so fight ids — and the logs stamped to them — survive a refresh and are
     shared by every report covering the same engagement. Fights this BR no
     longer uses are dropped only when no other BR references them.
+
+    Side rollups (FightSide / FightKill.side_idx / FightShipCount / BrShipCount)
+    follow this BR's side classification, including FC/HC overrides, so this is
+    also what the sides endpoints call after an override changes. (A fight shared
+    by two reports carries the rollups of whichever report aggregated last.)
     """
     our_alliance_set = set(our_alliance_ids)
     our_corp_set = set(our_corp_ids)
+    resolver = await load_side_resolver(
+        session, br_id, baseline_alliances=our_alliance_set, baseline_corps=our_corp_set
+    )
 
     log.info("aggregate_br.start", br_id=br_id)
 
@@ -250,22 +232,10 @@ async def aggregate_br(
         cluster_ids = set(cluster.killmail_ids)
         cluster_wrapped = [w for w in wrapped if w.killmail_id in cluster_ids]
 
-        # Assign sides
-        side_result: SideResult = assign_sides(cluster_wrapped)  # type: ignore[arg-type]
-        side_for_alliance = dict(side_result.alliance_sides)
-
-        # Compute per-side stats
-        per_side_stats: dict[int, SideStats] = compute_fight_sides(
+        # Place every victim / attacker on a classified side and roll up stats.
+        per_side_stats, victim_side = classified_fight_sides(
             cluster_wrapped,  # type: ignore[arg-type]
-            side_for_alliance,
-        )
-
-        # Label sides
-        label_input = _build_label_input(per_side_stats, side_result)
-        labels = label_sides(
-            label_input,
-            our_alliance_ids=our_alliance_set,
-            our_corp_ids=our_corp_set,
+            resolver,
         )
 
         # Fight-level time bounds
@@ -318,56 +288,39 @@ async def aggregate_br(
         used_fight_ids.add(fight_id)
 
         # Persist FightSide rows
-        for side_idx, sd in per_side_stats.items():
+        for side_kind, sd in per_side_stats.items():
             session.add(FightSide(
                 fight_id=fight_id,
-                side_idx=side_idx,
+                side_idx=SIDE_IDX[side_kind],
                 pilot_count=sd.pilot_count,
                 isk_lost=sd.isk_lost,
                 alliance_ids_json=json.dumps(sorted(sd.alliance_ids)),
                 corp_ids_json=json.dumps(sorted(sd.corp_ids)),
-                side_kind=labels.get(side_idx),
+                side_kind=side_kind,
             ))
 
         # Persist FightKill rows
-        for km_id, victim_side in side_result.kill_victim_side.items():
-            session.add(FightKill(fight_id=fight_id, killmail_id=km_id, side_idx=victim_side))
+        for km_id, side_kind in victim_side.items():
+            session.add(FightKill(fight_id=fight_id, killmail_id=km_id,
+                                  side_idx=SIDE_IDX[side_kind]))
 
         # Persist BrFight
         session.add(BrFight(br_id=br_id, fight_id=fight_id, seq=fight_seq))
         fight_seq += 1
 
-        # Persist fight_ship_count
-        # Dedupe by (side_idx, character_id) so each pilot is counted once per ship.
-        # Victim's lost ship is always counted (no character dedup needed for victims
-        # since each kill has one victim). Attackers are deduped so a pilot appearing
-        # in N kills contributes only 1 to their ship's count.
-        fight_ship_accumulator: dict[tuple[int, int], int] = defaultdict(int)
-        attacker_seen: set[tuple[int, int]] = set()  # (side_idx, character_id)
-        for w in cluster_wrapped:
-            v_aid = w.victim_alliance_id
-            v_side = side_for_alliance.get(v_aid, 0) if v_aid is not None else 0
-            fight_ship_accumulator[(v_side, w.victim_ship_type_id)] += 1
-            for att in w.attackers:
-                a_aid = att.alliance_id
-                if a_aid is not None:
-                    a_side = side_for_alliance.get(a_aid)
-                    if a_side is not None and att.ship_type_id is not None:
-                        if att.character_id is not None:
-                            key = (a_side, att.character_id)
-                            if key in attacker_seen:
-                                continue
-                            attacker_seen.add(key)
-                        fight_ship_accumulator[(a_side, att.ship_type_id)] += 1
-
-        for (sidx, ship_id), cnt in fight_ship_accumulator.items():
-            session.add(FightShipCount(
-                fight_id=fight_id, side_idx=sidx, ship_type_id=ship_id, count=cnt
-            ))
+        # Persist fight_ship_count + accumulate the BR-level rollup by side.
+        ship_type_ids: set[int] = set()
+        for side_kind, sd in per_side_stats.items():
+            for ship_id, cnt in sd.ship_counts.items():
+                ship_type_ids.add(ship_id)
+                session.add(FightShipCount(
+                    fight_id=fight_id, side_idx=SIDE_IDX[side_kind],
+                    ship_type_id=ship_id, count=cnt,
+                ))
+                br_ship_accumulator[(side_kind, ship_id)] += cnt
 
         # Check capitals via InventoryType names
-        if fight_ship_accumulator:
-            ship_type_ids = {ship_id for (_, ship_id) in fight_ship_accumulator}
+        if ship_type_ids:
             it_result = await session.execute(
                 select(InventoryType.type_id, InventoryType.name)
                 .where(InventoryType.type_id.in_(ship_type_ids))
@@ -376,13 +329,6 @@ async def aggregate_br(
                 if is_capital_type_name(name):
                     fight.capitals_involved = True
                     break
-
-        # Accumulate BR-level ship counts by side_kind (used by the ship_fielded filter).
-        for side_idx, sd in per_side_stats.items():
-            side_kind = labels.get(side_idx)
-            if side_kind is not None:
-                for ship_id, cnt in sd.ship_counts.items():
-                    br_ship_accumulator[(side_kind, ship_id)] += cnt
 
     await session.flush()
     await _drop_unused()
@@ -419,3 +365,42 @@ async def aggregate_br(
         result=outcome["result"],
         isk_efficiency=outcome["isk_efficiency"],
     )
+
+
+async def reaggregate_all(
+    session: AsyncSession, our_alliance_ids: list[int], our_corp_ids: list[int]
+) -> int:
+    """Re-derive fights, side rollups and headline for every ingested BR.
+
+    Run once after a change to side classification or outcome rules; fight ids
+    (and the logs stamped to them) are preserved. Returns the number of BRs.
+    """
+    br_ids = list(
+        (
+            await session.execute(
+                select(BrKillmail.br_id).distinct().order_by(BrKillmail.br_id)
+            )
+        ).scalars()
+    )
+    for br_id in br_ids:
+        await aggregate_br(
+            session, br_id=br_id, our_alliance_ids=our_alliance_ids, our_corp_ids=our_corp_ids
+        )
+    return len(br_ids)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import asyncio
+
+    from app.config import get_app_config, get_settings
+    from app.db.engine import get_sessionmaker, init_models
+
+    async def _main() -> None:
+        cfg = get_app_config()
+        await init_models(get_settings())  # apply pending schema migrations first
+        async with get_sessionmaker(get_settings())() as session:
+            n = await reaggregate_all(session, cfg.our_alliance_ids, cfg.our_corp_ids)
+            await session.commit()
+        print(f"re-aggregated {n} battle reports")
+
+    asyncio.run(_main())

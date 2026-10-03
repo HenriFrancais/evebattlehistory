@@ -11,6 +11,7 @@ from app.db.models import (
     Alliance,
     BattleReport,
     BrFight,
+    BrKillmail,
     Corporation,
     Fight,
     FightKill,
@@ -55,6 +56,8 @@ async def _seed(session) -> str:  # type: ignore[no-untyped-def]
                              created_by_user="t", status="ready", progress_pct=100,
                              created_at=dt.datetime.now(dt.UTC)))
     session.add(BrFight(br_id=br_id, fight_id=fight.fight_id, seq=0))
+    await session.flush()
+    session.add(BrKillmail(br_id=br_id, killmail_id=km_id))
     await session.flush()
     return br_id
 

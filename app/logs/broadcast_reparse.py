@@ -110,10 +110,11 @@ if __name__ == "__main__":  # pragma: no cover
     import asyncio
 
     from app.config import get_settings
-    from app.db.engine import get_sessionmaker
+    from app.db.engine import get_sessionmaker, init_models
 
     async def _main() -> None:
         settings = get_settings()
+        await init_models(settings)  # apply pending schema migrations first
         async with get_sessionmaker(settings)() as session:
             n = await reparse_broadcasts(session, settings)
             await session.commit()

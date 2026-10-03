@@ -63,10 +63,11 @@ if __name__ == "__main__":  # pragma: no cover
     import asyncio
 
     from app.config import get_app_config, get_settings
-    from app.db.engine import get_sessionmaker
+    from app.db.engine import get_sessionmaker, init_models
 
     async def _main() -> None:
         settings = get_settings()
+        await init_models(settings)  # apply pending schema migrations first
         cfg = get_app_config()
         async with get_sessionmaker(settings)() as session:
             total, changed = await recompute_all_brs(

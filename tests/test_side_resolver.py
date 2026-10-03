@@ -16,6 +16,7 @@ from app.db.models import (
     BattleReport,
     BrCharSide,
     BrFight,
+    BrKillmail,
     Character,
     Fight,
     FightKill,
@@ -77,6 +78,9 @@ async def _seed(session) -> tuple[str, int]:  # type: ignore[no-untyped-def]
                              created_by_user="t", status="ready", progress_pct=100,
                              created_at=now))
     session.add(BrFight(br_id=br_id, fight_id=fight.fight_id, seq=0))
+    await session.flush()
+    for km_id, *_ in kills:
+        session.add(BrKillmail(br_id=br_id, killmail_id=km_id))
     await session.flush()
     return br_id, fight.fight_id
 

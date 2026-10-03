@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.composition import fleet_composition
 from app.analytics.fleet import Contribution, Leaders, fleet_snapshot, fleet_timeline
-from app.analytics.sides_config import load_overrides, recompute_br_outcome
+from app.analytics.sides_config import load_overrides
 from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import can_create_br
 from app.api.deps import SessionDep
@@ -34,6 +34,7 @@ from app.api.schemas import (
 )
 from app.config import get_app_config, get_settings
 from app.db.models import BattleReport, BrCharShip, BrCharSide, InventoryType
+from app.fights.aggregate import aggregate_br
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 from app.sde.load import SHIP_LIKE_CATEGORIES
@@ -347,13 +348,14 @@ async def set_participant_side(
             )
         )
     await session.flush()
-    # Keep the BR headline (ISK destroyed/lost, win/loss) in step with the new side.
+    # Keep the headline (ISK destroyed/lost, win/loss) and the stored per-side
+    # rollups in step with the new side.
     cfg = get_app_config()
-    await recompute_br_outcome(
+    await aggregate_br(
         session,
-        br_id,
-        baseline_alliances=set(cfg.our_alliance_ids),
-        baseline_corps=set(cfg.our_corp_ids),
+        br_id=br_id,
+        our_alliance_ids=cfg.our_alliance_ids,
+        our_corp_ids=cfg.our_corp_ids,
     )
     await session.commit()
     return {"ok": True}
