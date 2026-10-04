@@ -12,8 +12,9 @@
 //
 // One panel is one stat type of the timeline chart. Outgoing families draw ABOVE
 // a zero baseline, incoming families mirrored BELOW (negated). Colour AND position
-// both encode direction so it reads at a glance. Smoothing is a centered moving
-// average per family.
+// both encode direction so it reads at a glance. Smoothing is a weighted moving
+// average whose window follows each series' own cycle length, so slow weapons
+// (torpedoes, heavy neutralizers) are not drawn as a saw-tooth.
 
 import type { FleetTimeline, KillEvent } from './api'
 
@@ -86,6 +87,8 @@ export interface PanelSeries {
   defaultVisible: boolean
   /** Mirrored, smoothed values: out positive, in negative. Null where no data. */
   values: (number | null)[]
+  /** Seconds the smoothing spans either side of a point; absent when not smoothed. */
+  smoothSeconds?: number
   /** Line dash pattern; solid when absent. */
   dash?: number[]
   /** Draw the line only, without the area under it (many overlapping lines). */
@@ -106,9 +109,11 @@ export interface FleetView {
 }
 
 /**
- * Centered moving average over `win` buckets. Nulls inside the active span
- * (first→last non-null) count as 0; outside the span values stay null so the
- * curve doesn't bleed beyond real activity. `win <= 1` returns a copy.
+ * Weighted moving average: a bucket `win` away or further has no weight, the centre
+ * has the most (a triangle), so a hit fades in and out of the line instead of
+ * stepping. Nulls inside the active span (first→last non-null) count as 0; outside
+ * the span values stay null so the curve doesn't bleed beyond real activity.
+ * `win <= 1` returns a copy.
  */
 export function smoothSeries(values: (number | null)[], win: number): (number | null)[] {
   const n = values.length
@@ -124,20 +129,87 @@ export function smoothSeries(values: (number | null)[], win: number): (number | 
   }
   if (first === -1) return values.slice()
 
-  const half = Math.floor(win / 2)
   const out: (number | null)[] = new Array(n).fill(null)
   for (let i = first; i <= last; i++) {
-    const lo = Math.max(first, i - half)
-    const hi = Math.min(last, i + half)
+    const lo = Math.max(first, i - win + 1)
+    const hi = Math.min(last, i + win - 1)
     let sum = 0
-    for (let j = lo; j <= hi; j++) sum += values[j] ?? 0
-    out[i] = sum / (hi - lo + 1)
+    let weights = 0
+    for (let j = lo; j <= hi; j++) {
+      const w = win - Math.abs(j - i)
+      sum += (values[j] ?? 0) * w
+      weights += w
+    }
+    out[i] = sum / weights
   }
   return out
 }
 
+/**
+ * Cycles longer than this many buckets are not looked for: the slowest modules
+ * (heavy neutralizers, large artillery) cycle in under 30 seconds, and a longer gap
+ * is a lull in the fight.
+ */
+const MAX_CYCLE_BUCKETS = 6
+/** How many of a series' own cycles the smoothing covers. */
+const SMOOTH_CYCLES = 2.5
+
+/**
+ * The series' repeat interval in buckets: slow weapons (torpedoes, heavy
+ * neutralizers) log one burst per cycle with nothing in between, and a window
+ * shorter than a couple of cycles draws that as a saw-tooth. Takes the larger of
+ * the typical gap between active buckets and the strongest repeat in the values
+ * (clipped at their 90th percentile so one huge hit does not decide it). 1 when
+ * the series is active in most buckets and has no clear repeat.
+ */
+export function detectCycle(values: (number | null)[]): number {
+  const active: number[] = []
+  values.forEach((v, i) => { if (v) active.push(i) })
+  if (active.length < 3) return 1
+
+  const gaps: number[] = []
+  for (let k = 1; k < active.length; k++) {
+    const g = active[k] - active[k - 1]
+    if (g <= MAX_CYCLE_BUCKETS) gaps.push(g) // longer = a lull in the fight, not a cycle
+  }
+  gaps.sort((a, b) => a - b)
+  const typicalGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 1
+
+  const first = active[0]
+  const last = active[active.length - 1]
+  const amounts = active.map((i) => values[i] as number).sort((a, b) => a - b)
+  const p90 = amounts[Math.floor(amounts.length * 0.9)]
+  const span: number[] = []
+  for (let i = first; i <= last; i++) span.push(Math.min(values[i] ?? 0, p90))
+  const mean = span.reduce((a, b) => a + b, 0) / span.length
+  const z = span.map((v) => v - mean)
+  const variance = z.reduce((a, b) => a + b * b, 0)
+  let repeat = 1
+  let best = 0.2 * variance // a weaker repeat than this is noise
+  for (let lag = 2; lag <= MAX_CYCLE_BUCKETS; lag++) {
+    let ac = 0
+    for (let i = lag; i < z.length; i++) ac += z[i] * z[i - lag]
+    if (ac > best) {
+      best = ac
+      repeat = lag
+    }
+  }
+  return Math.max(typicalGap, repeat)
+}
+
 export function smoothWindowBuckets(seconds: number, bucketSeconds: number, scale: number): number {
   return Math.max(1, Math.round((seconds * scale) / Math.max(1, bucketSeconds)))
+}
+
+/**
+ * Smoothing window for one series, in buckets: the family's default, or
+ * SMOOTH_CYCLES of the series' own cycles when that is longer, times the user's scale.
+ */
+export function cycleAwareWindow(
+  values: (number | null)[], seconds: number, bucketSeconds: number, scale: number,
+): number {
+  const b = Math.max(1, bucketSeconds)
+  return Math.max(1, Math.round(Math.max(seconds / b, detectCycle(values) * SMOOTH_CYCLES) * scale))
 }
 
 /** Sum member arrays element-wise; null where ALL members are null at an index. */
@@ -210,8 +282,14 @@ export function toFleetView(fleet: FleetTimeline, opts: ToFleetViewOpts = {}): F
     if (memberArrays.length === 0) continue // family absent from this BR
 
     let values = sumMembers(memberArrays, len)
+    let smoothSeconds: number | undefined
     if (smooth) {
-      values = smoothSeries(values, smoothWindowBuckets(fam.smoothSec, bucketSeconds, smoothScale))
+      // Tackle / EWAR is a count of applications, not a cycling amount: fixed window.
+      const win = fam.panel === 'ewar'
+        ? smoothWindowBuckets(fam.smoothSec, bucketSeconds, smoothScale)
+        : cycleAwareWindow(values, fam.smoothSec, bucketSeconds, smoothScale)
+      values = smoothSeries(values, win)
+      if (win > 1) smoothSeconds = win * bucketSeconds
     }
     if (fam.dir === 'in') values = values.map((v) => (v == null ? null : -v))
 
@@ -222,6 +300,7 @@ export function toFleetView(fleet: FleetTimeline, opts: ToFleetViewOpts = {}): F
       direction: fam.dir,
       defaultVisible: fam.defaultVisible,
       values,
+      smoothSeconds,
     }
     const arr = byPanel.get(fam.panel)
     if (arr) arr.push(ps)

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { FleetTimeline } from './api'
-import { clipToWindow, seriesEffects, smoothSeries, smoothWindowBuckets, toFleetView } from './fleet'
+import {
+  clipToWindow, cycleAwareWindow, detectCycle, seriesEffects, smoothSeries, smoothWindowBuckets, toFleetView,
+} from './fleet'
 
 const emptyFleet: FleetTimeline = {
   x: [],
@@ -49,10 +51,10 @@ describe('smoothSeries', () => {
     expect(smoothSeries([1, 2, 3], 1)).toEqual([1, 2, 3])
   })
 
-  it('centered average smooths a spike', () => {
-    const out = smoothSeries([0, 0, 9, 0, 0], 3)
-    expect(out[2]).toBeCloseTo(3)
-    expect(out[1]).toBeCloseTo(3)
+  it('spreads a spike with the most weight at the centre, keeping its total', () => {
+    const out = smoothSeries([0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0], 3) as number[]
+    expect(out.slice(2, 9).map((v) => Math.round(v))).toEqual([0, 1, 2, 3, 2, 1, 0]) // weights 1,2,3,2,1
+    expect(out.reduce((a, b) => a + b, 0)).toBeCloseTo(9)
   })
 
   it('keeps nulls outside the active span', () => {
@@ -60,6 +62,63 @@ describe('smoothSeries', () => {
     expect(out[0]).toBeNull()
     expect(out[4]).toBeNull()
     expect(out[2]).not.toBeNull()
+  })
+})
+
+// Active in every bucket, amounts varying with no period (a fixed pseudo-random walk).
+function noisy(len = 60): number[] {
+  let seed = 7
+  return Array.from({ length: len }, () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    return 100 + (seed % 23)
+  })
+}
+
+describe('detectCycle', () => {
+  const every = (n: number, len = 60) => Array.from({ length: len }, (_, i) => (i % n === 0 ? 100 : null))
+
+  it('finds the gap between bursts of a slow weapon', () => {
+    expect(detectCycle(every(3))).toBe(3)
+    expect(detectCycle(every(5))).toBe(5)
+  })
+
+  it('is 1 for a series active in every bucket with no repeat', () => {
+    const steady = noisy()
+    expect(detectCycle(steady)).toBe(1)
+  })
+
+  it('finds a repeat in the amounts even when no bucket is empty', () => {
+    const volleys = Array.from({ length: 60 }, (_, i) => (i % 4 === 0 ? 900 : 50))
+    expect(detectCycle(volleys)).toBe(4)
+  })
+
+  it('ignores a long lull between engagements and one huge hit', () => {
+    const v = [...every(3, 30), ...new Array(40).fill(null), ...every(3, 30)]
+    v[3] = 50_000
+    expect(detectCycle(v)).toBe(3)
+  })
+
+  it('does not take a gap longer than 30 seconds for a cycle', () => {
+    expect(detectCycle(every(8))).toBe(1)
+  })
+
+  it('is 1 with too little to go on', () => {
+    expect(detectCycle([null, 5, null, null, 7])).toBe(1)
+    expect(detectCycle([])).toBe(1)
+  })
+})
+
+describe('cycleAwareWindow', () => {
+  const every = (n: number) => Array.from({ length: 60 }, (_, i) => (i % n === 0 ? 100 : null))
+
+  it('keeps the family default for a dense series', () => {
+    const steady = noisy()
+    expect(cycleAwareWindow(steady, 25, 5, 1)).toBe(5)
+  })
+
+  it('widens to 2.5 cycles for a sparse series, and follows the scale', () => {
+    expect(cycleAwareWindow(every(5), 10, 5, 1)).toBe(13) // 5 buckets * 2.5
+    expect(cycleAwareWindow(every(5), 10, 5, 2)).toBe(25)
   })
 })
 
@@ -138,6 +197,26 @@ describe('toFleetView (families)', () => {
     expect(v.panels.map((p) => p.id)).toEqual(['damage'])
     const keys = v.panels[0].series.map((s) => s.key)
     expect(keys).toEqual(['dmg_out'])
+  })
+
+  it('reports how many seconds each smoothed series spans, and nothing when not smoothed', () => {
+    const sparse = Array.from({ length: 60 }, (_, i) => (i % 5 === 0 ? 100 : null))
+    const fleet: FleetTimeline = {
+      ...emptyFleet, x: sparse.map((_, i) => i * 5), series: [mk('neut', 'out', sparse)],
+    }
+    const on = toFleetView(fleet).panels[0].series[0]
+    expect(on.smoothSeconds).toBe(65) // 13 buckets of 5 s
+    // The line no longer drops to zero between cycles.
+    expect(Math.min(...(on.values.slice(10, 50) as number[]))).toBeGreaterThan(0)
+    expect(toFleetView(fleet, { smooth: false }).panels[0].series[0].smoothSeconds).toBeUndefined()
+  })
+
+  it('keeps the fixed window for tackle / EWAR, which is a count and not a cycle', () => {
+    const sparse = Array.from({ length: 60 }, (_, i) => (i % 5 === 0 ? 1 : null))
+    const fleet: FleetTimeline = {
+      ...emptyFleet, x: sparse.map((_, i) => i * 5), series: [mk('scram', 'out', sparse)],
+    }
+    expect(toFleetView(fleet).panels[0].series[0].smoothSeconds).toBe(25)
   })
 
   it('passes kills through', () => {

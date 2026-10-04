@@ -212,6 +212,15 @@ function ChartCanvas({
   return <div className="timeline-chart" data-testid="timeline-canvas" ref={containerRef} />
 }
 
+/** " (smoothed over ±N s)" for a compared pilot, from the widest of their lines. */
+function smoothNote(lines: PanelSeries[] | null, characterId: number): string {
+  const spans = (lines ?? [])
+    .filter((l) => l.key.startsWith(`${characterId}:`))
+    .map((l) => l.smoothSeconds ?? 0)
+  const widest = Math.max(0, ...spans)
+  return widest ? ` (smoothed over ±${widest} s)` : ''
+}
+
 // --- chart + its controls ----------------------------------------------------
 
 interface Props {
@@ -318,9 +327,11 @@ export function TimelineChart({
           }
           return acc == null ? null : acc / per
         })
+        const spans = parts.map((p) => p.smoothSeconds ?? 0)
         lines.push({
           key: `${c.characterId}:${dir}`, label: c.name, stroke: c.color, dash: c.dash,
           direction: dir, defaultVisible: true, values, noFill: true,
+          smoothSeconds: Math.max(...spans) || undefined,
         })
       }
     }
@@ -356,6 +367,7 @@ export function TimelineChart({
                 key={s.key}
                 type="button"
                 aria-pressed={shown}
+                title={!compare && s.smoothSeconds ? `Smoothed over ±${s.smoothSeconds} s` : undefined}
                 onClick={() => onToggleSeries(s.key)}
                 className="fleet-legend-btn"
                 style={compare ? {
@@ -432,7 +444,7 @@ export function TimelineChart({
               key={c.characterId}
               type="button"
               className="fleet-legend-btn compare-chip"
-              title={`Remove ${c.name} from the comparison`}
+              title={`Remove ${c.name} from the comparison${smoothNote(compareLines, c.characterId)}`}
               onClick={() => onTogglePilot?.(c.characterId)}
             >
               <span
