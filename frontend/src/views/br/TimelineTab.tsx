@@ -11,12 +11,14 @@ import type { BroadcastRawItem, FleetTimeline, PilotTimeline } from '../../api'
 import { api } from '../../api'
 import { loadFleetTimeline, loadPilotTimeline } from '../../cache'
 import { StatsTable } from '../../components/StatsTable'
-import type { TimeRange } from '../../components/TimelineChart'
+import type { ComparePilot, TimeRange } from '../../components/TimelineChart'
 import { TimelineChart, fightWindow } from '../../components/TimelineChart'
 import { panelSeriesKeys, seriesEffects } from '../../fleet'
 import { fmtTime } from '../../format'
 import type { StatDirection, StatFamily } from '../../pilotStats'
-import { STAT_FAMILIES, computeStats, snapRange, sumSeries } from '../../pilotStats'
+import {
+  STAT_FAMILIES, assignSlots, computeStats, pilotStyle, snapRange, sumSeries,
+} from '../../pilotStats'
 
 const DIRECTIONS: { id: StatDirection; label: string }[] = [
   { id: 'both', label: 'Both' },
@@ -182,6 +184,15 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
     setParam('pilots', next.size ? [...next].join(',') : null)
   }, [isolatedIds, setParam])
 
+  const togglePilots = useCallback((ids: number[], on: boolean) => {
+    const next = new Set(isolatedIds)
+    for (const id of ids) {
+      if (on) next.add(id)
+      else next.delete(id)
+    }
+    setParam('pilots', next.size ? [...next].join(',') : null)
+  }, [isolatedIds, setParam])
+
   const toggleSeries = useCallback((key: string) => {
     setHiddenSeries((prev) => {
       const next = new Set(prev)
@@ -195,6 +206,29 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
     () => (pilots && isolatedIds.size > 0 ? sumSeries(pilots, isolatedIds) : null),
     [pilots, isolatedIds],
   )
+
+  // Two or more isolated pilots are compared: each gets their own line and colour.
+  // A pilot keeps their colour while others are ticked and unticked around them.
+  const slotsRef = useRef(new Map<number, number>())
+  const pilotColors = useMemo(() => {
+    slotsRef.current = assignSlots(slotsRef.current, isolatedIds)
+    const out = new Map<number, { color: string; dash?: number[] }>()
+    if (isolatedIds.size < 2) return out
+    for (const [id, slot] of slotsRef.current) out.set(id, pilotStyle(slot))
+    return out
+  }, [isolatedIds])
+  const compare = useMemo<ComparePilot[] | null>(() => {
+    if (!pilots || pilotColors.size === 0) return null
+    return pilots.pilots
+      .filter((p) => pilotColors.has(p.character_id))
+      .sort((a, b) => slotsRef.current.get(a.character_id)! - slotsRef.current.get(b.character_id)!)
+      .map((p) => ({
+        characterId: p.character_id,
+        name: p.character_name,
+        ...pilotColors.get(p.character_id)!,
+        series: sumSeries(pilots, new Set([p.character_id])),
+      }))
+  }, [pilots, pilotColors])
 
   const win = useMemo(() => (fleet ? fightWindow(fleet) : { from: 0, to: 0 }), [fleet])
   // What the numbers cover: the dragged range (or the whole fight) widened to whole
@@ -279,6 +313,8 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
           family={family}
           direction={direction}
           isolatedSeries={isolatedSeries}
+          compare={compare}
+          onTogglePilot={togglePilot}
           isolatedIds={isolatedIds}
           selectedRange={range}
           onSelectRange={setRange}
@@ -314,7 +350,9 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
           </div>
           {isolatedIds.size > 0 && (
             <div className="tl-isolated" data-testid="isolation-bar">
-              <strong>{isolatedIds.size} pilot{isolatedIds.size === 1 ? '' : 's'} isolated</strong>
+              <strong>
+                {isolatedIds.size === 1 ? '1 pilot isolated' : `${isolatedIds.size} pilots compared`}
+              </strong>
               <button type="button" className="btn-mini" data-testid="isolation-clear" onClick={() => setParam('pilots', null)}>
                 Show whole fleet
               </button>
@@ -342,6 +380,8 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
             direction={tableDirection}
             selected={isolatedIds}
             onToggle={togglePilot}
+            onToggleMany={togglePilots}
+            colors={pilotColors}
             range={active}
             scope={pilots.scope}
           />

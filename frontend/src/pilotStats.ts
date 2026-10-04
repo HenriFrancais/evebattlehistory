@@ -188,3 +188,43 @@ export function sumSeries(tl: PilotTimeline, characterIds: Set<number>): FleetSe
   }
   return [...out.values()]
 }
+
+// Colours for pilots compared on the chart, in fixed slot order. Checked for
+// colour-blind separation and contrast against the dark panel.
+const COMPARE_COLORS = [
+  '#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767',
+]
+
+export interface PilotStyle {
+  color: string
+  /** Set from the ninth pilot on: the colours repeat with a dashed line. */
+  dash?: number[]
+}
+
+export function pilotStyle(slot: number): PilotStyle {
+  const color = COMPARE_COLORS[slot % COMPARE_COLORS.length]
+  return slot < COMPARE_COLORS.length ? { color } : { color, dash: [6, 4] }
+}
+
+/**
+ * Give every pilot in `ids` a colour slot, keeping the slot of any pilot already in
+ * `prev` so that ticking or unticking one pilot never repaints the others. A new
+ * pilot takes the lowest free slot.
+ */
+export function assignSlots(prev: Map<number, number>, ids: Iterable<number>): Map<number, number> {
+  const next = new Map<number, number>()
+  const fresh: number[] = []
+  for (const id of ids) {
+    const slot = prev.get(id)
+    if (slot == null) fresh.push(id)
+    else next.set(id, slot)
+  }
+  const used = new Set(next.values())
+  let slot = 0
+  for (const id of fresh) {
+    while (used.has(slot)) slot++
+    next.set(id, slot)
+    used.add(slot)
+  }
+  return next
+}

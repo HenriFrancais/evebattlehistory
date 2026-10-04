@@ -5,8 +5,9 @@
 // and the stats table follows. The canvas itself is not unit-tested; tests cover
 // the controls and the empty states.
 //
-// What is drawn is owned by the parent: `fleet.series` for the whole fleet, or
-// `isolatedSeries` (the sum of the isolated pilots) when a selection is active.
+// What is drawn is owned by the parent: `fleet.series` for the whole fleet,
+// `isolatedSeries` when one pilot is isolated, or one line per pilot (`compare`)
+// when several are, so they can be read against each other.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
@@ -28,12 +29,23 @@ import {
   KILL_HOSTILE_LOSS,
   KILL_NEUTRAL,
   broadcastMarkersPlugin,
+  compareHoverPlugin,
   fightEdgesPlugin,
   hexToRgba,
   hoverSummaryPlugin,
   killMarkersPlugin,
   zeroBaselinePlugin,
 } from './chartPlugins'
+
+/** One pilot drawn as their own line when several pilots are compared. */
+export interface ComparePilot {
+  characterId: number
+  name: string
+  color: string
+  dash?: number[]
+  /** This pilot's series alone, dense on the fleet timeline's x axis. */
+  series: FleetSeriesItem[]
+}
 
 export interface TimeRange {
   from: number
@@ -82,12 +94,14 @@ interface CanvasProps {
   /** Lets the parent move the zoom of the live chart without rebuilding it. */
   registerZoomer: (fn: (r: TimeRange | null) => void) => () => void
   showHoverSummary: boolean
+  /** One line per pilot: hovering lists every pilot's value at that time. */
+  compareMode: boolean
   entities: EntityIndex
 }
 
 function ChartCanvas({
   panel, series, x, window: win, kills, broadcastMarkers, flaggedDeaths, dimUnless, fleet,
-  height, rangeRef, onZoom, registerZoomer, showHoverSummary, entities,
+  height, rangeRef, onZoom, registerZoomer, showHoverSummary, compareMode, entities,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -128,8 +142,9 @@ function ChartCanvas({
         ...series.map((s) => ({
           label: s.label,
           stroke: s.stroke,
-          fill: hexToRgba(s.stroke, 0.14),
-          width: 1.75,
+          fill: s.noFill ? undefined : hexToRgba(s.stroke, 0.14),
+          dash: s.dash,
+          width: s.noFill ? 2 : 1.75,
           points: { show: false },
           spanGaps: false,
         })),
@@ -161,6 +176,7 @@ function ChartCanvas({
         ...(broadcastMarkers.length ? [broadcastMarkersPlugin(broadcastMarkers)] : []),
         killMarkersPlugin(kills, { flaggedDeaths, dimUnless, entities }),
         ...(showHoverSummary ? [hoverSummaryPlugin(panel.id, fleet.leaders ?? [], entities, sourceIdx)] : []),
+        ...(compareMode ? [compareHoverPlugin(series, panel.unit)] : []),
       ],
     }
 
@@ -191,7 +207,7 @@ function ChartCanvas({
       u.destroy()
     }
   }, [panel, series, x, win, kills, broadcastMarkers, flaggedDeaths, dimUnless, fleet, height,
-    rangeRef, onZoom, registerZoomer, showHoverSummary, entities])
+    rangeRef, onZoom, registerZoomer, showHoverSummary, compareMode, entities])
 
   return <div className="timeline-chart" data-testid="timeline-canvas" ref={containerRef} />
 }
@@ -205,6 +221,10 @@ interface Props {
   direction: StatDirection
   /** Sum of the isolated pilots' series; null draws the whole fleet. */
   isolatedSeries: FleetSeriesItem[] | null
+  /** Two or more isolated pilots, each drawn as their own line; null otherwise. */
+  compare?: ComparePilot[] | null
+  /** Untick a pilot from the compare legend. */
+  onTogglePilot?: (characterId: number) => void
   /** The isolated pilots; other pilots' loss markers are dimmed. */
   isolatedIds: Set<number>
   /** The zoom window; null = the whole fight. Owned by the parent. */
@@ -220,7 +240,8 @@ interface Props {
 }
 
 export function TimelineChart({
-  fleet, family, direction, isolatedSeries, isolatedIds, selectedRange, onSelectRange,
+  fleet, family, direction, isolatedSeries, compare = null, onTogglePilot, isolatedIds,
+  selectedRange, onSelectRange,
   hiddenSeries, onToggleSeries, broadcasts = NO_RAW, flaggedDeaths = NO_FLAGS, height = 420,
 }: Props) {
   const entities = useEntities()
@@ -274,7 +295,41 @@ export function TimelineChart({
     () => (panel?.series ?? []).filter((s) => direction === 'both' || s.direction === direction),
     [panel, direction],
   )
-  const drawn = useMemo(() => offered.filter((s) => !hiddenSeries.has(s.key)), [offered, hiddenSeries])
+  // Comparing pilots: one line per pilot and direction, the sum of the series chips
+  // that are switched on, in the pilot's colour.
+  const compareLines = useMemo(() => {
+    if (!compare) return null
+    const per = family === 'ewar' ? 1 : Math.max(1, fleet.bucket_seconds)
+    const lines: PanelSeries[] = []
+    for (const c of compare) {
+      const view = toFleetView(
+        { ...fleet, series: c.series }, { smooth, smoothScale, bucketSeconds: fleet.bucket_seconds },
+      )
+      const own = view.panels.find((p) => p.id === family)?.series ?? []
+      for (const dir of ['out', 'in'] as const) {
+        if (direction !== 'both' && direction !== dir) continue
+        const parts = own.filter((s) => s.direction === dir && !hiddenSeries.has(s.key))
+        if (parts.length === 0) continue
+        const values = fleet.x.map((_, i) => {
+          let acc: number | null = null
+          for (const part of parts) {
+            const v = part.values[i]
+            if (v != null) acc = (acc ?? 0) + v
+          }
+          return acc == null ? null : acc / per
+        })
+        lines.push({
+          key: `${c.characterId}:${dir}`, label: c.name, stroke: c.color, dash: c.dash,
+          direction: dir, defaultVisible: true, values, noFill: true,
+        })
+      }
+    }
+    return lines
+  }, [compare, fleet, family, direction, hiddenSeries, smooth, smoothScale])
+  const drawn = useMemo(
+    () => compareLines ?? offered.filter((s) => !hiddenSeries.has(s.key)),
+    [compareLines, offered, hiddenSeries],
+  )
 
   const availableKinds = useMemo(() => {
     const seen = new Set(broadcasts.map((b) => b.kind))
@@ -303,13 +358,17 @@ export function TimelineChart({
                 aria-pressed={shown}
                 onClick={() => onToggleSeries(s.key)}
                 className="fleet-legend-btn"
-                style={{
+                style={compare ? {
+                  // Colour means "which pilot" while comparing, so the chips go neutral.
+                  background: shown ? 'rgba(138,147,167,0.18)' : 'transparent',
+                  color: shown ? 'var(--text)' : 'var(--text-dim)',
+                } : {
                   borderColor: s.stroke,
                   background: shown ? hexToRgba(s.stroke, 0.18) : 'transparent',
                   color: shown ? s.stroke : 'var(--text-dim)',
                 }}
               >
-                <span aria-hidden className="chip-swatch" style={{ background: s.stroke }} />
+                {!compare && <span aria-hidden className="chip-swatch" style={{ background: s.stroke }} />}
                 {s.label}
               </button>
             )
@@ -366,7 +425,29 @@ export function TimelineChart({
         </div>
       </div>
 
-      {!panel || offered.length === 0 ? (
+      {compare && (
+        <div className="chart-chips compare-legend" data-testid="compare-legend" role="group" aria-label="Pilots compared">
+          {compare.map((c) => (
+            <button
+              key={c.characterId}
+              type="button"
+              className="fleet-legend-btn compare-chip"
+              title={`Remove ${c.name} from the comparison`}
+              onClick={() => onTogglePilot?.(c.characterId)}
+            >
+              <span
+                aria-hidden
+                className={c.dash ? 'compare-swatch dashed' : 'compare-swatch'}
+                style={{ color: c.color }}
+              />
+              {c.name}
+              <span aria-hidden className="compare-chip-x">×</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!panel || offered.length === 0 || drawn.length === 0 && compare ? (
         <p className="dim chart-empty" data-testid="chart-empty" style={{ minHeight: height }}>
           {isolated
             ? 'The isolated pilots have nothing logged for this stat type and direction.'
@@ -388,6 +469,7 @@ export function TimelineChart({
           onZoom={handleZoom}
           registerZoomer={registerZoomer}
           showHoverSummary={!isolated}
+          compareMode={compare != null}
           entities={entities}
         />
       )}

@@ -1,5 +1,5 @@
 import type { PilotSeries, PilotTimeline } from './api'
-import { computeStats, hasMissData, isIdle, snapRange, sumSeries } from './pilotStats'
+import { assignSlots, computeStats, hasMissData, isIdle, pilotStyle, snapRange, sumSeries } from './pilotStats'
 
 // Four 5-second buckets starting at t=100.
 const X = [100, 105, 110, 115]
@@ -189,5 +189,21 @@ describe('sumSeries', () => {
 
   it('ignores ids that are not in the timeline', () => {
     expect(sumSeries(timeline(), new Set([99]))).toEqual([])
+  })
+})
+
+describe('assignSlots', () => {
+  it('keeps a pilot\'s colour slot when others are added or removed', () => {
+    const a = assignSlots(new Map(), [10, 20, 30])
+    expect([...a]).toEqual([[10, 0], [20, 1], [30, 2]])
+    const b = assignSlots(a, [10, 30]) // 20 unticked
+    expect(b.get(30)).toBe(2)
+    const c = assignSlots(b, [10, 30, 40]) // the newcomer takes the freed slot
+    expect(c.get(40)).toBe(1)
+  })
+
+  it('repeats the colours dashed from the ninth pilot on', () => {
+    expect(pilotStyle(0).dash).toBeUndefined()
+    expect(pilotStyle(8)).toEqual({ color: pilotStyle(0).color, dash: [6, 4] })
   })
 })

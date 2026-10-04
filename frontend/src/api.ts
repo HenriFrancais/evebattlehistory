@@ -509,6 +509,8 @@ export interface PilotTimelineRow {
   ship_name: string | null
   side_kind: string
   is_self: boolean
+  /** Owning user's main character name. FC/HC only; null for members and non-roster pilots. */
+  owner?: string | null
   series: PilotSeries[]
 }
 

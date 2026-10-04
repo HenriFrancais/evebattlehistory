@@ -638,6 +638,23 @@ a:hover { color: var(--link-hover); }
 .stats-ship { color: var(--text-dim); }
 .stats-ship .comp-ship-icon { vertical-align: middle; margin-right: 0.4rem; }
 .stats-blank { color: var(--text-dim); opacity: 0.6; }
+.stats-group td { padding-top: 0.7rem; background: var(--panel-2); color: var(--text); font-weight: 600; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+.stats-compare td { background: rgba(255,213,79,0.05); }
+.stats-row.in-group td:nth-child(2) { padding-left: 1.9rem; }
+.stats-group-count, .stats-owner { font-weight: 400; font-size: 0.8rem; }
+.stats-table .stats-pick { white-space: nowrap; }
+.stats-pick .compare-swatch { margin-left: 0.4rem; }
+/* A pilot's line on the chart, in miniature: solid, or dashed past the eighth colour. */
+.compare-swatch { display: inline-block; width: 16px; height: 0; border-top: 3px solid currentColor; border-radius: 2px; vertical-align: middle; flex: none; }
+.compare-swatch.dashed { border-top-style: dashed; }
+.compare-legend { margin-bottom: 0.6rem; }
+.compare-chip { color: var(--text); }
+.compare-chip:hover { border-color: var(--text-dim); }
+.compare-chip-x { color: var(--text-dim); margin-left: 0.15rem; }
+.compare-tip { max-width: 24rem; }
+.compare-tip-row { display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.compare-tip-name { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.compare-tip-val { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .stats-table tfoot td { border-top: 1px solid var(--border); border-bottom: 0; font-weight: 600; padding-top: 0.5rem; }
 .stats-detail > td { padding: 0.5rem 0.7rem 0.9rem; background: var(--bg); white-space: normal; }
 .stats-idle { margin-top: 0.6rem; font-size: 0.8rem; padding: 0.2rem 0.6rem; }

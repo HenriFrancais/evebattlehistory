@@ -112,6 +112,20 @@ describe('TimelineTab', () => {
     expect(screen.getByTestId('where')).not.toHaveTextContent('pilots')
   })
 
+  it('ticking a second pilot compares them, each named in the chart legend', async () => {
+    setup('?pilots=1')
+    await screen.findByTestId('stats-row-1')
+    expect(screen.queryByTestId('compare-legend')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Isolate Bo' }))
+    expect(screen.getByTestId('isolation-bar')).toHaveTextContent('2 pilots compared')
+    const legend = screen.getByTestId('compare-legend')
+    expect(within(legend).getAllByRole('button').map((b) => b.textContent)).toEqual(['Ada×', 'Bo×'])
+    // Removing one from the legend goes back to a single isolated pilot.
+    await userEvent.click(within(legend).getByRole('button', { name: /Ada/ }))
+    expect(screen.getByTestId('where')).toHaveTextContent(/pilots=2$/)
+    expect(screen.queryByTestId('compare-legend')).not.toBeInTheDocument()
+  })
+
   it('drops a pilot id that is not in the data', async () => {
     setup('?pilots=1,999')
     await screen.findByTestId('stats-row-1')

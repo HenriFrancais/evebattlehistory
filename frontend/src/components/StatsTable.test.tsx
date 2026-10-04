@@ -103,7 +103,7 @@ describe('StatsTable', () => {
 
   it('a member sees every pilot but can only isolate or open the breakdown of their own characters', () => {
     setup({ scope: 'own', pilots: [{ ...PILOTS[0], is_self: true }, PILOTS[1], PILOTS[2]] })
-    expect(names()).toEqual(['Bo', 'Ada']) // both rows are listed
+    expect(names()).toEqual(['Ada', 'Bo']) // both rows are listed, the viewer's own first
     expect(screen.getByRole('button', { name: 'Show breakdown for Ada' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Show breakdown for Bo' })).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Isolate Ada' })).toBeInTheDocument()
@@ -116,6 +116,87 @@ describe('StatsTable', () => {
     expect(screen.getByRole('button', { name: 'Show breakdown for Bo' })).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Isolate Bo' })).toBeInTheDocument()
     expect(screen.queryByTestId('stats-scope-note')).not.toBeInTheDocument()
+  })
+
+  it('lists the viewer\'s own characters first, in their own section', () => {
+    setup({ scope: 'own', pilots: [{ ...PILOTS[0], is_self: true }, PILOTS[1], PILOTS[2]] })
+    const rows = screen.getAllByTestId(/^stats-(row|group)-/).map((r) => r.getAttribute('data-testid'))
+    expect(rows).toEqual(['stats-group-own', 'stats-row-1', 'stats-group-others', 'stats-row-2'])
+    expect(screen.getByTestId('stats-group-own')).toHaveTextContent('Your characters')
+  })
+
+  describe('grouped by user (FC / High Command)', () => {
+    const OWNED = [
+      { ...PILOTS[0], owner: 'Ada' }, { ...PILOTS[1], owner: 'Ada' }, { ...PILOTS[2], owner: 'Cy Main' },
+      pilot(4, 'Dee', 'Onyx'),
+    ]
+    const OWNED_ROWS = [...ROWS.slice(0, 2), row(3, { total: 20000, hits: 5 }), row(4, { total: 10, hits: 1 })]
+    const order = () =>
+      screen.getAllByTestId(/^stats-(row|group)-/).map((r) => r.getAttribute('data-testid'))
+
+    it('puts a user\'s characters under one heading, users ordered by their combined total', () => {
+      setup({ pilots: OWNED, rows: OWNED_ROWS })
+      expect(order()).toEqual([
+        'stats-row-3', // Cy Main's only character: 20k, no heading
+        'stats-group-user:Ada', 'stats-row-2', 'stats-row-1', // 13.5k together
+        'stats-group-unowned', 'stats-row-4',
+      ])
+      expect(screen.getByTestId('stats-group-user:Ada')).toHaveTextContent('2 characters')
+      expect(screen.getByTestId('stats-group-user:Ada')).toHaveTextContent('13.5k')
+      expect(screen.getByTestId('stats-row-3')).toHaveTextContent('Cy Main') // the alt names its main
+    })
+
+    it('a user\'s checkbox ticks all their characters; each character can still be ticked alone', async () => {
+      const onToggleMany = vi.fn()
+      const { onToggle } = setup({ pilots: OWNED, rows: OWNED_ROWS, onToggleMany })
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Isolate all of Ada\'s characters' }))
+      expect(onToggleMany).toHaveBeenCalledWith([2, 1], true)
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Isolate Cy' }))
+      expect(onToggle).toHaveBeenCalledWith(3)
+    })
+
+    it('a fully ticked user unticks as one; a partly ticked one shows as mixed', async () => {
+      const onToggleMany = vi.fn()
+      const view = render(
+        <StatsTable
+          brId="br1" rows={OWNED_ROWS} totals={TOTALS} pilots={OWNED} family="damage" direction="out"
+          selected={new Set([1])} onToggle={vi.fn()} onToggleMany={onToggleMany}
+          range={{ from: 1000, to: 1100 }} scope="all"
+        />,
+      )
+      const box = () => screen.getByRole('checkbox', { name: 'Isolate all of Ada\'s characters' }) as HTMLInputElement
+      expect(box().indeterminate).toBe(true)
+      view.rerender(
+        <StatsTable
+          brId="br1" rows={OWNED_ROWS} totals={TOTALS} pilots={OWNED} family="damage" direction="out"
+          selected={new Set([1, 2])} onToggle={vi.fn()} onToggleMany={onToggleMany}
+          range={{ from: 1000, to: 1100 }} scope="all"
+        />,
+      )
+      expect(box().checked).toBe(true)
+      await userEvent.click(box())
+      expect(onToggleMany).toHaveBeenCalledWith([2, 1], false)
+    })
+
+    it('keeps the viewer\'s own characters in their own section above the users', () => {
+      setup({ pilots: [{ ...OWNED[0], is_self: true }, ...OWNED.slice(1)], rows: OWNED_ROWS })
+      expect(order().slice(0, 3)).toEqual(['stats-group-own', 'stats-row-1', 'stats-group-others'])
+    })
+  })
+
+  it('repeats the ticked pilots side by side at the top once two are ticked', async () => {
+    const { onToggle } = setup({ selected: new Set([1, 3]) })
+    const block = screen.getAllByTestId(/^stats-compare-/).map((r) => r.getAttribute('data-testid'))
+    expect(block).toEqual(['stats-compare-1', 'stats-compare-3']) // sorted like the table
+    expect(screen.getByTestId('stats-compare-1')).toHaveTextContent('4.5k')
+    expect(screen.getByTestId('stats-row-1')).toBeInTheDocument() // still in its place below
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Stop comparing Cy' }))
+    expect(onToggle).toHaveBeenCalledWith(3)
+  })
+
+  it('has no comparing block for a single ticked pilot', () => {
+    setup({ selected: new Set([1]) })
+    expect(screen.queryByTestId('stats-group-compare')).not.toBeInTheDocument()
   })
 
   it('says so when nothing was logged in the range', () => {

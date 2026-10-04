@@ -43,7 +43,7 @@ from app.api.schemas import (
     TimelineFightInfo,
     WeaponEffectOut,
 )
-from app.config import get_app_config, get_settings
+from app.config import Settings, get_app_config, get_settings
 from app.db.models import BrCharShip, BrCharSide, InventoryType
 from app.fights.aggregate import aggregate_br
 from app.fights.offbr_cache import get_offbr_cache
@@ -185,6 +185,26 @@ async def get_fleet_timeline(
     )
 
 
+async def _pilot_owners(settings: Settings) -> dict[int, str]:
+    """character_id → the owning user's main character name (else their user name).
+
+    Empty when the roster is unavailable: the table then simply is not grouped.
+    """
+    try:
+        roster = await get_roster_store(settings).get()
+    except Exception:
+        return {}
+    owners: dict[int, str] = {}
+    for u in roster.users:
+        main = next(
+            (c.character_name for c in u.characters if c.character_id == u.main_character_id),
+            None,
+        )
+        for c in u.characters:
+            owners[c.character_id] = main or u.user_name
+    return owners
+
+
 @router.get("/api/brs/{br_id}/pilot-timeline")
 async def get_pilot_timeline(
     br_id: str, request: Request, session: SessionDep
@@ -206,6 +226,9 @@ async def get_pilot_timeline(
         ("pilot-timeline", br_id),
         lambda: pilot_timeline(session, br_id, cfg.our_alliance_ids, cfg.our_corp_ids, settings),
     )
+    # The user↔character mapping is FC/HC-only, so it is attached per request and
+    # never enters the shared cached result.
+    owners = await _pilot_owners(settings) if viewer.elevated else {}
     return PilotTimelineOut(
         x=tl.x,
         bucket_seconds=tl.bucket_seconds,
@@ -218,6 +241,7 @@ async def get_pilot_timeline(
                 ship_name=p.ship_name,
                 side_kind=p.side_kind,
                 is_self=p.character_id in viewer.character_ids,
+                owner=owners.get(p.character_id),
                 series=[
                     PilotSeriesOut(
                         effect_type=s.effect_type,

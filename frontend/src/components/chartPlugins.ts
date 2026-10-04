@@ -6,7 +6,7 @@ import uPlot from 'uplot'
 import type { KillEvent, Leaders, TimelineFightInfo } from '../api'
 import type { BroadcastMarker } from '../broadcasts'
 import type { EntityIndex } from '../entities'
-import { isoToEpoch } from '../format'
+import { fmtCompact, isoToEpoch } from '../format'
 import type { PanelId } from '../fleet'
 import { renderHoverSummary, renderKillTip } from '../hoverSummary'
 
@@ -342,6 +342,73 @@ export function hoverSummaryPlugin(
         const rect = u.over.getBoundingClientRect()
         tip.style.left = `${rect.left + left + 14}px`
         tip.style.top = `${rect.top + top + 14}px`
+      },
+      destroy: () => {
+        tip?.remove()
+        tip = null
+      },
+    },
+  }
+}
+
+// Hover readout while pilots are compared: every pilot's value in the hovered
+// bucket, applied (▲) and received (▼). `lines` are the chart's series in order
+// (uPlot series i + 1), two per pilot at most, sharing a label.
+export function compareHoverPlugin(
+  lines: { label: string; stroke: string; direction: 'out' | 'in'; dash?: number[] }[], unit: string,
+): uPlot.Plugin {
+  let tip: HTMLDivElement | null = null
+  const el = (tag: string, cls: string, text?: string) => {
+    const node = document.createElement(tag)
+    node.className = cls
+    if (text != null) node.textContent = text
+    return node
+  }
+
+  return {
+    hooks: {
+      ready: (u) => {
+        tip = document.createElement('div')
+        tip.className = 'hover-tip compare-tip'
+        tip.style.display = 'none'
+        document.body.appendChild(tip)
+        u.over.addEventListener('mouseleave', () => {
+          if (tip) tip.style.display = 'none'
+        })
+      },
+      setCursor: (u) => {
+        if (!tip) return
+        const idx = u.cursor.idx
+        if (idx == null) {
+          tip.style.display = 'none'
+          return
+        }
+        const rows = new Map<string, { stroke: string; dashed: boolean; out: number | null; in: number | null }>()
+        lines.forEach((line, i) => {
+          const v = u.data[i + 1]?.[idx]
+          const row = rows.get(line.label)
+            ?? { stroke: line.stroke, dashed: line.dash != null, out: null, in: null }
+          row[line.direction] = v == null ? null : Math.abs(v)
+          rows.set(line.label, row)
+        })
+        tip.replaceChildren()
+        const t = u.data[0][idx]
+        tip.appendChild(el('div', 'hover-tip-totals', `${new Date(t * 1000).toISOString().slice(11, 19)} UTC · ${unit}`))
+        for (const [label, row] of rows) {
+          const line = el('div', 'compare-tip-row')
+          const swatch = el('span', row.dashed ? 'compare-swatch dashed' : 'compare-swatch')
+          swatch.style.color = row.stroke
+          line.appendChild(swatch)
+          line.appendChild(el('span', 'compare-tip-name', label))
+          if (row.out != null) line.appendChild(el('span', 'compare-tip-val', `▲ ${fmtCompact(row.out)}`))
+          if (row.in != null) line.appendChild(el('span', 'compare-tip-val', `▼ ${fmtCompact(row.in)}`))
+          if (row.out == null && row.in == null) line.appendChild(el('span', 'compare-tip-val dim', '–'))
+          tip.appendChild(line)
+        }
+        tip.style.display = 'block'
+        const rect = u.over.getBoundingClientRect()
+        tip.style.left = `${rect.left + (u.cursor.left ?? 0) + 14}px`
+        tip.style.top = `${rect.top + (u.cursor.top ?? 0) + 14}px`
       },
       destroy: () => {
         tip?.remove()

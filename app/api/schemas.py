@@ -499,6 +499,10 @@ class PilotTimelineRowOut(BaseModel):
     ship_name: str | None = None
     side_kind: str
     is_self: bool = False
+    #: The owning user's main character name, for grouping a user's characters
+    #: together. FC/HC only: None for every pilot when the viewer is not elevated,
+    #: and for characters outside the roster.
+    owner: str | None = None
     series: list[PilotSeriesOut]
 
 

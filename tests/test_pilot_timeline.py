@@ -112,6 +112,18 @@ async def test_member_gets_every_pilots_summary_series(bucketed_br) -> None:  # 
     assert _pilot(body, RAZOK_CHAR)["series"] == _pilot(fc, RAZOK_CHAR)["series"]
 
 
+async def test_only_fc_is_told_which_user_owns_a_character(bucketed_br) -> None:  # type: ignore[no-untyped-def]
+    """The user↔character mapping (used to group the table by user) is FC/HC-only:
+    a member gets no owner for anyone, their own characters included."""
+    client, br_id = bucketed_br
+    fc = client.get(f"/api/brs/{br_id}/pilot-timeline", headers=CREATOR_HEADERS).json()
+    member = client.get(f"/api/brs/{br_id}/pilot-timeline", headers=MEMBER_HEADERS).json()
+
+    assert all(p["owner"] for p in fc["pilots"])
+    assert _pilot(fc, RAZOK_CHAR)["owner"] != _pilot(fc, MEMBER_CHAR)["owner"]
+    assert [p["owner"] for p in member["pilots"]] == [None, None]
+
+
 async def test_member_cannot_open_another_pilots_breakdown(bucketed_br) -> None:  # type: ignore[no-untyped-def]
     """Who a pilot shot and with what stays FC/HC-only, except for your own characters."""
     client, br_id = bucketed_br

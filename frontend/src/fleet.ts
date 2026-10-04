@@ -86,6 +86,10 @@ export interface PanelSeries {
   defaultVisible: boolean
   /** Mirrored, smoothed values: out positive, in negative. Null where no data. */
   values: (number | null)[]
+  /** Line dash pattern; solid when absent. */
+  dash?: number[]
+  /** Draw the line only, without the area under it (many overlapping lines). */
+  noFill?: boolean
 }
 
 export interface FleetPanel {
