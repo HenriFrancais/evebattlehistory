@@ -148,6 +148,20 @@ describe('BrDetailPage', () => {
     })
   })
 
+  it('shows the AAR between the summary and the tabs, on every tab', async () => {
+    renderAt('/brs/br1/timeline')
+    const aar = await screen.findByTestId('aar-section')
+    const tabs = screen.getByRole('navigation', { name: 'Battle report sections' })
+    const summary = screen.getByTestId('summary-section')
+    const after = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(after(summary, aar)).toBe(true)
+    expect(after(aar, tabs)).toBe(true)
+    expect(screen.queryByTestId('tab-aar')).not.toBeInTheDocument()
+    expect(within(tabs).getAllByRole('link').map((l) => l.textContent))
+      .toEqual(['Involved', 'Timeline', 'Performance'])
+  })
+
   describe('tabs', () => {
     it('opens on Involved', async () => {
       renderAt('/brs/br1')

@@ -74,7 +74,7 @@ interface Props {
   selected: Set<number>
   onToggle: (characterId: number) => void
   range: { from: number; to: number }
-  /** 'own' = the viewer may open the breakdown of their own characters only. */
+  /** 'own' = the viewer may isolate, and open the breakdown of, their own characters only. */
   scope: 'all' | 'own'
 }
 
@@ -126,8 +126,8 @@ export function StatsTable({
     <div className="stats-wrap" data-testid="stats-table">
       {scope === 'own' && rows.length > 0 && (
         <p className="dim stats-note" data-testid="stats-scope-note">
-          You can open the target and weapon breakdown for your own characters. FC and
-          High Command can open it for every pilot.
+          You can isolate your own characters on the chart and open their target and
+          weapon breakdown. FC and High Command can do so for every pilot.
         </p>
       )}
       {rows.length === 0 ? (
@@ -160,8 +160,9 @@ export function StatsTable({
             {visible.map((r) => {
               const p = byId.get(r.characterId)
               if (!p) return null
-              // The breakdown (who they shot, with what) is FC/HC-only except for
-              // the viewer's own characters; the server enforces the same rule.
+              // Isolating a pilot and opening their breakdown (who they shot, with
+              // what) are FC/HC-only except for the viewer's own characters. The
+              // server enforces the breakdown rule.
               const canExpand = scope === 'all' || p.is_self
               const isOpen = canExpand && expanded.has(r.characterId)
               const picked = selected.has(r.characterId)
@@ -169,12 +170,14 @@ export function StatsTable({
                 <Fragment key={r.characterId}>
                   <tr className={picked ? 'stats-row picked' : 'stats-row'} data-testid={`stats-row-${r.characterId}`}>
                     <td className="stats-pick">
-                      <input
-                        type="checkbox"
-                        checked={picked}
-                        onChange={() => onToggle(r.characterId)}
-                        aria-label={`Isolate ${p.character_name}`}
-                      />
+                      {canExpand && (
+                        <input
+                          type="checkbox"
+                          checked={picked}
+                          onChange={() => onToggle(r.characterId)}
+                          aria-label={`Isolate ${p.character_name}`}
+                        />
+                      )}
                     </td>
                     <td>
                       {canExpand ? (

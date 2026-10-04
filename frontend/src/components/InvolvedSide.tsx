@@ -101,8 +101,9 @@ function PilotRow({ p, brId, sideKind, showModules, canEdit, onChanged }: RowPro
               title={p.has_logs ? 'logs uploaded' : 'no logs uploaded'}
             >●</span>
           )}
-          {/* has_logs is only true for pilots whose log data this viewer may see. */}
-          {p.has_logs ? (
+          {/* can_download_log = this viewer may open the pilot's own log detail (FC/HC,
+              or their own character): the same rule decides who they may isolate. */}
+          {p.can_download_log ? (
             <Link
               className="inv-pilot-link"
               to={`/brs/${brId}/timeline?pilots=${p.character_id}`}
@@ -111,7 +112,7 @@ function PilotRow({ p, brId, sideKind, showModules, canEdit, onChanged }: RowPro
               {name}
             </Link>
           ) : name}
-          {friendly && p.has_logs && (
+          {friendly && p.can_download_log && (
             <button
               className="btn-mini inv-log-btn"
               title={logErr ?? "Download this character's gamelog for the battle (cleaned)"}

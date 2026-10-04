@@ -1,5 +1,5 @@
-// Battle report page: a header strip that is always visible and a tab bar; the
-// active tab fills the width. Tabs are routes (/brs/:id/:tab) so a view can be
+// Battle report page: a header strip and the after-action report, always visible,
+// then a tab bar; the active tab fills the width. Tabs are routes (/brs/:id/:tab) so a view can be
 // linked and the back button works. Only the active tab is mounted.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
@@ -10,22 +10,21 @@ import type {
 import { api } from '../api'
 import { flaggedDeathsByChar } from '../broadcasts'
 import { invalidateBr, loadBr, loadComposition, loadEntities, loadMe } from '../cache'
+import { AarPanel } from '../components/AarPanel'
 import { BrHeader } from '../components/BrHeader'
 import { IngestProgress } from '../components/IngestProgress'
 import { EntityContext, buildEntityIndex } from '../entities'
-import { AarTab } from './br/AarTab'
 import { PerformanceTab } from './br/PerformanceTab'
 import { InvolvedTab } from './br/InvolvedTab'
 import { ManageTab } from './br/ManageTab'
 import { TimelineTab } from './br/TimelineTab'
 
-type TabId = 'involved' | 'timeline' | 'performance' | 'aar' | 'manage'
+type TabId = 'involved' | 'timeline' | 'performance' | 'manage'
 
 const TABS: { id: TabId; label: string; elevated?: boolean }[] = [
   { id: 'involved', label: 'Involved' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'performance', label: 'Performance' },
-  { id: 'aar', label: 'AAR' },
   { id: 'manage', label: 'Manage', elevated: true },
 ]
 
@@ -159,6 +158,12 @@ export function BrDetailPage() {
           <IngestProgress brId={br.br_id} initialStatus={refreshStatus} onReady={onIngestReady} />
         )}
 
+        {/* The after-action report is the FC's account of the fight: it sits with the
+            summary, above the tabs, whichever tab is open. */}
+        <section className="panel br-aar" data-testid="aar-section">
+          <AarPanel brId={br.br_id} canManage={canManage} />
+        </section>
+
         <nav className="br-tabs" aria-label="Battle report sections">
           {tabs.map((t) => (
             <Link
@@ -194,7 +199,6 @@ export function BrDetailPage() {
             onBroadcastLoaded={handleBroadcastLoaded}
           />
         )}
-        {active === 'aar' && <AarTab brId={id} canManage={canManage} />}
         {active === 'manage' && (
           <ManageTab
             brId={id}

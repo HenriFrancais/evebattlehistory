@@ -119,6 +119,18 @@ describe('TimelineTab', () => {
     expect(screen.getByTestId('isolation-bar')).toHaveTextContent('1 pilot isolated')
   })
 
+  it('a member can isolate only their own characters, including through the URL', async () => {
+    vi.mocked(api.pilotTimeline).mockResolvedValue({
+      ...PILOTS, scope: 'own',
+      pilots: [{ ...PILOTS.pilots[0], is_self: true }, PILOTS.pilots[1]],
+    })
+    setup('?pilots=1,2')
+    await screen.findByTestId('stats-row-2') // the other pilot's summary row is still listed
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/pilots=1$/))
+    expect(screen.getByTestId('isolation-bar')).toHaveTextContent('1 pilot isolated')
+    expect(screen.queryByRole('checkbox', { name: 'Isolate Bo' })).not.toBeInTheDocument()
+  })
+
   it('switching a series chip off removes it from the table', async () => {
     setup('?dir=out')
     await screen.findByTestId('stats-row-1')

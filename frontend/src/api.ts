@@ -454,6 +454,8 @@ export interface CompositionPilot {
   reps_out: number
   /** True when this character has uploaded gamelogs for the BR (friendly side only in UI). */
   has_logs: boolean
+  /** The viewer may download this pilot's gamelog (FC/HC, or their own character). */
+  can_download_log?: boolean
   /** True when this pilot is NOT on any killmail and was identified from logs. */
   from_logs?: boolean
   corporation_id?: number | null

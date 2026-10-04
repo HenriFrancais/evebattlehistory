@@ -331,9 +331,10 @@ async def get_entities(br_id: str, session: SessionDep) -> BrEntitiesOut:
 async def get_composition(
     br_id: str, request: Request, session: SessionDep
 ) -> CompositionOut:
-    """Per-side fleet composition. Elevated callers (FC/HC) also get char→user and
-    every pilot's log-derived fields (reps_out, has_logs); other viewers get those
-    only for their own characters."""
+    """Per-side fleet composition. Every viewer gets each pilot's reps figure and
+    whether they have logs (the timeline stats table shows the same pilots).
+    Elevated callers (FC/HC) also get char→user. ``can_download_log`` is true only
+    where the viewer may fetch that pilot's gamelog: FC/HC, or their own character."""
     await _require_br(br_id, session)
     cfg = get_app_config()
     settings = get_settings()
@@ -385,9 +386,11 @@ async def get_composition(
                                             user_name=p.user_name,
                                             damage_done=p.damage_done,
                                             kill_count=p.kill_count,
-                                            reps_out=(p.reps_out if viewer.can_see(p.character_id)
-                                                      else 0.0),
-                                            has_logs=p.has_logs and viewer.can_see(p.character_id),
+                                            reps_out=p.reps_out,
+                                            has_logs=p.has_logs,
+                                            can_download_log=(
+                                                p.has_logs and viewer.can_see(p.character_id)
+                                            ),
                                             from_logs=p.from_logs,
                                             corporation_id=p.corporation_id,
                                             alliance_id=p.alliance_id,

@@ -101,18 +101,20 @@ describe('StatsTable', () => {
     expect(headers).toEqual(['Isolate', 'Pilot', 'Ship', 'Total', 'Peak'])
   })
 
-  it('a member sees every pilot but can only open the breakdown of their own characters', () => {
+  it('a member sees every pilot but can only isolate or open the breakdown of their own characters', () => {
     setup({ scope: 'own', pilots: [{ ...PILOTS[0], is_self: true }, PILOTS[1], PILOTS[2]] })
     expect(names()).toEqual(['Bo', 'Ada']) // both rows are listed
     expect(screen.getByRole('button', { name: 'Show breakdown for Ada' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Show breakdown for Bo' })).not.toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Isolate Bo' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Isolate Ada' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Isolate Bo' })).not.toBeInTheDocument()
     expect(screen.getByTestId('stats-scope-note')).toHaveTextContent('your own characters')
   })
 
   it('FC / High Command can open every pilot\'s breakdown', () => {
     setup()
     expect(screen.getByRole('button', { name: 'Show breakdown for Bo' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Isolate Bo' })).toBeInTheDocument()
     expect(screen.queryByTestId('stats-scope-note')).not.toBeInTheDocument()
   })
 

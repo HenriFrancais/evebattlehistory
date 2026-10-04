@@ -154,13 +154,16 @@ export function TimelineTab({ brId, reloadKey, broadcastKey, flaggedDeaths }: Pr
     return () => { cancelled = true }
   }, [brId, broadcastKey])
 
-  // Isolated pilots: from the URL, minus ids the data does not contain (stale link,
-  // or a pilot this viewer may not see).
+  // Isolated pilots: from the URL, minus ids the data does not contain (stale link)
+  // and pilots this viewer may not isolate — a member may isolate only their own
+  // characters; FC / High Command anyone.
   const isolatedIds = useMemo(() => {
     const wanted = parsePilots(pilotsParam)
     if (!pilots) return new Set<number>()
-    const known = new Set(pilots.pilots.map((p) => p.character_id))
-    return new Set(wanted.filter((id) => known.has(id)))
+    const allowed = new Set(
+      pilots.pilots.filter((p) => pilots.scope === 'all' || p.is_self).map((p) => p.character_id),
+    )
+    return new Set(wanted.filter((id) => allowed.has(id)))
   }, [pilotsParam, pilots])
 
   // Drop stale ids from the URL once the data is in.

@@ -44,7 +44,7 @@ const FRIENDLY = {
   side_kind: 'friendly', pilot_count: 5, losses: 1, isk_lost: 250_000_000,
   ships: [{ ship_type_id: 100, ship_name: 'Loki', count: 3, top_modules: [{ type_id: 7, name: 'Gun', role: 'dps' }] }],
   pilots: [
-    pilot(1, 'Ada', { damage_done: 500, kill_count: 2, has_logs: true, user_name: 'ada_main',
+    pilot(1, 'Ada', { damage_done: 500, kill_count: 2, has_logs: true, can_download_log: true, user_name: 'ada_main',
       weapons: [{ type_id: 7, name: '720mm Howitzer', role: 'dps' }, { type_id: 8, name: 'Warp Scrambler II', role: 'tackle' }] }),
     pilot(2, 'Bo', { damage_done: 900, kill_count: 3, lost: true, killmail_id: 555, user_name: 'ada_main' }),
     pilot(3, 'Cy', { reship: true, ship_type_id: 101, ship_name: 'Guardian', ship_group: 'Logistics', ship_rank: 23 }),
@@ -135,7 +135,7 @@ describe('InvolvedTab', () => {
   it('clicking anywhere on a lost row opens that loss on zKillboard', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     setup({ ...COMP, sides: [{ ...FRIENDLY, pilots: [
-      pilot(2, 'Bo', { lost: true, killmail_id: 555, has_logs: true,
+      pilot(2, 'Bo', { lost: true, killmail_id: 555, has_logs: true, can_download_log: true,
         weapons: [{ type_id: 7, name: '720mm Howitzer', role: 'dps' }] }),
       pilot(1, 'Ada'),
     ] }] })
@@ -169,6 +169,23 @@ describe('InvolvedTab', () => {
     expect(mods).not.toHaveTextContent('720mm Howitzer') // the name is the tooltip, not text
     await userEvent.click(screen.getByRole('checkbox', { name: 'Modules' }))
     expect(screen.queryByTestId('pilot-modules')).not.toBeInTheDocument()
+  })
+
+  it('offers the timeline link and log download only for pilots the viewer may open', async () => {
+    setup({ ...COMP, sides: [{ ...FRIENDLY, pilots: [
+      pilot(1, 'Ada', { has_logs: true, can_download_log: true }),
+      pilot(2, 'Bo', { has_logs: true, can_download_log: false, reps_out: 1200 }),
+    ] }] })
+    const friendly = await screen.findByTestId('involved-friendly')
+    expect(within(within(friendly).getByTestId('pilot-1')).getByRole('button', { name: 'log' })).toBeInTheDocument()
+    const bo = within(friendly).getByTestId('pilot-2')
+    expect(within(bo).queryByRole('button', { name: 'log' })).not.toBeInTheDocument()
+    // The reps figure and log dot show, but the name is not a link: this viewer
+    // may not isolate that pilot on the timeline.
+    expect(within(bo).queryByRole('link', { name: /^Bo/ })).not.toBeInTheDocument()
+    expect(bo).toHaveTextContent('1.2k')
+    expect(within(within(friendly).getByTestId('pilot-1')).getByRole('link', { name: /^Ada/ }))
+      .toHaveAttribute('href', '/brs/br1/timeline?pilots=1')
   })
 
   it('marks reships and from-logs pilots', async () => {

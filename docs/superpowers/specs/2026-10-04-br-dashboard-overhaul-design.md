@@ -333,3 +333,12 @@ These replace the corresponding parts above.
   `/pilot-timeline` therefore returns every pilot to every viewer, and its `scope`
   field states whose breakdown may be opened.
 - **A lost pilot's whole row** on the Involved tab opens the killmail on zKillboard.
+- **AAR placement:** the after-action report is not a tab. It sits in its own section
+  between the summary header and the tab bar, visible on every tab. Tabs are
+  Involved, Timeline, Performance, and Manage for FC / High Command.
+- **Members on the Involved tab:** every viewer sees each pilot's reps figure and
+  has-logs marker. Downloading a gamelog stays FC / High Command only, except for
+  the viewer's own characters.
+- **Isolation for members:** a member can isolate only their own characters on the
+  timeline (checkbox, URL and the Involved-tab name link alike). The summary rows
+  for all pilots stay visible to them. FC / High Command can isolate anyone.

@@ -72,9 +72,9 @@ reading; both are easy to relax.
 - [ ] Timeline hover: friendly "top pilot" leaders are hidden from non-FC
       viewers unless the leader is their own character
       (`app/api/fleet.py`, `_leaders_out`). Enemy leaders stay visible.
-- [ ] Fleet composition: `reps_out` and `has_logs` are zeroed for other pilots
-      for non-FC viewers. Killmail-derived fields (damage, kills, weapons,
-      ship) stay visible.
+- [x] Fleet composition: decided 2026-10-04 — members see every pilot's
+      `reps_out` and `has_logs`, and can open any logged pilot on the timeline.
+      Downloading a gamelog stays FC/HC-only (own characters excepted).
 
 ### 2. "Anonymous" performance distributions identify pilots in small groups
 

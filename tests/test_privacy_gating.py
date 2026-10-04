@@ -175,7 +175,10 @@ async def test_raw_broadcasts_hide_other_pilots_rep_requests(privacy_br) -> None
     assert elevated == {"Line Member", "Some Enemy", "Ra'zok Zateki"}
 
 
-async def test_composition_hides_other_pilots_log_fields_from_member(privacy_br) -> None:  # type: ignore[no-untyped-def]
+async def test_composition_shows_reps_and_log_presence_to_members(privacy_br) -> None:  # type: ignore[no-untyped-def]
+    """Members see every pilot's reps figure and whether they have logs (the same
+    pilots are in the timeline stats table). Downloading someone's log is still
+    FC/HC-only, except for your own characters."""
     client, br_id, _ = privacy_br
     url = f"/api/brs/{br_id}/composition"
 
@@ -187,11 +190,20 @@ async def test_composition_hides_other_pilots_log_fields_from_member(privacy_br)
     assert elevated[RAZOK_CHAR]["has_logs"] is True
     assert elevated[RAZOK_CHAR]["reps_out"] > 0
 
+    assert elevated[RAZOK_CHAR]["can_download_log"] is True
+    assert elevated[MEMBER_CHAR]["can_download_log"] is True
+
     member = pilots(MEMBER_HEADERS)
-    assert member[RAZOK_CHAR]["has_logs"] is False
-    assert member[RAZOK_CHAR]["reps_out"] == 0
+    assert member[RAZOK_CHAR]["has_logs"] is True
+    assert member[RAZOK_CHAR]["reps_out"] == elevated[RAZOK_CHAR]["reps_out"]
+    assert member[RAZOK_CHAR]["can_download_log"] is False
     assert member[MEMBER_CHAR]["has_logs"] is True
-    assert member[MEMBER_CHAR]["reps_out"] > 0
+    assert member[MEMBER_CHAR]["can_download_log"] is True
+    # ...and the download itself is refused for another pilot's log.
+    log_url = f"/api/brs/{br_id}/logs/{{}}/download"
+    assert client.get(log_url.format(RAZOK_CHAR), headers=MEMBER_HEADERS).status_code == 403
+    # The user↔character mapping stays FC/HC-only.
+    assert member[RAZOK_CHAR]["user_name"] is None
 
 
 async def test_roster_users_is_dev_mode_only(privacy_br) -> None:  # type: ignore[no-untyped-def]

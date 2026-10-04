@@ -545,6 +545,8 @@ class CompositionPilotOut(BaseModel):
     kill_count: int = 0
     reps_out: float = 0.0
     has_logs: bool = False
+    #: The viewer may download this pilot's gamelog (FC/HC, or their own character).
+    can_download_log: bool = False
     from_logs: bool = False
     corporation_id: int | None = None
     alliance_id: int | None = None
