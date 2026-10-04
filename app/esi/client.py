@@ -12,6 +12,8 @@ from app.config import Settings
 from app.observability.logging import log
 
 ESI_BASE = "https://esi.evetech.net/latest"
+#: Most names POST /universe/ids/ accepts in one call.
+_IDS_CHUNK = 500
 _KILLMAIL_ATTEMPTS = 3
 _LIMIT_ATTEMPTS = 3
 #: Below this many remaining errors / requests in the window, wait for the reset.
@@ -187,20 +189,30 @@ class EsiClient:
         """
         out: dict[str, int] = {}
         url = f"{ESI_BASE}/universe/ids/"
-        # /universe/ids/ accepts up to 1000 names per call.
-        for start in range(0, len(names), 1000):
-            chunk = [n for n in names[start : start + 1000] if n and n.strip()]
-            if not chunk:
-                continue
+
+        async def _resolve(chunk: list[str]) -> None:
             try:
                 resp = await self._post(url, json=chunk, timeout=self._timeout_s)
                 resp.raise_for_status()
                 data: dict[str, list[dict[str, object]]] = resp.json()
                 for ch in data.get("characters", []) or []:
-                    name = str(ch["name"])
-                    out[name] = int(str(ch["id"]))
+                    out[str(ch["name"])] = int(str(ch["id"]))
             except Exception as exc:
-                log.warning("esi.resolve_ids_failed", error=str(exc), n=len(chunk))
+                if len(chunk) > 1:
+                    # ESI rejects a whole batch for one unacceptable name (400) and
+                    # times out on a slow one (504): retry it as two halves, so the
+                    # rest of the batch is not lost with it.
+                    mid = len(chunk) // 2
+                    await _resolve(chunk[:mid])
+                    await _resolve(chunk[mid:])
+                else:
+                    log.warning("esi.resolve_ids_failed", error=str(exc), name=chunk[0])
+
+        clean = [n for n in names if n and n.strip()]
+        # /universe/ids/ accepts at most 500 names per call (unlike /universe/names/,
+        # which takes 1000 ids); a larger batch is a 400 for every name in it.
+        for start in range(0, len(clean), _IDS_CHUNK):
+            await _resolve(clean[start : start + _IDS_CHUNK])
         return out
 
     async def resolve_system_ids(self, names: list[str]) -> dict[str, int]:

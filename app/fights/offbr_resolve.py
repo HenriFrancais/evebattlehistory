@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.db.models import Alliance, Character, Corporation, InventoryType, LogEvent
+from app.logs.parse import MISS_EFFECT
 from app.observability.logging import log
 
 #: Names per IN (...) lookup — well under SQLite's bound-parameter limit.
@@ -172,7 +173,11 @@ async def backfill_log_characters(
     """
     rows = (
         await session.execute(
-            select(LogEvent.other_name, LogEvent.source_name, LogEvent.target_name).distinct()
+            # Miss lines never seed a participant (see offbr_participants), so their
+            # names — often drones — are not worth an ESI lookup.
+            select(LogEvent.other_name, LogEvent.source_name, LogEvent.target_name)
+            .where(LogEvent.effect_type != MISS_EFFECT)
+            .distinct()
         )
     ).all()
     names = {v for row in rows for v in row if v}

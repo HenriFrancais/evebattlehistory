@@ -127,3 +127,47 @@ async def test_a_new_name_still_replaces_the_old_one(db_session_maker) -> None: 
         assert (await session.execute(select(Character.name))).scalar_one() == "New"
         seen = (await session.execute(select(Character.last_seen_at))).scalar_one()
         assert isinstance(seen, dt.datetime)
+
+
+def _ids_handler(calls: list[int], *, bad: str | None = None, flaky: list[int] | None = None):  # type: ignore[no-untyped-def]
+    """Behaves like ESI /universe/ids/: at most 500 names per call, 400 for a batch
+    holding an unacceptable name, and (optionally) one 504 for the first N calls."""
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        names = json.loads(request.content)
+        calls.append(len(names))
+        if flaky:
+            return httpx.Response(flaky.pop(0), json={"error": "timeout"})
+        if len(names) > 500:
+            return httpx.Response(400, json={"error": "too many names"})
+        if bad is not None and bad in names:
+            return httpx.Response(400, json={"error": "bad name"})
+        return httpx.Response(
+            200, json={"characters": [{"id": int(n[1:]), "name": n} for n in names]}
+        )
+
+    return handler
+
+
+async def test_resolve_ids_never_sends_more_than_500_names(tmp_path, no_sleep) -> None:  # type: ignore[no-untyped-def]
+    calls: list[int] = []
+    names = [f"P{i}" for i in range(1, 1347)]  # the production backfill: 1346 names
+    out = await _esi(tmp_path, _ids_handler(calls)).resolve_ids(names)
+    assert len(out) == 1346 and out["P1346"] == 1346
+    assert max(calls) <= 500
+
+
+async def test_one_unacceptable_name_does_not_lose_the_rest_of_its_batch(tmp_path, no_sleep) -> None:  # type: ignore[no-untyped-def]
+    calls: list[int] = []
+    names = [f"P{i}" for i in range(1, 41)]
+    out = await _esi(tmp_path, _ids_handler(calls, bad="P7")).resolve_ids(names)
+    assert set(out) == set(names) - {"P7"}
+
+
+async def test_a_gateway_timeout_is_retried_in_smaller_batches(tmp_path, no_sleep) -> None:  # type: ignore[no-untyped-def]
+    calls: list[int] = []
+    names = [f"P{i}" for i in range(1, 347)]
+    out = await _esi(tmp_path, _ids_handler(calls, flaky=[504])).resolve_ids(names)
+    assert len(out) == 346
+    assert calls[0] == 346 and calls[1:] == [173, 173]

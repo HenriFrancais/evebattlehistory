@@ -104,3 +104,40 @@ async def test_backfill_resolves_existing_log_counterparties(db_session_maker, t
             select(Character).where(Character.character_id == 800)
         )).scalar_one()
         assert ch.name == "Old Hostile" and ch.alliance_id == 88
+
+
+@pytest.mark.asyncio
+async def test_backfill_ignores_names_seen_only_on_miss_lines(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """Miss lines never seed a participant (they often name a drone), so their names
+    are not worth an ESI lookup either."""
+    from app.config import get_settings
+    from app.db.models import GamelogFile, LogEvent
+    from app.fights.offbr_resolve import backfill_log_characters
+
+    asked: list[str] = []
+
+    class _SpyEsi:
+        async def resolve_ids(self, names):  # type: ignore[no-untyped-def]
+            asked.extend(names)
+            return {}
+
+    async with db_session_maker() as session:
+        gf = GamelogFile(
+            uploaded_by_user="u", claimed_character_id=None, listener_name=None,
+            character_name=None, original_filename="x.txt", resolved_via="unresolved",
+            session_started_at=None, log_start_at=None, log_end_at=None,
+            stored_path="/tmp/x.txt", sha256="c0" + "0" * 62, mime="text/plain",
+            size=1, parse_status="parsed", event_count=2, uploaded_at=dt.datetime.now(dt.UTC),
+        )
+        session.add(gf)
+        await session.flush()
+        now = dt.datetime.now(dt.UTC)
+        session.add(LogEvent(file_id=gf.file_id, character_id=None, ts=now,
+                             effect_type="damage", direction="out", other_name="Real Hostile"))
+        session.add(LogEvent(file_id=gf.file_id, character_id=None, ts=now,
+                             effect_type="miss", direction="out", other_name="Only Missed"))
+        await session.commit()
+
+    async with db_session_maker() as session:
+        await backfill_log_characters(session, get_settings(), esi=_SpyEsi())
+    assert asked == ["Real Hostile"]

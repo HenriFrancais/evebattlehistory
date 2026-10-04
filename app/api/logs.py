@@ -24,6 +24,7 @@ from app.fights.offbr_resolve import resolve_log_characters
 from app.logs.associate import associate_file_to_all, delete_gamelog_file
 from app.logs.extract import build_battle_log
 from app.logs.ingest import EMPTY, GamelogFileResult, ingest_log
+from app.logs.parse import MISS_EFFECT
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 
@@ -59,7 +60,8 @@ async def _resolve_counterparties(
                     select(
                         LogEvent.other_name, LogEvent.source_name, LogEvent.target_name
                     )
-                    .where(LogEvent.file_id.in_(file_ids))
+                    # Miss lines never seed a participant; skip their names.
+                    .where(LogEvent.file_id.in_(file_ids), LogEvent.effect_type != MISS_EFFECT)
                     .distinct()
                 )
             ).all()
