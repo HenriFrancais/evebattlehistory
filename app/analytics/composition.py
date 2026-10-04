@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.fleet import _resolve_char_names
+from app.analytics.ship_class import UNKNOWN_RANK, ship_size_rank
 from app.analytics.sides_config import EntityKey, classify_entity
 from app.analytics.weapon_roles import WeaponTypeInfo, weapon_role
 from app.config import Settings
@@ -67,6 +68,12 @@ class CompositionPilot:
     has_logs: bool = False
     #: True when this pilot is NOT on any killmail and was identified from logs.
     from_logs: bool = False
+    #: Affiliation at the time of the fight (killmail first, else stored character).
+    corporation_id: int | None = None
+    alliance_id: int | None = None
+    #: Hull class (SDE group, e.g. "Battleship") and its size rank: 0 = largest.
+    ship_group: str | None = None
+    ship_rank: int = UNKNOWN_RANK
 
 
 @dataclass
@@ -84,6 +91,9 @@ class CompositionSide:
     pilot_count: int
     ships: list[CompositionShip]
     pilots: list[CompositionPilot]
+    #: Ships (and pods) this side lost, and their total killmail value.
+    losses: int = 0
+    isk_lost: float = 0.0
 
 
 @dataclass
@@ -97,6 +107,10 @@ class _Acc:
     hulls: dict[int, tuple[bool, int | None]]  # ship_type_id → (lost?, killmail_id)
     podded: bool            # appeared only in a capsule
     weapons_by_hull: dict[int, set[int]]  # ship_type_id → weapon_type_ids used from that hull
+    corporation_id: int | None = None
+    alliance_id: int | None = None
+    losses: int = 0
+    isk_lost: float = 0.0
 
 
 _REP_TYPES = ("rep_armor", "rep_shield")
@@ -221,7 +235,7 @@ async def fleet_composition(
         return a
 
     # Victims: authoritative side + a lost hull (capsules → podded, not a hull).
-    for km_id, char_id, ship_id, alli, corp in (
+    for km_id, char_id, ship_id, alli, corp, value in (
         await session.execute(
             select(
                 Killmail.killmail_id,
@@ -229,6 +243,7 @@ async def fleet_composition(
                 Killmail.victim_ship_type_id,
                 Killmail.victim_alliance_id,
                 Killmail.victim_corporation_id,
+                Killmail.total_value,
             ).where(Killmail.killmail_id.in_(km_ids))
         )
     ).all():
@@ -236,6 +251,9 @@ async def fleet_composition(
             continue
         a = _ensure(char_id, _side(alli, corp))
         a.side = _side(alli, corp)  # victim entity wins for side
+        a.corporation_id, a.alliance_id = corp, alli
+        a.losses += 1
+        a.isk_lost += float(value or 0.0)
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
             a.hulls[ship_id] = (True, km_id)
         elif ship_id == CAPSULE_TYPE_ID:
@@ -256,6 +274,8 @@ async def fleet_composition(
         if char_id is None:
             continue
         a = acc.get(char_id) or _ensure(char_id, _side(alli, corp))
+        if a.corporation_id is None and a.alliance_id is None:
+            a.corporation_id, a.alliance_id = corp, alli
         if ship_id is not None and ship_id != CAPSULE_TYPE_ID:
             a.hulls.setdefault(ship_id, (False, None))
             # A weapon belongs to the hull on its own attacker row, so a reship's
@@ -286,6 +306,7 @@ async def fleet_composition(
             continue
         from_logs_ids.add(oc.character_id)
         a = _ensure(oc.character_id, _side(oc.alliance_id, oc.corporation_id))
+        a.corporation_id, a.alliance_id = oc.corporation_id, oc.alliance_id
         ship = ship_overrides.get(oc.character_id) or oc.detected_ship_type_id
         if ship is not None:
             a.hulls[ship] = (False, None)
@@ -431,6 +452,10 @@ async def fleet_composition(
             out.append(WeaponEffect(type_id=wid, name=winv.name, role=wr.role))
         return out
 
+    def _group(sid: int) -> str | None:
+        inv = inv_by_id.get(sid)
+        return inv.group_name if inv is not None else None
+
     by_side: dict[str, list[CompositionPilot]] = {}
     for char_id, a in acc.items():
         name = char_names.get(char_id) or f"Char {char_id}"
@@ -448,7 +473,11 @@ async def fleet_composition(
                                      kill_count=kc_by_char.get(char_id, 0),
                                      reps_out=reps_by_char.get(char_id, 0.0),
                                      has_logs=char_id in log_char_ids,
-                                     from_logs=char_id in from_logs_ids)
+                                     from_logs=char_id in from_logs_ids,
+                                     corporation_id=a.corporation_id,
+                                     alliance_id=a.alliance_id,
+                                     ship_group=_group(sid),
+                                     ship_rank=ship_size_rank(_group(sid)))
                 )
         else:
             # Capsule-only / no hull recorded: no hull to attribute modules to.
@@ -460,7 +489,9 @@ async def fleet_composition(
                                  kill_count=kc_by_char.get(char_id, 0),
                                  reps_out=reps_by_char.get(char_id, 0.0),
                                  has_logs=char_id in log_char_ids,
-                                 from_logs=char_id in from_logs_ids)
+                                 from_logs=char_id in from_logs_ids,
+                                 corporation_id=a.corporation_id,
+                                 alliance_id=a.alliance_id)
             )
 
     sides: list[CompositionSide] = []
@@ -482,10 +513,10 @@ async def fleet_composition(
                     continue  # the hull itself is logged as a weapon sometimes — not a module
                 per_hull[w.type_id] += 1
                 mod_effect.setdefault(w.type_id, w)
-        # Order pilots so the most-flown hull leads, then alphabetically by ship and
-        # character within each hull group (hull-less pilots sort last).
+        # Largest hull class first (capitals down to frigates and pods); within a
+        # class the same hulls sit together, biggest damage dealer first.
         plist.sort(
-            key=lambda x: (-counts.get(x.ship_type_id or 0, 0), x.ship_name, x.character_name)
+            key=lambda x: (x.ship_rank, x.ship_name, -x.damage_done, x.character_name)
         )
         # Ships: most numerous first, ties broken alphabetically.
         ships = [
@@ -504,6 +535,9 @@ async def fleet_composition(
             )
         ]
         pilot_count = len({p.character_id for p in plist})
+        side_accs = [a for a in acc.values() if a.side == side_kind]
         sides.append(CompositionSide(side_kind=side_kind, pilot_count=pilot_count,
-                                     ships=ships, pilots=plist))
+                                     ships=ships, pilots=plist,
+                                     losses=sum(a.losses for a in side_accs),
+                                     isk_lost=sum(a.isk_lost for a in side_accs)))
     return CompositionResult(sides=sides)

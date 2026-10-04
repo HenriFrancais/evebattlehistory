@@ -24,6 +24,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import BUCKET_SECONDS, BrFight, Character, Fight, LogEvent, LogEventBucket
+from app.logs.parse import MISS_EFFECT
 from app.timeutil import epoch as _epoch
 
 #: Remote-assistance effects that friendly counterparties also witness. These are
@@ -257,6 +258,8 @@ async def character_timeline(
     bucket_q = select(LogEventBucket).where(
         LogEventBucket.character_id == character_id,
         LogEventBucket.fight_id.in_(fight_ids),
+        # Misses are not an effect series (they carry no amount).
+        LogEventBucket.effect_type != MISS_EFFECT,
     )
     if char_name is not None:
         bucket_q = bucket_q.where(LogEventBucket.effect_type.notin_(_REMOTE_ASSIST))
@@ -360,6 +363,7 @@ async def character_timeline_events(
             LogEvent.fight_id.in_(fight_ids),
             LogEvent.ts >= from_dt,
             LogEvent.ts <= to_dt,
+            LogEvent.effect_type != MISS_EFFECT,
         )
         .order_by(LogEvent.ts)
     )

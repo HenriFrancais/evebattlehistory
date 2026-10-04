@@ -87,7 +87,7 @@ describe('CoverageMatrix — E1 log-only participant', () => {
     renderMatrix(logOnlyCoverage, 'br1')
 
     const link = screen.getByRole('link', { name: 'LogiChar' })
-    expect(link).toHaveAttribute('href', '/brs/br1/characters/333')
+    expect(link).toHaveAttribute('href', '/brs/br1/timeline?pilots=333')
   })
 
   it('does NOT show "logs only" badge for a killmail participant (on_killmail=true)', () => {

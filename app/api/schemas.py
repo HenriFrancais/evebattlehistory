@@ -402,6 +402,12 @@ class ContributionOut(BaseModel):
     weapon_category: str | None = None
     target_ship: str | None = None
     quality: str | None = None
+    #: Hits / cycles / applications summed into ``value``, and the single-hit range.
+    hits: int = 0
+    min_hit: float | None = None
+    max_hit: float | None = None
+    #: Damage rows: hit-quality label -> count, including "Misses".
+    quality_counts: dict[str, int] = {}
 
 
 class ContributionsOut(BaseModel):
@@ -473,6 +479,40 @@ class FleetTimelineOut(BaseModel):
     leaders: list[LeadersOut]
 
 
+class PilotSeriesOut(BaseModel):
+    """One pilot's sparse series for one effect and direction (see ``idx``)."""
+
+    effect_type: str
+    direction: str
+    #: Positions in ``PilotTimelineOut.x``; the other arrays run parallel to it.
+    idx: list[int]
+    sum: list[float]
+    count: list[int]
+    min: list[float | None]
+    max: list[float | None]
+
+
+class PilotTimelineRowOut(BaseModel):
+    character_id: int
+    character_name: str
+    ship_type_id: int | None = None
+    ship_name: str | None = None
+    side_kind: str
+    is_self: bool = False
+    series: list[PilotSeriesOut]
+
+
+class PilotTimelineOut(BaseModel):
+    """Per-pilot bucket series on the fleet timeline's x axis."""
+
+    x: list[int]
+    bucket_seconds: int
+    pilots: list[PilotTimelineRowOut]
+    #: Whose per-target breakdown the viewer may open: "all" (FC/HC) or "own"
+    #: (only pilots flagged ``is_self``). The summary series cover every pilot.
+    scope: str = "all"
+
+
 # ---------------------------------------------------------------------------
 # Fleet composition schemas
 # ---------------------------------------------------------------------------
@@ -506,6 +546,11 @@ class CompositionPilotOut(BaseModel):
     reps_out: float = 0.0
     has_logs: bool = False
     from_logs: bool = False
+    corporation_id: int | None = None
+    alliance_id: int | None = None
+    ship_group: str | None = None
+    #: Hull size rank, 0 = largest class; unknown hulls sort last.
+    ship_rank: int = 999
 
 
 class ShipOverrideIn(BaseModel):
@@ -530,11 +575,50 @@ class CompositionSideOut(BaseModel):
     pilot_count: int
     ships: list[CompositionShipOut]
     pilots: list[CompositionPilotOut]
+    losses: int = 0
+    isk_lost: float = 0.0
 
 
 class CompositionOut(BaseModel):
     by_user_available: bool
     sides: list[CompositionSideOut]
+
+
+class EntityCharacterOut(BaseModel):
+    character_id: int
+    name: str
+    corporation_id: int | None = None
+    alliance_id: int | None = None
+
+
+class EntityCorporationOut(BaseModel):
+    corporation_id: int
+    name: str | None = None
+    ticker: str | None = None
+    alliance_id: int | None = None
+
+
+class EntityAllianceOut(BaseModel):
+    alliance_id: int
+    name: str | None = None
+    ticker: str | None = None
+
+
+class EntityByNameOut(BaseModel):
+    """Tickers the log parser saw beside a name that is on no killmail."""
+
+    name: str
+    corp_ticker: str | None = None
+    alliance_ticker: str | None = None
+
+
+class BrEntitiesOut(BaseModel):
+    """Who is who in a battle report: characters with their corporation/alliance."""
+
+    characters: list[EntityCharacterOut]
+    corporations: list[EntityCorporationOut]
+    alliances: list[EntityAllianceOut]
+    by_name: list[EntityByNameOut]
 
 
 # ---------------------------------------------------------------------------

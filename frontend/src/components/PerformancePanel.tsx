@@ -2,6 +2,7 @@
 // and their own characters' rows (with their median marked + percentile); FC / High
 // Command additionally get the full sortable fleet table.
 
+import { PilotName } from './PilotName'
 import { useEffect, useMemo, useState } from 'react'
 
 import { api } from '../api'
@@ -176,7 +177,7 @@ function PerfTable({
           <tr key={r.character_id} data-flagged={r.deaths_flagged > 0} data-self={r.is_self}>
             <td className="dim">{r.user_name ?? '—'}</td>
             <td style={{ fontWeight: r.is_self ? 600 : 400 }}>
-              {r.character_name}
+              <PilotName name={r.character_name} characterId={r.character_id} />
               {r.is_self ? ' ★' : ''}
             </td>
             <td style={{ textAlign: 'center' }}>{fmtNum(r.damage_done)}</td>

@@ -372,6 +372,49 @@ def _match_damage(rest: str) -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- #
+#  Misses
+# --------------------------------------------------------------------------- #
+
+#: effect_type of a turret/drone shot that missed. Stored so hit rates can be shown;
+#: it is NOT a damage event and no aggregate of damage may include it.
+MISS_EFFECT = "miss"
+
+# Incoming:  "<attacker> misses you completely - <module>"
+#            "<drone> belonging to <attacker> misses you completely - <drone>"
+# Outgoing:  "Your <module> misses <target> completely - <module>"
+#            "Your group of <module> misses <target> completely - <module>"
+# The trailing " - <module>" is absent in a terse client variant.
+_MISS_IN_RE = re.compile(
+    r"^(?:.+? belonging to )?(.+?) misses you completely(?:\s+-\s+(.+))?$"
+)
+_MISS_OUT_RE = re.compile(r"^Your (?:group of )?.+? misses (.+?) completely(?:\s+-\s+(.+))?$")
+
+
+def _match_miss(rest: str) -> dict[str, Any] | None:
+    rest = rest.strip()
+    direction: Literal["in", "out"]
+    m = _MISS_OUT_RE.match(rest)
+    if m:
+        direction = "out"
+    else:
+        m = _MISS_IN_RE.match(rest)
+        if not m:
+            return None
+        direction = "in"
+    return {
+        "effect_type": MISS_EFFECT,
+        "direction": direction,
+        "amount": None,
+        "other_name": m.group(1).strip(),
+        "other_corp_ticker": None,
+        "other_alliance_ticker": None,
+        "other_ship_name": None,
+        "module_name": m.group(2).strip() if m.group(2) else None,
+        "quality": "Misses",
+    }
+
+
+# --------------------------------------------------------------------------- #
 #  Warp disrupt / scram
 # --------------------------------------------------------------------------- #
 
@@ -808,7 +851,7 @@ def parse_line(line: str) -> ParsedLogEvent | None:
     - lines that don't match the ``[ ts ] (tag) rest`` envelope
 
     Returns a ``ParsedLogEvent`` with ``effect_type=None`` for envelope-valid
-    lines whose content is not a recognised effect (e.g. misses, hints).
+    lines whose content is not a recognised effect (e.g. hints, questions).
     """
     if not line.strip():
         return None
@@ -831,6 +874,8 @@ def parse_line(line: str) -> ParsedLogEvent | None:
     if tag == "combat":
         # Try matchers in priority order
         effect = _match_damage(rest_stripped)
+        if effect is None:
+            effect = _match_miss(rest_stripped)
         if effect is None:
             effect = _match_ewar(rest_stripped, rest_raw)
         if effect is None:

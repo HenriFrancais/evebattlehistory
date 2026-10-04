@@ -1,5 +1,6 @@
 // Props: coverage: UserCoverage[]; brId?: string (when provided, character names link to timeline)
 
+import { PilotName } from './PilotName'
 import { Link } from 'react-router-dom'
 import type { UserCoverage } from '../api'
 
@@ -29,11 +30,11 @@ export function CoverageMatrix({ coverage, brId }: Props) {
               )}
               <td>
                 {brId ? (
-                  <Link to={`/brs/${brId}/characters/${char.character_id}`}>
-                    {char.character_name}
+                  <Link to={`/brs/${brId}/timeline?pilots=${char.character_id}`}>
+                    <PilotName name={char.character_name} characterId={char.character_id} />
                   </Link>
                 ) : (
-                  char.character_name
+                  <PilotName name={char.character_name} characterId={char.character_id} />
                 )}
                 {/* E1: flag log-only participants (not on any killmail) */}
                 {char.has_logs && char.on_killmail === false && (

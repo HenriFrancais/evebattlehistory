@@ -5,18 +5,19 @@
 // We aggregate those into a small set of semantically-named "families" that
 // match how an FC thinks about a fight — each a distinct colour:
 //
-//   Damage & Reps (HP/s)   Damage dealt · Damage taken · Rep received
-//   Cap warfare (GJ/s)      Neut/NOS applied · Neut/NOS taken · Cap received
-//   Tackle / EWAR (apps)    Tackle applied · Tackle taken
+//   Damage (HP/s)           Damage applied · Damage received
+//   Reps (HP/s)             Rep applied · Rep received
+//   Cap warfare (GJ/s)      Neut/NOS applied · received, Cap applied · received
+//   Tackle / EWAR (apps)    Tackle applied · Tackle received
 //
-// Outgoing families draw ABOVE a zero baseline, incoming families mirrored
-// BELOW (negated). Colour AND position both encode direction so it reads at a
-// glance. A few extra families (rep applied, cap given) are available but
-// hidden by default. Smoothing is a centered moving average per family.
+// One panel is one stat type of the timeline chart. Outgoing families draw ABOVE
+// a zero baseline, incoming families mirrored BELOW (negated). Colour AND position
+// both encode direction so it reads at a glance. Smoothing is a centered moving
+// average per family.
 
 import type { FleetTimeline, KillEvent } from './api'
 
-export type PanelId = 'damage' | 'cap' | 'ewar'
+export type PanelId = 'damage' | 'reps' | 'cap' | 'ewar'
 
 interface FamilyDef {
   id: string
@@ -33,15 +34,16 @@ interface FamilyDef {
 // Consistent verbs: outgoing effects are "applied", incoming effects "received".
 // Order within a panel = legend + draw order.
 const FAMILIES: FamilyDef[] = [
-  // Damage & Reps
+  // Damage
   { id: 'dmg_out', label: 'Damage applied', panel: 'damage', dir: 'out', color: '#ff7043',
     members: [['damage', 'out']], smoothSec: 10, defaultVisible: true },
   { id: 'dmg_in', label: 'Damage received', panel: 'damage', dir: 'in', color: '#e53935',
     members: [['damage', 'in']], smoothSec: 10, defaultVisible: true },
-  { id: 'rep_in', label: 'Rep received', panel: 'damage', dir: 'in', color: '#66bb6a',
+  // Reps
+  { id: 'rep_out', label: 'Rep applied', panel: 'reps', dir: 'out', color: '#26a69a',
+    members: [['rep_armor', 'out'], ['rep_shield', 'out']], smoothSec: 20, defaultVisible: true },
+  { id: 'rep_in', label: 'Rep received', panel: 'reps', dir: 'in', color: '#66bb6a',
     members: [['rep_armor', 'in'], ['rep_shield', 'in']], smoothSec: 20, defaultVisible: true },
-  { id: 'rep_out', label: 'Rep applied', panel: 'damage', dir: 'out', color: '#26a69a',
-    members: [['rep_armor', 'out'], ['rep_shield', 'out']], smoothSec: 20, defaultVisible: false },
   // Cap warfare
   { id: 'cap_out', label: 'Neut/NOS applied', panel: 'cap', dir: 'out', color: '#ab47bc',
     members: [['neut', 'out'], ['nos', 'out']], smoothSec: 25, defaultVisible: true },
@@ -50,18 +52,30 @@ const FAMILIES: FamilyDef[] = [
   { id: 'capxfer_in', label: 'Cap received', panel: 'cap', dir: 'in', color: '#26c6da',
     members: [['cap_transfer', 'in']], smoothSec: 25, defaultVisible: true },
   { id: 'capxfer_out', label: 'Cap applied', panel: 'cap', dir: 'out', color: '#7e57c2',
-    members: [['cap_transfer', 'out']], smoothSec: 25, defaultVisible: false },
+    members: [['cap_transfer', 'out']], smoothSec: 25, defaultVisible: true },
   // Tackle / EWAR
   { id: 'tackle_out', label: 'Tackle applied', panel: 'ewar', dir: 'out', color: '#42a5f5',
-    members: [['scram', 'out'], ['disrupt', 'out']], smoothSec: 25, defaultVisible: true },
+    members: [['scram', 'out'], ['disrupt', 'out'], ['jam', 'out']], smoothSec: 25, defaultVisible: true },
   { id: 'tackle_in', label: 'Tackle received', panel: 'ewar', dir: 'in', color: '#ffca28',
     members: [['scram', 'in'], ['disrupt', 'in'], ['jam', 'in']], smoothSec: 25, defaultVisible: true },
 ]
 
 const PANEL_META: Record<PanelId, { title: string; unit: string; order: number }> = {
-  damage: { title: 'Damage & Remote Rep', unit: 'HP', order: 0 },
-  cap: { title: 'Cap warfare', unit: 'GJ', order: 1 },
-  ewar: { title: 'Tackle / EWAR', unit: '#', order: 2 },
+  damage: { title: 'Damage', unit: 'HP', order: 0 },
+  reps: { title: 'Remote reps', unit: 'HP', order: 1 },
+  cap: { title: 'Cap warfare', unit: 'GJ', order: 2 },
+  ewar: { title: 'Tackle / EWAR', unit: '#', order: 3 },
+}
+
+/** Chart series (family ids) of one stat type, in legend order. */
+export function panelSeriesKeys(panel: PanelId): string[] {
+  return FAMILIES.filter((f) => f.panel === panel).map((f) => f.id)
+}
+
+/** The effect_types a chart series (family id) sums, for one direction. */
+export function seriesEffects(key: string): { direction: 'out' | 'in'; effects: string[] } | null {
+  const fam = FAMILIES.find((f) => f.id === key)
+  return fam ? { direction: fam.dir, effects: fam.members.map(([e]) => e) } : null
 }
 
 export interface PanelSeries {
@@ -134,6 +148,39 @@ function sumMembers(arrays: (number | null)[][], len: number): (number | null)[]
     out[i] = acc
   }
   return out
+}
+
+export interface Clipped {
+  xs: number[]
+  cols: (number | null)[][]
+  /** For each chart point, its index in the source x axis; null for a padding point. */
+  sourceIdx: (number | null)[]
+}
+
+/**
+ * Clip series to [from, to] and pin the axis to both edges with null padding points.
+ * `sourceIdx` lets a cursor position on the clipped chart be read back against data
+ * indexed by the ORIGINAL x axis (the per-bucket leaders of the hover summary).
+ */
+export function clipToWindow(
+  x: number[], cols: (number | null)[][], from: number, to: number,
+): Clipped {
+  const keep: number[] = []
+  for (let i = 0; i < x.length; i++) if (x[i] >= from && x[i] <= to) keep.push(i)
+  let xs = keep.map((i) => x[i])
+  let out = cols.map((c) => keep.map((i) => c[i] ?? null))
+  let sourceIdx: (number | null)[] = keep.slice()
+  if (!xs.length || xs[0] > from) {
+    xs = [from, ...xs]
+    out = out.map((c) => [null, ...c])
+    sourceIdx = [null, ...sourceIdx]
+  }
+  if (xs[xs.length - 1] < to) {
+    xs = [...xs, to]
+    out = out.map((c) => [...c, null])
+    sourceIdx = [...sourceIdx, null]
+  }
+  return { xs, cols: out, sourceIdx }
 }
 
 export interface ToFleetViewOpts {

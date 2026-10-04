@@ -405,6 +405,13 @@ export interface Contribution {
   icon_type_id: number | null
   weapon_category: string | null
   quality: string | null
+  /** Hits / cycles / applications summed into `value`. */
+  hits?: number
+  /** Smallest and largest single hit or cycle (null when nothing had an amount). */
+  min_hit?: number | null
+  max_hit?: number | null
+  /** Damage rows: hit-quality label → count, including "Misses". */
+  quality_counts?: Record<string, number>
 }
 
 export interface ContributionsResponse {
@@ -449,6 +456,11 @@ export interface CompositionPilot {
   has_logs: boolean
   /** True when this pilot is NOT on any killmail and was identified from logs. */
   from_logs?: boolean
+  corporation_id?: number | null
+  alliance_id?: number | null
+  /** Hull class (SDE group) and its size rank: 0 = largest; unknown hulls sort last. */
+  ship_group?: string | null
+  ship_rank?: number
 }
 
 export interface ShipType {
@@ -461,11 +473,85 @@ export interface CompositionSide {
   pilot_count: number
   ships: CompositionShip[]
   pilots: CompositionPilot[]
+  /** Ships (and pods) this side lost, and their total killmail value. */
+  losses?: number
+  isk_lost?: number
 }
 
 export interface CompositionResponse {
   by_user_available: boolean
   sides: CompositionSide[]
+}
+
+// --- Per-pilot bucket timeline (stats table + isolation) ---
+
+/** One pilot's sparse series for one effect and direction. */
+export interface PilotSeries {
+  /** damage | rep_armor | rep_shield | neut | nos | cap_transfer | scram | disrupt | jam | miss */
+  effect_type: string
+  direction: string // 'out' | 'in'
+  /** Positions in `PilotTimeline.x`; the other arrays run parallel to it. */
+  idx: number[]
+  /** Absolute amount per bucket; for EWAR and misses, the count. */
+  sum: number[]
+  count: number[]
+  /** Smallest / largest single hit or cycle in the bucket (null if not recorded). */
+  min: (number | null)[]
+  max: (number | null)[]
+}
+
+export interface PilotTimelineRow {
+  character_id: number
+  character_name: string
+  ship_type_id: number | null
+  ship_name: string | null
+  side_kind: string
+  is_self: boolean
+  series: PilotSeries[]
+}
+
+export interface PilotTimeline {
+  x: number[]
+  bucket_seconds: number
+  pilots: PilotTimelineRow[]
+  /** Whose per-target breakdown the viewer may open: 'all' (FC/HC) or 'own' (`is_self` pilots). */
+  scope: 'all' | 'own'
+}
+
+// --- Entity directory (pilot → corporation / alliance tickers) ---
+
+export interface EntityCharacter {
+  character_id: number
+  name: string
+  corporation_id: number | null
+  alliance_id: number | null
+}
+
+export interface EntityCorporation {
+  corporation_id: number
+  name: string | null
+  ticker: string | null
+  alliance_id: number | null
+}
+
+export interface EntityAlliance {
+  alliance_id: number
+  name: string | null
+  ticker: string | null
+}
+
+/** Tickers the log parser saw beside a name that is on no killmail. */
+export interface EntityByName {
+  name: string
+  corp_ticker: string | null
+  alliance_ticker: string | null
+}
+
+export interface BrEntities {
+  characters: EntityCharacter[]
+  corporations: EntityCorporation[]
+  alliances: EntityAlliance[]
+  by_name: EntityByName[]
 }
 
 // --- Fleet broadcast analytics ---
@@ -936,6 +1022,9 @@ export const api = {
     jsonFetch<FightEwar>(`${API}/brs/${brId}/fights/${fightId}/ewar`),
   fleetTimeline: (brId: string) =>
     jsonFetch<FleetTimeline>(`${API}/brs/${brId}/fleet-timeline`),
+  pilotTimeline: (brId: string) =>
+    jsonFetch<PilotTimeline>(`${API}/brs/${brId}/pilot-timeline`),
+  entities: (brId: string) => jsonFetch<BrEntities>(`${API}/brs/${brId}/entities`),
   snapshot: (brId: string, from: number, to: number) =>
     jsonFetch<ContributionsResponse>(`${API}/brs/${brId}/snapshot?from_ts=${from}&to_ts=${to}`),
   characterSnapshot: (brId: string, charId: string, from: number, to: number) =>

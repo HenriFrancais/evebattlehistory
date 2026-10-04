@@ -1,5 +1,5 @@
-"""Only lines that parsed to an effect are stored as LogEvent rows; the parser's
-quality stats are kept on the file so the miss rate is visible."""
+"""Only lines that parsed to an effect (a miss counts as one) are stored as LogEvent
+rows; the parser's quality stats are kept on the file so unparsed lines are visible."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ LOG = HEADER + (
     b"[ 2026.01.01 12:00:01 ] (notify) Some hint that is not combat\n"
     b"[ 2026.01.01 12:00:02 ] (combat) 432 from Enemy Pilot[TST](Brutix) - 250mm Railgun II - Hits\n"
     b"[ 2026.01.01 12:00:03 ] (combat) Your group of guns misses Enemy Pilot completely\n"
+    b"[ 2026.01.01 12:00:04 ] (combat) Something the parser has never seen\n"
     b"[ 2026.01.01 12:00:09 ] (question) Are you sure?\n"
 )
 
@@ -46,7 +47,7 @@ async def test_only_effect_lines_become_log_events(db_session_maker, tmp_path) -
         effects = list((await session.execute(
             select(LogEvent.effect_type).where(LogEvent.file_id == file_id)
         )).scalars())
-    assert effects == ["damage"]
+    assert effects == ["damage", "miss"]
 
 
 async def test_file_keeps_full_time_bounds_and_parser_stats(db_session_maker, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -55,8 +56,8 @@ async def test_file_keeps_full_time_bounds_and_parser_stats(db_session_maker, tm
         gf = (await session.execute(
             select(GamelogFile).where(GamelogFile.file_id == file_id)
         )).scalar_one()
-    assert gf.event_count == 1
-    assert gf.combat_lines == 2
+    assert gf.event_count == 2
+    assert gf.combat_lines == 3
     assert gf.unmatched_combat == 1
     # Bounds still span every timestamped line, so fight-window overlap is unchanged.
     assert (gf.log_start_at.second, gf.log_end_at.second) == (1, 9)
@@ -76,8 +77,8 @@ async def test_reparse_stores_the_same_shape(db_session_maker, tmp_path) -> None
         gf = (await session.execute(
             select(GamelogFile).where(GamelogFile.file_id == file_id)
         )).scalar_one()
-    assert n == 1
-    assert (gf.event_count, gf.combat_lines, gf.unmatched_combat) == (1, 2, 1)
+    assert n == 2
+    assert (gf.event_count, gf.combat_lines, gf.unmatched_combat) == (2, 3, 1)
 
 
 async def test_migration_drops_stored_non_effect_rows(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -120,5 +121,5 @@ def test_my_logs_reports_unparsed_combat_lines(make_client, tmp_path) -> None:  
     client.post("/api/logs", headers=CREATOR_HEADERS,
                 files=[("files", ("20260101_120000_2112615087.txt", LOG, "text/plain"))])
     mine = client.get("/api/logs/mine", headers=CREATOR_HEADERS).json()
-    assert mine[0]["combat_lines"] == 2
+    assert mine[0]["combat_lines"] == 3
     assert mine[0]["unmatched_combat"] == 1

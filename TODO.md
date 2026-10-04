@@ -25,6 +25,16 @@ These are actions, not code. The batch changes behaviour on first boot.
       `<db>.pre-v0` in the data volume. Migrations 3 and 4 delete rows (log
       events with no effect; stored logs with no combat). Verified on a copy of
       the dev DB only (1.2 s, 1.05M → 0.90M events).
+- [ ] **Reparse the logs once: `./deploy/deploy.sh --reparse`.** The dashboard
+      overhaul (branch `feat/br-dashboard-overhaul`, migration 5) stores misses
+      and each bucket's smallest and largest hit. Until the reparse runs, old
+      battles show a dash for Min, Max and Misses in the timeline stats table.
+      On a copy of the dev DB: 516 files in 3 min 22 s, 39,601 misses added.
+- [ ] **Backfill tickers once:
+      `docker compose exec nvbr python -m app.ingest.tickers`.** Corp and
+      alliance tickers are fetched at ingest for new reports only; this fills
+      the existing rows (554 entities in 7 s on the dev DB copy). Until then
+      pilot names show without tickers.
 - [ ] **Run `./deploy/deploy.sh --recompute` once.** It now re-aggregates every
       BR: stored side rollups move to the new classification and the headline
       follows the new "our kills" rule (see Done #8, #9). On the dev DB copy no
@@ -41,6 +51,9 @@ These are actions, not code. The batch changes behaviour on first boot.
       changed: logs now sync once into `<remote>/logs/`, snapshots hold only
       `app.db`. The first run uploads every log once. Old snapshots (with their
       own `logs/`) are still restorable and age out through `BACKUP_KEEP`.
+- [ ] **Tell members the battle report page changed.** It is now tabbed
+      (Involved, Timeline, Comms, AAR; Manage for FC/HC). Old links to a
+      character's page redirect to the Timeline tab with that pilot isolated.
 - [ ] **Tell members what changed.** Non-FC viewers no longer see other pilots'
       rows in the snapshot, reconcile and EWAR views, the coverage matrix, or
       named friendly leaders on the timeline hover.

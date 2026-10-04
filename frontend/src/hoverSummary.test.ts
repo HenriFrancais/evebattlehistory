@@ -22,12 +22,13 @@ const leadersAllNull: Leaders = {
 const leaders = [leadersPopulated, leadersAllNull]
 
 describe('renderHoverSummary — damage panel', () => {
-  it('shows the three damage/rep leaders with escaped name + ship icons', () => {
+  it('shows the damage leaders with escaped name + ship icons', () => {
     const html = renderHoverSummary('damage', leaders, 0)
     expect(html).toContain('Bob&lt;evil&gt;')
     expect(html).toContain('Friendly taking most damage')
     expect(html).toContain('Hostile taking most damage')
-    expect(html).toContain('Friendly receiving most reps')
+    expect(html).not.toContain('Friendly receiving most reps')
+    expect(renderHoverSummary('reps', leaders, 0)).toContain('Friendly receiving most reps')
     expect(html).toContain('12k')
     expect(html).toContain('https://images.evetech.net/types/29984/icon')
   })

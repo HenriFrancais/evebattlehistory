@@ -71,11 +71,12 @@ async def offbr_log_characters(
         )
     ).all()
     # Jam lines name the *jammer's ship* (frequently a custom ship-name like "butter"),
-    # never a pilot, so they must never seed a participant.
+    # never a pilot, so they must never seed a participant. Miss lines name whatever
+    # was shot at or shooting (often a drone), so they do not seed one either.
     cp_names = {
         v
         for other, src, tgt, eff in name_rows
-        if eff != "jam"
+        if eff not in ("jam", "miss")
         for v in (other, src, tgt)
         if v
     }

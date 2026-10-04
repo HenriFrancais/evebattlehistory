@@ -244,6 +244,7 @@ The two data steps it can run are also available standalone inside the container
 
 ```bash
 docker compose exec nvbr python -m app.logs.reparse          # re-parse stored gamelogs
+docker compose exec nvbr python -m app.ingest.tickers        # fetch missing corp/alliance tickers
 docker compose exec nvbr python -m app.fights.offbr_resolve  # backfill off-BR counterparties (ESI)
 ```
 

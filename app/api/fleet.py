@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, select
 
 from app.analytics.composition import fleet_composition
+from app.analytics.entities import br_entities
 from app.analytics.fleet import Contribution, Leaders, fleet_snapshot, fleet_timeline
+from app.analytics.pilot_timeline import pilot_timeline
 from app.analytics.sides_config import load_overrides
 from app.api.access import acting_user, can_view_character, viewer_scope
 from app.api.auth import can_create_br
@@ -16,6 +18,7 @@ from app.api.deps import SessionDep
 from app.api.deps import require_br as _require_br
 from app.api.derived_cache import bump_derived, get_derived_cache
 from app.api.schemas import (
+    BrEntitiesOut,
     CharSideIn,
     CompositionOut,
     CompositionPilotOut,
@@ -23,11 +26,18 @@ from app.api.schemas import (
     CompositionSideOut,
     ContributionOut,
     ContributionsOut,
+    EntityAllianceOut,
+    EntityByNameOut,
+    EntityCharacterOut,
+    EntityCorporationOut,
     FleetSeriesOut,
     FleetTimelineOut,
     KillEventOut,
     LeaderEntryOut,
     LeadersOut,
+    PilotSeriesOut,
+    PilotTimelineOut,
+    PilotTimelineRowOut,
     ShipOverrideIn,
     ShipTypeOut,
     TimelineFightInfo,
@@ -100,6 +110,10 @@ def _contributions_out(
                 icon_type_id=c.icon_type_id,
                 weapon_category=c.weapon_category,
                 quality=c.quality,
+                hits=c.hits,
+                min_hit=c.min_hit,
+                max_hit=c.max_hit,
+                quality_counts=c.quality_counts,
             )
             for c in contribs
         ],
@@ -171,6 +185,57 @@ async def get_fleet_timeline(
     )
 
 
+@router.get("/api/brs/{br_id}/pilot-timeline")
+async def get_pilot_timeline(
+    br_id: str, request: Request, session: SessionDep
+) -> PilotTimelineOut:
+    """Per-pilot bucket series for the stats table and pilot isolation.
+
+    Every viewer gets every logged pilot's summary series (totals, peak, single-hit
+    range, hit and miss counts per 5-second bucket). What stays restricted is the
+    per-target / per-weapon breakdown behind a row — the character snapshot
+    endpoint, which 403s for other people's characters. ``scope`` tells the client
+    whose breakdown this viewer may open: "all" (FC/HC) or "own".
+    """
+    await _require_br(br_id, session)
+    settings = get_settings()
+    viewer = await viewer_scope(request, settings)
+    cfg = get_app_config()
+    # Viewer-independent: one cached result serves everyone.
+    tl = await get_derived_cache().get(
+        ("pilot-timeline", br_id),
+        lambda: pilot_timeline(session, br_id, cfg.our_alliance_ids, cfg.our_corp_ids, settings),
+    )
+    return PilotTimelineOut(
+        x=tl.x,
+        bucket_seconds=tl.bucket_seconds,
+        scope="all" if viewer.elevated else "own",
+        pilots=[
+            PilotTimelineRowOut(
+                character_id=p.character_id,
+                character_name=p.character_name,
+                ship_type_id=p.ship_type_id,
+                ship_name=p.ship_name,
+                side_kind=p.side_kind,
+                is_self=p.character_id in viewer.character_ids,
+                series=[
+                    PilotSeriesOut(
+                        effect_type=s.effect_type,
+                        direction=s.direction,
+                        idx=s.idx,
+                        sum=s.sum,
+                        count=s.count,
+                        min=s.min,
+                        max=s.max,
+                    )
+                    for s in p.series
+                ],
+            )
+            for p in tl.pilots
+        ],
+    )
+
+
 @router.get("/api/brs/{br_id}/snapshot")
 async def get_snapshot(
     br_id: str, request: Request, session: SessionDep, from_ts: int, to_ts: int
@@ -222,6 +287,46 @@ async def get_character_snapshot(
     return _contributions_out(from_ts, to_ts, contribs, scope="character")
 
 
+@router.get("/api/brs/{br_id}/entities")
+async def get_entities(br_id: str, session: SessionDep) -> BrEntitiesOut:
+    """Characters of the report with their corporation / alliance names and tickers.
+
+    Killmail affiliations are public, so every authenticated viewer gets the same
+    directory; it carries no log-derived per-pilot data.
+    """
+    await _require_br(br_id, session)
+    settings = get_settings()
+    ent = await get_derived_cache().get(
+        ("entities", br_id), lambda: br_entities(session, br_id, settings)
+    )
+    return BrEntitiesOut(
+        characters=[
+            EntityCharacterOut(
+                character_id=c.character_id, name=c.name,
+                corporation_id=c.corporation_id, alliance_id=c.alliance_id,
+            )
+            for c in ent.characters
+        ],
+        corporations=[
+            EntityCorporationOut(
+                corporation_id=c.corporation_id, name=c.name, ticker=c.ticker,
+                alliance_id=c.alliance_id,
+            )
+            for c in ent.corporations
+        ],
+        alliances=[
+            EntityAllianceOut(alliance_id=a.alliance_id, name=a.name, ticker=a.ticker)
+            for a in ent.alliances
+        ],
+        by_name=[
+            EntityByNameOut(
+                name=n.name, corp_ticker=n.corp_ticker, alliance_ticker=n.alliance_ticker
+            )
+            for n in ent.by_name
+        ],
+    )
+
+
 @router.get("/api/brs/{br_id}/composition")
 async def get_composition(
     br_id: str, request: Request, session: SessionDep
@@ -264,6 +369,8 @@ async def get_composition(
             CompositionSideOut(
                 side_kind=s.side_kind,
                 pilot_count=s.pilot_count,
+                losses=s.losses,
+                isk_lost=s.isk_lost,
                 ships=[CompositionShipOut(
                     ship_type_id=sh.ship_type_id,
                     ship_name=sh.ship_name, count=sh.count,
@@ -282,6 +389,10 @@ async def get_composition(
                                                       else 0.0),
                                             has_logs=p.has_logs and viewer.can_see(p.character_id),
                                             from_logs=p.from_logs,
+                                            corporation_id=p.corporation_id,
+                                            alliance_id=p.alliance_id,
+                                            ship_group=p.ship_group,
+                                            ship_rank=p.ship_rank,
                                             weapons=[WeaponEffectOut(type_id=w.type_id,
                                                                      name=w.name,
                                                                      role=w.role)

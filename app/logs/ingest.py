@@ -49,6 +49,9 @@ class GamelogFileResult(NamedTuple):
 
 
 _TACKLE: frozenset[str] = frozenset({"scram", "disrupt"})
+#: Effects whose counterparty is logged as a bare pilot name (ship, if any, already
+#: split off by the parser) — no SDE ship-peel is needed or wanted.
+_PLAIN_NAME_EFFECTS: frozenset[str] = frozenset({"damage", "miss"})
 
 
 def build_event_rows(
@@ -64,7 +67,7 @@ def build_event_rows(
     can never apply to one path and not the other.
 
     Only lines that parsed to an effect are stored. Envelope lines with no effect
-    (hints, misses, questions) carry nothing a reader uses; they are counted in the
+    (hints, questions) carry nothing a reader uses; they are counted in the
     file's parser stats (GamelogFile.combat_lines / unmatched_combat) instead.
     """
     rows: list[dict[str, object]] = []
@@ -72,7 +75,7 @@ def build_event_rows(
         if e.effect_type is None:
             continue
         other_name, other_ship = e.other_name, e.other_ship_name
-        if e.effect_type != "damage" and not other_ship and other_name:
+        if e.effect_type not in _PLAIN_NAME_EFFECTS and not other_ship and other_name:
             # Recover Character (Ship) for non-damage targets the parser left merged,
             # using the SDE ship-name dictionary. Damage already splits (ship in parens).
             char, ship = split_entity(other_name, entity_names)
@@ -81,7 +84,7 @@ def build_event_rows(
             # keep the original when split_entity recovered nothing at all.
             other_name = char if (char is not None or ship is not None) else other_name
             other_ship = ship
-        elif e.effect_type != "damage" and other_ship and other_name:
+        elif e.effect_type not in _PLAIN_NAME_EFFECTS and other_ship and other_name:
             # Correct the rare ship-first "Ship [CORP] Pilot" overview the parser
             # assumed was NEW (pilot-first) and assigned backwards.
             other_name, other_ship = correct_ship_pilot_swap(other_name, other_ship, entity_names)

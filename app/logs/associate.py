@@ -101,6 +101,8 @@ async def _rebuild_buckets_for_pairs(
         buckets: dict[tuple[dt.datetime, str, str], tuple[float, int]] = defaultdict(
             lambda: (0.0, 0)
         )
+        # Smallest / largest single positive amount per bucket (one hit or cycle).
+        hit_range: dict[tuple[dt.datetime, str, str], tuple[float, float]] = {}
         for ts, effect_type, direction, amount in rows:
             bucket_ts = _floor_to_bucket(ts)
             # NULL → "" coercion: effect_type and direction are PK columns in
@@ -113,9 +115,14 @@ async def _rebuild_buckets_for_pairs(
                 prev_sum + (amount or 0.0),
                 prev_cnt + 1,
             )
+            magnitude = abs(amount or 0.0)
+            if magnitude > 0:
+                lo, hi = hit_range.get((bucket_ts, etype, dire), (magnitude, magnitude))
+                hit_range[(bucket_ts, etype, dire)] = (min(lo, magnitude), max(hi, magnitude))
 
         # Insert new bucket rows
         for (bucket_ts, etype, dire), (sum_amount, event_count) in buckets.items():
+            lo_hi = hit_range.get((bucket_ts, etype, dire))
             session.add(
                 LogEventBucket(
                     fight_id=fight_id,
@@ -125,6 +132,8 @@ async def _rebuild_buckets_for_pairs(
                     direction=dire,
                     sum_amount=sum_amount,
                     event_count=event_count,
+                    min_amount=lo_hi[0] if lo_hi else None,
+                    max_amount=lo_hi[1] if lo_hi else None,
                 )
             )
 

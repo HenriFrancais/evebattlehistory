@@ -622,8 +622,7 @@ def test_drone_belonging_to_no_raise() -> None:
     )
     evt = parse_line(line)
     # Must not raise; result is either None or event with no effect_type
-    if evt is not None:
-        assert evt.effect_type is None
+    assert evt is not None and evt.effect_type == "miss"
 
 
 def test_misses_line_no_raise() -> None:
@@ -632,8 +631,7 @@ def test_misses_line_no_raise() -> None:
         " completely - 720mm Howitzer Artillery II"
     )
     evt = parse_line(line)
-    if evt is not None:
-        assert evt.effect_type is None
+    assert evt is not None and evt.effect_type == "miss"
 
 
 def test_your_drone_misses_line_no_raise() -> None:
@@ -642,8 +640,7 @@ def test_your_drone_misses_line_no_raise() -> None:
         " misses FakeEnemy India completely - 'Augmented' Infiltrator"
     )
     evt = parse_line(line)
-    if evt is not None:
-        assert evt.effect_type is None
+    assert evt is not None and evt.effect_type == "miss"
 
 
 # ---------------------------------------------------------------------------
@@ -1185,3 +1182,57 @@ def test_ticker_only_counterparty_is_unattributable() -> None:
     # Degenerate overview render: only a bracketed ticker, no ship/pilot.
     name, _c, _a, ship = _resolve_counterparty("[NV]")
     assert name is None and ship is None
+
+
+# ---------------------------------------------------------------------------
+# Misses
+# ---------------------------------------------------------------------------
+
+
+def _combat(rest: str):  # type: ignore[no-untyped-def]
+    return parse_line(f"[ 2026.06.16 22:01:04 ] (combat) {rest}")
+
+
+def test_miss_incoming() -> None:
+    e = _combat("FakeEnemy Golf misses you completely - 720mm Howitzer Artillery II")
+    assert e is not None
+    assert (e.effect_type, e.direction, e.amount, e.quality) == ("miss", "in", None, "Misses")
+    assert (e.other_name, e.module_name) == ("FakeEnemy Golf", "720mm Howitzer Artillery II")
+
+
+def test_miss_incoming_drone_is_credited_to_its_owner() -> None:
+    e = _combat("Valkyrie II belonging to FakeEnemy Golf misses you completely - Valkyrie II")
+    assert e is not None
+    assert (e.effect_type, e.direction, e.other_name, e.module_name) == (
+        "miss", "in", "FakeEnemy Golf", "Valkyrie II",
+    )
+
+
+def test_miss_outgoing() -> None:
+    e = _combat("Your Warden II misses Hitaki Argonest completely - Warden II")
+    assert e is not None
+    assert (e.effect_type, e.direction, e.other_name, e.module_name) == (
+        "miss", "out", "Hitaki Argonest", "Warden II",
+    )
+
+
+def test_miss_outgoing_group_without_module_suffix() -> None:
+    e = _combat("Your group of Mega Pulse Laser II misses Enemy Pilot completely")
+    assert e is not None
+    assert (e.effect_type, e.direction, e.other_name, e.module_name) == (
+        "miss", "out", "Enemy Pilot", None,
+    )
+
+
+def test_miss_with_markup() -> None:
+    e = _combat(
+        "<color=0xffffffff>Your group of <b>Gun</b> misses <b>Enemy Pilot</b> completely - Gun"
+    )
+    assert e is not None
+    assert (e.effect_type, e.other_name) == ("miss", "Enemy Pilot")
+
+
+def test_damage_from_pilot_named_misses_stays_damage() -> None:
+    e = _combat("432 from Misses Mcgee[.TST](Rifter) - 125mm Autocannon - Hits")
+    assert e is not None
+    assert (e.effect_type, e.other_name) == ("damage", "Misses Mcgee")

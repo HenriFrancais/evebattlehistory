@@ -59,6 +59,7 @@ class Alliance(Base):
 
     alliance_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ticker: Mapped[str | None] = mapped_column(String(16), nullable=True)
     last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime)
 
 
@@ -67,6 +68,7 @@ class Corporation(Base):
 
     corporation_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ticker: Mapped[str | None] = mapped_column(String(16), nullable=True)
     alliance_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("alliance.alliance_id", **_FK), nullable=True  # type: ignore[arg-type]
     )
@@ -545,6 +547,10 @@ class LogEventBucket(Base):
 
     sum_amount: Mapped[float] = mapped_column(Float, default=0.0)
     event_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: Smallest / largest single positive amount in the bucket (one hit or cycle).
+    #: NULL when the bucket has none (count effects, misses, rows built before v5).
+    min_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     __table_args__ = (
         Index("ix_log_event_bucket_fight_char", "fight_id", "character_id"),

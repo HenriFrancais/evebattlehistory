@@ -49,6 +49,8 @@ export function resetCache(): void {
 const kBr = (id: string) => `br:${id}`
 const kFleet = (id: string) => `fleet:${id}`
 const kComp = (id: string) => `comp:${id}`
+const kPilots = (id: string) => `pilots:${id}`
+const kEntities = (id: string) => `entities:${id}`
 
 /** The viewer ("me"), fetched once per session. */
 export const loadMe = () => getOrFetch('me', () => api.me())
@@ -63,8 +65,15 @@ export const loadFleetTimeline = (id: string, force = false) =>
 export const loadComposition = (id: string, force = false) =>
   (force ? refetch : getOrFetch)(kComp(id), () => api.composition(id))
 
+export const loadPilotTimeline = (id: string, force = false) =>
+  (force ? refetch : getOrFetch)(kPilots(id), () => api.pilotTimeline(id))
+
+export const loadEntities = (id: string, force = false) =>
+  (force ? refetch : getOrFetch)(kEntities(id), () => api.entities(id))
+
 /** Drop every cached resource for one BR (after refresh / title edit / delete). */
-export const invalidateBr = (id: string) => invalidate(kBr(id), kFleet(id), kComp(id))
+export const invalidateBr = (id: string) =>
+  invalidate(kBr(id), kFleet(id), kComp(id), kPilots(id), kEntities(id))
 
 /**
  * Warm a BR's heavy detail resources ahead of a click. Fire-and-forget: errors

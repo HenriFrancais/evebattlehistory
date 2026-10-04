@@ -511,8 +511,9 @@ async def test_composition_reps_dedup_and_in_only_attribution(db_session_maker) 
 
 
 @pytest.mark.asyncio
-async def test_composition_orders_by_ship_count_then_alpha(db_session_maker) -> None:  # type: ignore[no-untyped-def]
-    """Ships and pilots lead with the most-flown hull; ties break alphabetically."""
+async def test_composition_orders_ships_by_count_and_pilots_by_hull_size(db_session_maker) -> None:  # type: ignore[no-untyped-def]
+    """The ship summary leads with the most-flown hull; the pilot list runs from the
+    largest hull class down, equal pilots alphabetically."""
     from app.analytics.composition import fleet_composition
     from app.config import get_settings
     from app.db.models import InventoryType, KillmailAttacker
@@ -523,7 +524,11 @@ async def test_composition_orders_by_ship_count_then_alpha(db_session_maker) -> 
         km_id = (await session.execute(
             select(FightKill.killmail_id).where(FightKill.fight_id == fight_id)
         )).scalar_one()
-        session.add(InventoryType(type_id=GUARDIAN, name="Guardian"))
+        session.add(InventoryType(type_id=GUARDIAN, name="Guardian", group_name="Logistics"))
+        await session.execute(
+            update(InventoryType).where(InventoryType.name == "Absolution")
+            .values(group_name="Command Ship")
+        )
         # Three Guardian pilots, deliberately added out of alphabetical order.
         for idx, cid in enumerate([9012, 9010, 9011], start=10):
             await _insert_character(session, cid)
@@ -541,8 +546,10 @@ async def test_composition_orders_by_ship_count_then_alpha(db_session_maker) -> 
     # Ships: Guardian (3) leads Absolution (1).
     ship_order = [sh.ship_name for sh in side.ships]
     assert ship_order.index("Guardian") < ship_order.index("Absolution")
-    # Pilots: most-numerous hull first; Guardians alphabetical by character.
-    assert side.pilots[0].ship_name == "Guardian"
+    # Pilots: the command ship (battlecruiser hull) before the logistics cruisers.
+    assert side.pilots[0].ship_name == "Absolution"
+    assert side.pilots[0].ship_group == "Command Ship"
+    assert side.pilots[0].ship_rank < side.pilots[1].ship_rank
     guardian_names = [p.character_name for p in side.pilots if p.ship_name == "Guardian"]
     assert guardian_names == ["Char9010", "Char9011", "Char9012"]
 

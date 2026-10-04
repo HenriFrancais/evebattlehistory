@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FleetTimeline } from './api'
-import { smoothSeries, smoothWindowBuckets, toFleetView } from './fleet'
+import { clipToWindow, seriesEffects, smoothSeries, smoothWindowBuckets, toFleetView } from './fleet'
 
 const emptyFleet: FleetTimeline = {
   x: [],
@@ -79,15 +79,15 @@ describe('toFleetView (families)', () => {
     expect(v.panels).toHaveLength(0)
   })
 
-  it('groups into damage / cap / ewar panels in order', () => {
+  it('groups into damage / reps / cap / ewar panels in order', () => {
     const v = toFleetView(fleetWithData, { smooth: false })
-    expect(v.panels.map((p) => p.id)).toEqual(['damage', 'cap', 'ewar'])
+    expect(v.panels.map((p) => p.id)).toEqual(['damage', 'reps', 'cap', 'ewar'])
   })
 
   it('aggregates rep_armor + rep_shield into one "Rep received" family', () => {
     const v = toFleetView(fleetWithData, { smooth: false })
-    const damage = v.panels.find((p) => p.id === 'damage')!
-    const rep = damage.series.find((s) => s.key === 'rep_in')!
+    const reps = v.panels.find((p) => p.id === 'reps')!
+    const rep = reps.series.find((s) => s.key === 'rep_in')!
     expect(rep.label).toBe('Rep received')
     // index 0: armor 50 + shield 5 = 55, mirrored (incoming) → -55
     expect(rep.values[0]).toBe(-55)
@@ -119,14 +119,15 @@ describe('toFleetView (families)', () => {
     expect(damage.series.find((s) => s.key === 'dmg_in')!.values).toEqual([-10, -20, -30])
   })
 
-  it('optional families (rep applied, cap given) default-hidden; rest visible', () => {
+  it('every family is visible by default now each stat type has its own panel', () => {
     const withApplied: FleetTimeline = {
       ...fleetWithData,
       series: [...fleetWithData.series, mk('rep_armor', 'out', [9, 9, 9]), mk('cap_transfer', 'out', [9, 9, 9])],
     }
     const all = toFleetView(withApplied, { smooth: false }).panels.flatMap((p) => p.series)
-    expect(all.find((s) => s.key === 'rep_out')!.defaultVisible).toBe(false)
-    expect(all.find((s) => s.key === 'capxfer_out')!.defaultVisible).toBe(false)
+    expect(all.every((s) => s.defaultVisible)).toBe(true)
+    expect(seriesEffects('rep_out')).toEqual({ direction: 'out', effects: ['rep_armor', 'rep_shield'] })
+    expect(seriesEffects('nope')).toBeNull()
     expect(all.find((s) => s.key === 'dmg_out')!.defaultVisible).toBe(true)
     expect(all.find((s) => s.key === 'rep_in')!.defaultVisible).toBe(true)
   })
@@ -143,5 +144,37 @@ describe('toFleetView (families)', () => {
     const v = toFleetView(fleetWithData)
     expect(v.kills).toHaveLength(1)
     expect(v.kills[0].killmail_id).toBe(42)
+  })
+})
+
+describe('table effects follow the chart families', () => {
+  it('counts outgoing jams as tackle applied, as incoming jams are tackle received', () => {
+    expect(seriesEffects('tackle_out')!.effects).toContain('jam')
+    expect(seriesEffects('tackle_in')!.effects).toContain('jam')
+  })
+})
+
+describe('clipToWindow', () => {
+  const x = [90, 95, 100, 105, 110, 115]
+  const col = [1, 2, 3, 4, 5, 6]
+
+  it('keeps buckets inside the window and remembers where each came from', () => {
+    const c = clipToWindow(x, [col], 100, 110)
+    expect(c.xs).toEqual([100, 105, 110])
+    expect(c.cols).toEqual([[3, 4, 5]])
+    expect(c.sourceIdx).toEqual([2, 3, 4])
+  })
+
+  it('pads to the window edges with points that map to no source bucket', () => {
+    const c = clipToWindow(x, [col], 97, 112)
+    expect(c.xs).toEqual([97, 100, 105, 110, 112])
+    expect(c.cols).toEqual([[null, 3, 4, 5, null]])
+    expect(c.sourceIdx).toEqual([null, 2, 3, 4, null])
+  })
+
+  it('handles a window with no buckets in it', () => {
+    const c = clipToWindow(x, [col], 200, 300)
+    expect(c.xs).toEqual([200, 300])
+    expect(c.sourceIdx).toEqual([null, null])
   })
 })

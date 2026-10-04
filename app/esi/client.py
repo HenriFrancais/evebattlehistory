@@ -260,6 +260,40 @@ class EsiClient:
                 log.warning("esi.resolve_affiliations_failed", error=str(exc), n=len(chunk))
         return out
 
+    async def fetch_tickers(
+        self, corp_ids: list[int], alliance_ids: list[int]
+    ) -> tuple[dict[int, str], dict[int, str]]:
+        """Corporation and alliance tickers from their public ESI records.
+
+        One GET per entity (ESI has no bulk form), bounded by ``max_concurrency``.
+        Best-effort: an entity that fails or has no ticker is simply left out.
+        """
+        sem = asyncio.Semaphore(self._max_concurrency)
+
+        async def _one(kind: str, entity_id: int) -> str | None:
+            url = f"{ESI_BASE}/{kind}/{entity_id}/"
+            async with sem:
+                try:
+                    resp = await self._get(url, timeout=self._timeout_s)
+                    resp.raise_for_status()
+                    ticker = resp.json().get("ticker")
+                except Exception as exc:
+                    log.warning("esi.ticker_failed", kind=kind, id=entity_id, error=str(exc))
+                    return None
+            return str(ticker) if ticker else None
+
+        corp_list = [int(c) for c in corp_ids]
+        alli_list = [int(a) for a in alliance_ids]
+        results = await asyncio.gather(
+            *(_one("corporations", c) for c in corp_list),
+            *(_one("alliances", a) for a in alli_list),
+        )
+        corp_res, alli_res = results[: len(corp_list)], results[len(corp_list) :]
+        return (
+            {c: t for c, t in zip(corp_list, corp_res, strict=True) if t},
+            {a: t for a, t in zip(alli_list, alli_res, strict=True) if t},
+        )
+
 
 _esi_client: EsiClient | None = None
 

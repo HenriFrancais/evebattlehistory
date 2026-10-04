@@ -28,7 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import func, select
@@ -49,6 +49,7 @@ from app.db.models import (
     LogEvent,
     LogEventBucket,
 )
+from app.logs.parse import MISS_EFFECT
 from app.observability.logging import log
 from app.roster.snapshot import get_roster_store
 from app.timeutil import epoch as _epoch
@@ -88,6 +89,24 @@ class Contribution:
     weapon_category: str | None = None
     target_ship: str | None = None
     quality: str | None = None
+    #: Number of hits / cycles / applications summed into ``value``.
+    hits: int = 0
+    #: Smallest and largest single hit or cycle (None when nothing had an amount).
+    min_hit: float | None = None
+    max_hit: float | None = None
+    #: Damage rows: hit-quality label -> count, including "Misses".
+    quality_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _widen(
+    ranges: dict[Any, tuple[float, float]], key: Any, amount: float | None
+) -> None:
+    """Fold one positive amount into the (min, max) tracked for *key*."""
+    magnitude = abs(amount or 0.0)
+    if magnitude <= 0:
+        return
+    lo, hi = ranges.get(key, (magnitude, magnitude))
+    ranges[key] = (min(lo, magnitude), max(hi, magnitude))
 
 
 async def _resolve_char_names(
@@ -166,6 +185,8 @@ def _accumulate_remote_assist(
     rep_value: dict[RepKey, float] = {}
     rep_cid: dict[RepKey, int | None] = {}
     rep_ship: dict[RepKey, str] = {}
+    rep_hits: dict[RepKey, int] = {}
+    rep_range: dict[RepKey, tuple[float, float]] = {}
     for cid, other, oship, eff, direction, amount, _m, _q, _ts in rows:
         if eff not in _REMOTE_ASSIST_EFFECTS or cid is None:
             continue
@@ -194,6 +215,8 @@ def _accumulate_remote_assist(
         else:
             continue
         rep_value[rkey] = rep_value.get(rkey, 0.0) + abs(amount or 0.0)
+        rep_hits[rkey] = rep_hits.get(rkey, 0) + 1
+        _widen(rep_range, rkey, amount)
 
     # Resolve repper ids for in-only pairs (repper never uploaded, so no out row
     # supplied a cid) by inverting the resolved-name map.
@@ -214,6 +237,9 @@ def _accumulate_remote_assist(
                 direction="out",  # canonical repper→recipient
                 group=_EFFECT_GROUP.get(eff, "other"),
                 value=val,
+                hits=rep_hits.get(rkey, 0),
+                min_hit=rep_range[rkey][0] if rkey in rep_range else None,
+                max_hit=rep_range[rkey][1] if rkey in rep_range else None,
             )
         )
     return contributions
@@ -299,6 +325,8 @@ async def fleet_snapshot(
     agg: dict[Key, float] = {}
     module_dmg: dict[Key, dict[str, float]] = {}
     quality_ct: dict[Key, dict[str, int]] = {}
+    hit_ct: dict[Key, int] = {}
+    hit_range: dict[Key, tuple[float, float]] = {}
     for cid, other, oship, eff, direction, amount, module, quality, _ts in rows:
         if eff in _REMOTE_ASSIST_EFFECTS:
             continue  # reps + cap transfer aggregated separately below
@@ -307,6 +335,9 @@ async def fleet_snapshot(
         )
         contrib = 1.0 if eff in _COUNT_EFFECTS else abs(amount or 0.0)
         agg[key] = agg.get(key, 0.0) + contrib
+        hit_ct[key] = hit_ct.get(key, 0) + 1
+        if eff not in _COUNT_EFFECTS:
+            _widen(hit_range, key, amount)
         if eff == "damage":
             if module:
                 module_dmg.setdefault(key, {})
@@ -331,6 +362,43 @@ async def fleet_snapshot(
         ).scalars():
             name_to_type[inv.name] = inv.type_id
 
+    # Misses sit beside the damage they belong to: counted per (pilot, other party,
+    # direction) and reported under the "Misses" quality of that pair's damage row
+    # (a row with no damage at all when every shot missed).
+    miss_conditions = [
+        LogEvent.fight_id.in_(fight_ids),
+        LogEvent.ts >= start,
+        LogEvent.ts < end,
+        LogEvent.effect_type == MISS_EFFECT,
+    ]
+    if character_id is not None:
+        miss_conditions.append(LogEvent.character_id == character_id)
+    for m_cid, m_other, m_dir, m_cnt in (
+        await session.execute(
+            select(
+                LogEvent.character_id,
+                LogEvent.other_name,
+                LogEvent.direction,
+                func.count(LogEvent.event_id),
+            )
+            .where(*miss_conditions)
+            .group_by(LogEvent.character_id, LogEvent.other_name, LogEvent.direction)
+        )
+    ).all():
+        other = _clean_target_name(m_other)
+        same_pair = [
+            k for k in agg
+            if k[0] == m_cid and k[1] == other and k[3] == "damage" and k[4] == (m_dir or "")
+        ]
+        mkey: Key = (
+            max(same_pair, key=lambda k: agg[k])
+            if same_pair
+            else (m_cid, other, "?", "damage", m_dir or "")
+        )
+        agg.setdefault(mkey, 0.0)
+        counts = quality_ct.setdefault(mkey, {})
+        counts["Misses"] = counts.get("Misses", 0) + int(m_cnt)
+
     names = await _resolve_char_names(session, settings, {k[0] for k in agg if k[0] is not None})
 
     out: list[Contribution] = []
@@ -346,8 +414,9 @@ async def fleet_snapshot(
                 name_to_type.get(wc.fallback_name) if wc.fallback_name else None
             )
         quality_label: str | None = None
-        if key in quality_ct:
-            quality_label = max(quality_ct[key].items(), key=lambda kv: kv[1])[0]
+        landed = {q: n for q, n in quality_ct.get(key, {}).items() if q != "Misses"}
+        if landed:
+            quality_label = max(landed.items(), key=lambda kv: kv[1])[0]
         out.append(
             Contribution(
                 source_character_id=cid,
@@ -362,6 +431,10 @@ async def fleet_snapshot(
                 icon_type_id=icon_type_id,
                 weapon_category=category,
                 quality=quality_label,
+                hits=hit_ct.get(key, 0),
+                min_hit=hit_range[key][0] if key in hit_range else None,
+                max_hit=hit_range[key][1] if key in hit_range else None,
+                quality_counts=dict(quality_ct.get(key, {})),
             )
         )
 
@@ -439,6 +512,7 @@ async def fleet_snapshot(
                 icon_type_id=None,
                 weapon_category=None,
                 quality=None,
+                hits=int(val),
             )
         )
 

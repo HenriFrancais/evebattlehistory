@@ -14,6 +14,7 @@ from app.esi.demo import DemoEsiClient
 from app.fights.aggregate import aggregate_br
 from app.ingest.persist import persist_killmails
 from app.ingest.sources.factory import resolve_source
+from app.ingest.tickers import fill_missing_tickers
 from app.logs.associate import associate_logs_for_br
 from app.observability.logging import log
 
@@ -298,6 +299,20 @@ async def run_ingest(settings: Settings, br_id: str) -> None:
                 await session.execute(stmt)
 
             await session.commit()
+
+        # Tickers for this report's corporations / alliances (shown beside pilot
+        # names). Best-effort and after the commit, so it can never fail an ingest.
+        try:
+            async with session_maker() as session:
+                await fill_missing_tickers(
+                    session,
+                    esi,
+                    corp_ids={i for i, n in names.items() if n.get("category") == "corporation"},
+                    alliance_ids={i for i, n in names.items() if n.get("category") == "alliance"},
+                )
+                await session.commit()
+        except Exception as exc:
+            log.warning("pipeline.tickers_failed", br_id=br_id, error=str(exc))
 
         # Phase 3.5: backfill any ISK values not provided by /related/.
         try:

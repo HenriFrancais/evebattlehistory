@@ -82,6 +82,18 @@ def _m004_drop_empty_gamelogs(conn: Connection) -> None:
     conn.exec_driver_sql("DELETE FROM gamelog_file WHERE event_count = 0")
 
 
+def _m005_tickers_and_bucket_hit_range(conn: Connection) -> None:
+    """Corp/alliance tickers (filled from ESI) and the per-bucket single-hit range.
+
+    Bucket min/max and miss events for logs uploaded before this migration appear
+    after `python -m app.logs.reparse`; tickers after `python -m app.ingest.tickers`.
+    """
+    add_column_if_missing(conn, "corporation", "ticker", "VARCHAR(16)")
+    add_column_if_missing(conn, "alliance", "ticker", "VARCHAR(16)")
+    add_column_if_missing(conn, "log_event_bucket", "min_amount", "FLOAT")
+    add_column_if_missing(conn, "log_event_bucket", "max_amount", "FLOAT")
+
+
 Migration = tuple[int, str, Callable[[Connection], None]]
 
 MIGRATIONS: list[Migration] = [
@@ -89,6 +101,7 @@ MIGRATIONS: list[Migration] = [
     (2, "battle_report ingest completeness", _m002_ingest_completeness),
     (3, "effect-only log events + parser stats", _m003_effect_only_log_events),
     (4, "drop stored gamelogs with no combat events", _m004_drop_empty_gamelogs),
+    (5, "tickers + bucket single-hit range", _m005_tickers_and_bucket_hit_range),
 ]
 
 LATEST_VERSION: int = MIGRATIONS[-1][0]

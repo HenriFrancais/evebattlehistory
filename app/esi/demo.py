@@ -61,3 +61,16 @@ class DemoEsiClient:
             row = table.get(str(cid)) or {}
             out[int(cid)] = (row.get("corporation_id"), row.get("alliance_id"))
         return out
+
+    async def fetch_tickers(
+        self, corp_ids: list[int], alliance_ids: list[int]
+    ) -> tuple[dict[int, str], dict[int, str]]:
+        """Tickers from data_demo/tickers.json ({"corporations": {id: t}, "alliances": {...}})."""
+        p = self._dir / "tickers.json"
+        table: dict[str, dict[str, str]] = json.loads(p.read_text()) if p.exists() else {}
+        corps = table.get("corporations", {})
+        allis = table.get("alliances", {})
+        return (
+            {int(c): corps[str(c)] for c in corp_ids if str(c) in corps},
+            {int(a): allis[str(a)] for a in alliance_ids if str(a) in allis},
+        )
